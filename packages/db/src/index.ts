@@ -17,6 +17,11 @@ export {
   PLAN_SEEDS,
   seedPlatformCatalogue,
 } from './seeding/platform-catalogue.js';
+export {
+  CRM_DEFAULT_SEEDS,
+  seedCrmDefaults,
+  type CrmDefaultsResult,
+} from './seeding/crm-defaults.js';
 
 // Model types and enums, so application modules never import @prisma/client directly.
 export * from '../generated/prisma/models.js';

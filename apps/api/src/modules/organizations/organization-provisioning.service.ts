@@ -6,6 +6,7 @@ import {
   newToken,
   withPlatformScope,
 } from '@leados/shared';
+import { seedCrmDefaults } from '@leados/db';
 import { DbService } from '../../infra/db/db.service.js';
 import { OutboxService } from '../../infra/outbox/outbox.service.js';
 import { AuditService } from '../../infra/audit/audit.service.js';
@@ -20,7 +21,9 @@ import { AuditService } from '../../infra/audit/audit.service.js';
  * so it must not be possible to create one (Rule 18).
  *
  * Note what is *not* hardcoded here: the trial plan comes from a platform setting, the
- * roles come from shared templates, and the trial length comes from the plan (Rules 4, 7).
+ * roles come from shared templates, the trial length comes from the plan, and the CRM
+ * vocabulary comes from `seedCrmDefaults` — every row of which the tenant can rename or
+ * delete the moment they log in (Rules 4, 7).
  */
 const DEFAULT_PLAN_SETTING_KEY = 'signup.default_plan_code';
 const FALLBACK_TRIAL_DAYS = 7;
@@ -149,6 +152,11 @@ export class OrganizationProvisioningService {
             endMinute: WORKDAY_END_MINUTE,
           })),
         });
+
+        // The CRM vocabulary, so a lead can be created on first login. Inside the same transaction
+        // as everything else: an organization with no default status is one where lead creation
+        // fails, which is exactly the half-provisioned state rule 18 forbids.
+        await seedCrmDefaults(tx, organizationId);
 
         if (plan) {
           await tx.subscription.create({

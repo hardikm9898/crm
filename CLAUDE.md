@@ -92,6 +92,28 @@ change, or typecheck will fail confusingly.
   144), so anything after it in the same invocation never runs. Match on the child's own name
   (`pgrep -a next-server | … | xargs kill`) instead.
 
+- **A unique constraint on a partitioned table must contain the partition key.** `activities` is
+  partitioned by `occurred_at`, so its primary key is `(id, occurred_at)` and its idempotency key is
+  `(organization_id, source_event_id, occurred_at)`. That only works because `occurred_at` comes from
+  the event — `TimelineService` requires it as an argument so no caller can pass `now()` on a retry.
+  A cursor over `activities` must carry both halves of the key; an id alone selects the wrong page.
+- **A month with no partition is worse than an error.** Rows land in `activities_default`, work fine,
+  and then **block attaching the real partition** until they are moved. The
+  `maintenance.activity-partitions` job creates months ahead and reports anything stranded.
+- **Prisma cannot create a partitioned table.** Generate the migration with `--create-only`, then edit
+  the `CREATE TABLE` by hand to add `PARTITION BY RANGE (...)`. Prisma's later diffs do not notice.
+- **`prisma migrate dev` prompts and hangs in a non-interactive shell.** Use `prisma migrate deploy`
+  (or `--create-only` then `deploy`) from scripts and agents.
+- **Rebuild `@leados/db` and `@leados/shared` after editing them**, not just `db:generate`: the API
+  typechecks against their `dist`, so a new model or export is invisible until `pnpm --filter … build`.
+- **Every new tenant table needs its composite FK _and_ its own cross-tenant test.** The registry check
+  catches an unregistered model; it cannot catch a missing composite FK. `leads_stage_in_pipeline_fk`
+  also shows the other use for these: a composite FK on `(organization_id, pipeline_id, stage_id)`
+  makes "a lead in another pipeline's stage" unrepresentable, which no application check can guarantee.
+- **A test that names a model as a hypothetical breaks when the model becomes real.**
+  `registry-check.spec.ts` asserted that `Lead` was unregistered; the day `Lead` was added, the test
+  passed for the wrong reason. Use a deliberately fictional name.
+
 - **The platform catalogue is reference data, not fixtures.** Without `permissions` and a plan,
   creating an organization fails on a foreign key. `seedPlatformCatalogue()` is called by both
   the dev seed and the test harness.

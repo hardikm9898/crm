@@ -4,6 +4,7 @@ import { Algorithm, hash } from '@node-rs/argon2';
 import { SYSTEM_ROLE_TEMPLATES, newId, newToken, normalizePhone } from '@leados/shared';
 import { createUnscopedDbClient } from '../src/client.js';
 import { seedPlatformCatalogue } from '../src/seeding/platform-catalogue.js';
+import { seedCrmDefaults } from '../src/seeding/crm-defaults.js';
 import type { PrismaClient } from '../generated/prisma/client.js';
 
 /**
@@ -151,6 +152,8 @@ async function seedOrganization(
       });
     }
 
+    // Captured as people are created, so the demo leads below have real owners to be assigned to.
+    const userIdsByRole = new Map<string, string[]>();
     for (const person of spec.people) {
       const user = await tx.user.upsert({
         where: { email: person.email },
@@ -177,6 +180,8 @@ async function seedOrganization(
           joinedAt: now,
         },
       });
+
+      userIdsByRole.set(person.roleCode, [...(userIdsByRole.get(person.roleCode) ?? []), user.id]);
 
       const roleId = roleIds.get(person.roleCode);
       if (!roleId) throw new Error(`Unknown role code in seed: ${person.roleCode}`);
@@ -222,6 +227,12 @@ async function seedOrganization(
       },
     });
 
+    // The CRM vocabulary, from the same definition provisioning uses — two descriptions of
+    // "what a new organization looks like" would drift, and the drift would first appear as a
+    // support ticket from a real tenant.
+    const crm = await seedCrmDefaults(tx, organizationId);
+    if (crm) await seedDemoLeads(tx, organizationId, crm, branchId, teamId, userIdsByRole);
+
     await tx.auditLog.create({
       data: {
         id: newId(),
@@ -237,6 +248,185 @@ async function seedOrganization(
   });
 
   console.warn(`  seeded ${spec.slug} (${spec.people.length} people, plan ${spec.planCode})`);
+}
+
+/**
+ * A handful of leads per demo tenant, so every Phase 2 screen has something real to show and the
+ * cross-tenant canary extends to the CRM: **both organizations get a lead on the same phone number**,
+ * which is how a query that forgets its tenant filter shows up during ordinary development rather
+ * than in the isolation suite alone.
+ *
+ * Each lead also gets a timeline entry and a touchpoint, because a lead with no history is not
+ * something any Phase 2 screen can be judged against.
+ */
+interface DemoLeadSpec {
+  readonly firstName: string;
+  readonly lastName: string;
+  readonly phone: string;
+  readonly email?: string;
+  readonly company?: string;
+  readonly city: string;
+  readonly source: string;
+  readonly stageOffset: number;
+  readonly assignTo: 'sales_executive' | 'sales_manager' | null;
+  readonly valueMinor?: number;
+}
+
+const DEMO_LEADS: readonly DemoLeadSpec[] = [
+  {
+    firstName: 'Rohan',
+    lastName: 'Desai',
+    phone: SHARED_CUSTOMER_PHONE,
+    email: 'rohan.desai@example.test',
+    city: 'Pune',
+    source: 'Website form',
+    stageOffset: 0,
+    assignTo: 'sales_executive',
+    valueMinor: 450000000,
+  },
+  {
+    firstName: 'Fatima',
+    lastName: 'Sheikh',
+    phone: '+919812345001',
+    email: 'fatima.sheikh@example.test',
+    company: 'Sheikh Textiles',
+    city: 'Mumbai',
+    source: 'Facebook Ads',
+    stageOffset: 1,
+    assignTo: 'sales_executive',
+    valueMinor: 1200000000,
+  },
+  {
+    firstName: 'Vikram',
+    lastName: 'Rao',
+    phone: '+919812345002',
+    city: 'Bengaluru',
+    source: 'Referral',
+    stageOffset: 2,
+    assignTo: 'sales_manager',
+  },
+  {
+    firstName: 'Neha',
+    lastName: 'Kulkarni',
+    phone: '+919812345003',
+    email: 'neha.k@example.test',
+    city: 'Pune',
+    source: 'WhatsApp',
+    stageOffset: 1,
+    // Deliberately unassigned: the "nobody is working this" case has to exist in demo data, or
+    // the screen that surfaces it is never looked at.
+    assignTo: null,
+  },
+  {
+    firstName: 'Arjun',
+    lastName: 'Menon',
+    phone: '+919812345004',
+    company: 'Menon & Co',
+    city: 'Kochi',
+    source: 'Walk-in',
+    stageOffset: 3,
+    assignTo: 'sales_manager',
+    valueMinor: 780000000,
+  },
+];
+
+async function seedDemoLeads(
+  tx: PrismaClient,
+  organizationId: string,
+  crm: {
+    defaultStatusId: string;
+    pipelineId: string;
+    sourceIdsByName: ReadonlyMap<string, string>;
+  },
+  branchId: string,
+  teamId: string,
+  userIdsByRole: ReadonlyMap<string, string[]>,
+): Promise<void> {
+  const stages = await tx.pipelineStage.findMany({
+    where: { organizationId, pipelineId: crm.pipelineId },
+    orderBy: { sortOrder: 'asc' },
+  });
+  if (stages.length === 0) return;
+
+  const now = Date.now();
+  for (const [index, spec] of DEMO_LEADS.entries()) {
+    const leadId = newId();
+    const stage = stages[Math.min(spec.stageOffset, stages.length - 1)];
+    /* c8 ignore next */
+    if (!stage) continue;
+    const assignedUserId = spec.assignTo ? (userIdsByRole.get(spec.assignTo)?.[0] ?? null) : null;
+    // Spread over the last fortnight so "created this week" and ageing reports have something
+    // to distinguish.
+    const createdAt = new Date(now - (index + 1) * 2 * 86_400_000);
+
+    await tx.lead.create({
+      data: {
+        id: leadId,
+        organizationId,
+        firstName: spec.firstName,
+        lastName: spec.lastName,
+        fullName: `${spec.firstName} ${spec.lastName}`,
+        company: spec.company ?? null,
+        phoneE164: normalizePhone(spec.phone, 'IN').e164,
+        phoneRaw: spec.phone,
+        email: spec.email ?? null,
+        city: spec.city,
+        country: 'IN',
+        leadSourceId: crm.sourceIdsByName.get(spec.source) ?? null,
+        createdVia: 'manual',
+        statusId: crm.defaultStatusId,
+        pipelineId: crm.pipelineId,
+        stageId: stage.id,
+        priority: index === 0 ? 'high' : 'medium',
+        valueMinor: spec.valueMinor ?? null,
+        currency: spec.valueMinor ? 'INR' : null,
+        assignedUserId,
+        branchId,
+        teamId: assignedUserId ? teamId : null,
+        consentWhatsapp: true,
+        consentCalls: true,
+        createdAt,
+        updatedAt: createdAt,
+        lastActivityAt: createdAt,
+        touchCount: 1,
+      },
+    });
+
+    await tx.leadTouchpoint.create({
+      data: {
+        id: newId(),
+        organizationId,
+        leadId,
+        sequence: 1,
+        occurredAt: createdAt,
+        channel: 'manual',
+        leadSourceId: crm.sourceIdsByName.get(spec.source) ?? null,
+      },
+    });
+
+    await tx.leadStatusHistory.create({
+      data: {
+        id: newId(),
+        organizationId,
+        leadId,
+        toStatusId: crm.defaultStatusId,
+        createdAt,
+      },
+    });
+
+    await tx.activity.create({
+      data: {
+        id: newId(),
+        organizationId,
+        leadId,
+        type: 'lead.created',
+        actorType: 'system',
+        actorLabel: 'seed',
+        occurredAt: createdAt,
+        payload: { fullName: `${spec.firstName} ${spec.lastName}`, createdVia: 'manual' },
+      },
+    });
+  }
 }
 
 async function main(): Promise<void> {

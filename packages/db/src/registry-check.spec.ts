@@ -15,14 +15,15 @@ describe('tenant model registry drift detection', () => {
   });
 
   it('catches the dangerous case: a tenant model that would run unscoped', () => {
-    // This is the mistake the check exists for — a new CRM table with organizationId
-    // that nobody added to TENANT_MODELS would be readable across tenants.
-    const drift = findRegistryDrift([{ name: 'Lead', fields: [{ name: 'id' }, orgField] }]);
-    expect(drift.unregisteredTenantModels).toEqual(['Lead']);
+    // This is the mistake the check exists for — a new table with organizationId that nobody added
+    // to TENANT_MODELS would be readable across tenants. The name is deliberately fictional: an
+    // earlier version of this test used `Lead`, which stopped failing the moment `Lead` became a
+    // real registered model, and a test that cannot fail is worse than no test.
+    const model = { name: 'NotARealModelYet', fields: [{ name: 'id' }, orgField] };
+    const drift = findRegistryDrift([model]);
+    expect(drift.unregisteredTenantModels).toEqual(['NotARealModelYet']);
 
-    expect(() =>
-      assertTenantRegistryComplete([{ name: 'Lead', fields: [{ name: 'id' }, orgField] }]),
-    ).toThrow(/would be unscoped/);
+    expect(() => assertTenantRegistryComplete([model])).toThrow(/would be unscoped/);
   });
 
   it('catches a registered model that has no tenant column', () => {

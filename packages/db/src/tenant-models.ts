@@ -29,6 +29,23 @@ export const TENANT_MODELS = [
   'OutboxEvent',
   'Notification',
   'NotificationPreference',
+  // Phase 2 — CRM core
+  'CustomFieldSection',
+  'CustomFieldDefinition',
+  'CustomFieldOption',
+  'LeadStatus',
+  'LeadSource',
+  'LostReason',
+  'Tag',
+  'LeadTag',
+  'Pipeline',
+  'PipelineStage',
+  'Lead',
+  'LeadTouchpoint',
+  'LeadAssignment',
+  'LeadStatusHistory',
+  'LeadStageHistory',
+  'Activity',
 ] as const;
 
 export type TenantModel = (typeof TENANT_MODELS)[number];

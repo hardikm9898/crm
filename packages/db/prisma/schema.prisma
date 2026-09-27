@@ -124,6 +124,107 @@ enum AvailabilityState {
   @@map("availability_state")
 }
 
+enum LeadStatusCategory {
+  open
+  won
+  lost
+  invalid
+
+  @@map("lead_status_category")
+}
+
+enum LeadPriority {
+  low
+  medium
+  high
+  urgent
+
+  @@map("lead_priority")
+}
+
+/// How a lead entered the system. Used for attribution and for "who typed this in".
+enum LeadCreatedVia {
+  manual
+  form
+  api
+  webhook
+  import
+  whatsapp
+  meta_ads
+  google_ads
+  website
+
+  @@map("lead_created_via")
+}
+
+enum PipelineEntity {
+  lead
+  deal
+
+  @@map("pipeline_entity")
+}
+
+enum CustomFieldEntity {
+  lead
+  customer
+  deal
+  task
+  conversation
+
+  @@map("custom_field_entity")
+}
+
+/// The stored shape of a custom field's value is decided by this type; the registry in
+/// `@leados/shared` (`CUSTOM_FIELD_SPECS`) is the single description of what each one accepts.
+enum CustomFieldType {
+  text
+  textarea
+  number
+  decimal
+  currency
+  boolean
+  date
+  datetime
+  select
+  multiselect
+  radio
+  checkbox_group
+  email
+  phone
+  url
+  rating
+  file
+
+  @@map("custom_field_type")
+}
+
+enum ActivityVisibility {
+  all
+  internal
+
+  @@map("activity_visibility")
+}
+
+/// Where a touchpoint came from. A lead can accumulate many, and they are never overwritten.
+enum TouchpointChannel {
+  website
+  form
+  whatsapp
+  call
+  email
+  meta_ads
+  google_ads
+  referral
+  walk_in
+  marketplace
+  import
+  manual
+  api
+  other
+
+  @@map("touchpoint_channel")
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // PLATFORM TABLES — no organization_id, unreachable from tenant routes.
 // ═════════════════════════════════════════════════════════════════════════════
@@ -185,16 +286,16 @@ model PlatformSetting {
 /// Our own staff. A separate auth realm from tenant users: no tenant token can
 /// ever resolve to a platform user (docs/security.md §4).
 model PlatformUser {
-  id           String    @id @db.Uuid
-  email        String    @unique
-  passwordHash String    @map("password_hash")
+  id           String     @id @db.Uuid
+  email        String     @unique
+  passwordHash String     @map("password_hash")
   name         String
-  isSuperAdmin Boolean   @default(false) @map("is_super_admin")
-  mfaEnabled   Boolean   @default(false) @map("mfa_enabled")
+  isSuperAdmin Boolean    @default(false) @map("is_super_admin")
+  mfaEnabled   Boolean    @default(false) @map("mfa_enabled")
   status       UserStatus @default(active)
-  lastLoginAt  DateTime? @map("last_login_at") @db.Timestamptz(6)
-  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  lastLoginAt  DateTime?  @map("last_login_at") @db.Timestamptz(6)
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@map("platform_users")
 }
@@ -214,26 +315,26 @@ model Permission {
 /// Global identity. Credentials live here so one person can belong to several
 /// organizations (FR-IAM-6); org-specific state lives on `memberships`.
 model User {
-  id           String    @id @db.Uuid
-  email        String    @unique
-  passwordHash String?   @map("password_hash")
-  name         String
-  firstName    String?   @map("first_name")
-  lastName     String?   @map("last_name")
-  phoneE164    String?   @map("phone_e164") @db.VarChar(20)
-  avatarUrl    String?   @map("avatar_url")
-  status       UserStatus @default(invited)
-  timezone     String?
-  locale       String?   @default("en")
-  mfaEnabled   Boolean   @default(false) @map("mfa_enabled")
+  id                 String     @id @db.Uuid
+  email              String     @unique
+  passwordHash       String?    @map("password_hash")
+  name               String
+  firstName          String?    @map("first_name")
+  lastName           String?    @map("last_name")
+  phoneE164          String?    @map("phone_e164") @db.VarChar(20)
+  avatarUrl          String?    @map("avatar_url")
+  status             UserStatus @default(invited)
+  timezone           String?
+  locale             String?    @default("en")
+  mfaEnabled         Boolean    @default(false) @map("mfa_enabled")
   /// AES-256-GCM ciphertext, never the raw TOTP secret (docs/security.md §9).
-  mfaSecretEncrypted String? @map("mfa_secret_encrypted")
-  mfaEnrolledAt      DateTime? @map("mfa_enrolled_at") @db.Timestamptz(6)
-  emailVerifiedAt DateTime? @map("email_verified_at") @db.Timestamptz(6)
-  lastLoginAt  DateTime? @map("last_login_at") @db.Timestamptz(6)
-  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
-  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(6)
+  mfaSecretEncrypted String?    @map("mfa_secret_encrypted")
+  mfaEnrolledAt      DateTime?  @map("mfa_enrolled_at") @db.Timestamptz(6)
+  emailVerifiedAt    DateTime?  @map("email_verified_at") @db.Timestamptz(6)
+  lastLoginAt        DateTime?  @map("last_login_at") @db.Timestamptz(6)
+  createdAt          DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt          DateTime?  @map("deleted_at") @db.Timestamptz(6)
 
   memberships        Membership[]
   sessions           Session[]
@@ -248,20 +349,20 @@ model User {
 /// Refresh-token family. Rotation with reuse detection: presenting a rotated
 /// token revokes the whole family (FR-IAM-2, docs/security.md §2).
 model Session {
-  id               String    @id @db.Uuid
-  userId           String    @map("user_id") @db.Uuid
-  familyId         String    @map("family_id") @db.Uuid
-  previousSessionId String?  @map("previous_session_id") @db.Uuid
-  refreshTokenHash String    @unique @map("refresh_token_hash")
-  activeOrganizationId String? @map("active_organization_id") @db.Uuid
-  userAgent        String?   @map("user_agent")
-  ipAddress        String?   @map("ip_address")
-  lastUsedAt       DateTime? @map("last_used_at") @db.Timestamptz(6)
-  expiresAt        DateTime  @map("expires_at") @db.Timestamptz(6)
-  revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(6)
-  revokedReason    String?   @map("revoked_reason")
-  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                   String    @id @db.Uuid
+  userId               String    @map("user_id") @db.Uuid
+  familyId             String    @map("family_id") @db.Uuid
+  previousSessionId    String?   @map("previous_session_id") @db.Uuid
+  refreshTokenHash     String    @unique @map("refresh_token_hash")
+  activeOrganizationId String?   @map("active_organization_id") @db.Uuid
+  userAgent            String?   @map("user_agent")
+  ipAddress            String?   @map("ip_address")
+  lastUsedAt           DateTime? @map("last_used_at") @db.Timestamptz(6)
+  expiresAt            DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt            DateTime? @map("revoked_at") @db.Timestamptz(6)
+  revokedReason        String?   @map("revoked_reason")
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  user                 User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, revokedAt])
   @@index([familyId])
@@ -296,11 +397,11 @@ model JobFailure {
 /// than only noticed when something that should have happened did not
 /// (docs/deployment-architecture.md §7).
 model SchedulerHeartbeat {
-  id           String   @id @db.Uuid
-  instanceId   String   @unique @map("instance_id")
-  lastBeatAt   DateTime @map("last_beat_at") @db.Timestamptz(6)
-  registered   Json     @db.JsonB
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  id         String   @id @db.Uuid
+  instanceId String   @unique @map("instance_id")
+  lastBeatAt DateTime @map("last_beat_at") @db.Timestamptz(6)
+  registered Json     @db.JsonB
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@index([lastBeatAt])
   @@map("scheduler_heartbeats")
@@ -380,24 +481,42 @@ model Organization {
   updatedAt           DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt           DateTime?          @map("deleted_at") @db.Timestamptz(6)
 
-  branches            Branch[]
-  teams               Team[]
-  teamMembers         TeamMember[]
-  memberships         Membership[]
-  roles               Role[]
-  rolePermissions     RolePermission[]
-  userRoles           UserRole[]
-  invitations         Invitation[]
-  auditLogs           AuditLog[]
-  outboxEvents        OutboxEvent[]
-  notifications       Notification[]
+  branches                Branch[]
+  teams                   Team[]
+  teamMembers             TeamMember[]
+  memberships             Membership[]
+  roles                   Role[]
+  rolePermissions         RolePermission[]
+  userRoles               UserRole[]
+  invitations             Invitation[]
+  auditLogs               AuditLog[]
+  outboxEvents            OutboxEvent[]
+  notifications           Notification[]
   notificationPreferences NotificationPreference[]
-  subscription        Subscription?
-  usageCounters       UsageCounter[]
-  entitlementOverrides EntitlementOverride[]
-  workingHours        WorkingHours[]
-  holidays            Holiday[]
-  availability        UserAvailability[]
+  subscription            Subscription?
+  usageCounters           UsageCounter[]
+  entitlementOverrides    EntitlementOverride[]
+  workingHours            WorkingHours[]
+  holidays                Holiday[]
+  availability            UserAvailability[]
+
+  // Phase 2 — CRM core
+  customFieldSections    CustomFieldSection[]
+  customFieldDefinitions CustomFieldDefinition[]
+  customFieldOptions     CustomFieldOption[]
+  leadStatuses           LeadStatus[]
+  leadSources            LeadSource[]
+  lostReasons            LostReason[]
+  tags                   Tag[]
+  leadTags               LeadTag[]
+  pipelines              Pipeline[]
+  pipelineStages         PipelineStage[]
+  leads                  Lead[]
+  leadTouchpoints        LeadTouchpoint[]
+  leadAssignments        LeadAssignment[]
+  leadStatusHistory      LeadStatusHistory[]
+  leadStageHistory       LeadStageHistory[]
+  activities             Activity[]
 
   @@index([status])
   @@index([createdAt])
@@ -405,25 +524,26 @@ model Organization {
 }
 
 model Branch {
-  id             String       @id @db.Uuid
-  organizationId String       @map("organization_id") @db.Uuid
+  id             String    @id @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
   name           String
   code           String?
-  addressLine    String?      @map("address_line")
+  addressLine    String?   @map("address_line")
   city           String?
   state          String?
-  country        String?      @db.Char(2)
+  country        String?   @db.Char(2)
   timezone       String?
-  isDefault      Boolean      @default(false) @map("is_default")
-  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
-  deletedAt      DateTime?    @map("deleted_at") @db.Timestamptz(6)
+  isDefault      Boolean   @default(false) @map("is_default")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
 
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  teams          Team[]
-  memberships    Membership[]
-  workingHours   WorkingHours[]
-  holidays       Holiday[]
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  teams        Team[]
+  memberships  Membership[]
+  workingHours WorkingHours[]
+  holidays     Holiday[]
+  leads        Lead[]
 
   @@unique([organizationId, id], name: "branch_tenant_key")
   @@unique([organizationId, code])
@@ -432,19 +552,20 @@ model Branch {
 }
 
 model Team {
-  id             String       @id @db.Uuid
-  organizationId String       @map("organization_id") @db.Uuid
-  branchId       String?      @map("branch_id") @db.Uuid
+  id             String    @id @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  branchId       String?   @map("branch_id") @db.Uuid
   name           String
   description    String?
-  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
-  deletedAt      DateTime?    @map("deleted_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
 
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   // Composite FK: a team cannot belong to another tenant's branch.
-  branch         Branch?      @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict, map: "teams_branch_same_org_fk")
-  members        TeamMember[]
+  branch       Branch?      @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict, map: "teams_branch_same_org_fk")
+  members      TeamMember[]
+  leads        Lead[]
 
   @@unique([organizationId, id], name: "team_tenant_key")
   @@index([organizationId, deletedAt])
@@ -452,18 +573,18 @@ model Team {
 }
 
 model TeamMember {
-  id             String       @id @db.Uuid
-  organizationId String       @map("organization_id") @db.Uuid
-  teamId         String       @map("team_id") @db.Uuid
-  userId         String       @map("user_id") @db.Uuid
-  isLead         Boolean      @default(false) @map("is_lead")
-  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  id             String   @id @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  teamId         String   @map("team_id") @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  isLead         Boolean  @default(false) @map("is_lead")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  team           Team         @relation(fields: [organizationId, teamId], references: [organizationId, id], onDelete: Cascade, map: "team_members_team_same_org_fk")
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  team         Team         @relation(fields: [organizationId, teamId], references: [organizationId, id], onDelete: Cascade, map: "team_members_team_same_org_fk")
   // Referencing the MEMBERSHIP (not the global user) is what keeps this tenant-safe:
   // only someone who is a member of this organization can be on one of its teams.
-  membership     Membership   @relation(fields: [organizationId, userId], references: [organizationId, userId], onDelete: Cascade, map: "team_members_membership_same_org_fk")
+  membership   Membership   @relation(fields: [organizationId, userId], references: [organizationId, userId], onDelete: Cascade, map: "team_members_membership_same_org_fk")
 
   @@unique([organizationId, id], name: "team_member_tenant_key")
   @@unique([organizationId, teamId, userId])
@@ -486,15 +607,16 @@ model Membership {
   updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt       DateTime?        @map("deleted_at") @db.Timestamptz(6)
 
-  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  defaultBranch   Branch?          @relation(fields: [organizationId, defaultBranchId], references: [organizationId, id], onDelete: Restrict, map: "memberships_branch_same_org_fk")
-  teamMemberships TeamMember[]
-  roles           UserRole[]
-  notifications   Notification[]
+  organization            Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user                    User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  defaultBranch           Branch?                  @relation(fields: [organizationId, defaultBranchId], references: [organizationId, id], onDelete: Restrict, map: "memberships_branch_same_org_fk")
+  teamMemberships         TeamMember[]
+  roles                   UserRole[]
+  notifications           Notification[]
   notificationPreferences NotificationPreference[]
-  availability    UserAvailability[]
-  workingHours    WorkingHours[]
+  availability            UserAvailability[]
+  workingHours            WorkingHours[]
+  assignedLeads           Lead[]                   @relation("lead_assignee")
 
   @@unique([organizationId, id], name: "membership_tenant_key")
   @@unique([organizationId, userId])
@@ -504,22 +626,22 @@ model Membership {
 }
 
 model Role {
-  id             String           @id @db.Uuid
-  organizationId String           @map("organization_id") @db.Uuid
+  id             String    @id @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
   code           String
   name           String
   description    String?
   /// Seeded roles are marked system: they can be edited but not deleted.
-  isSystem       Boolean          @default(false) @map("is_system")
-  isEditable     Boolean          @default(true) @map("is_editable")
-  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
-  deletedAt      DateTime?        @map("deleted_at") @db.Timestamptz(6)
+  isSystem       Boolean   @default(false) @map("is_system")
+  isEditable     Boolean   @default(true) @map("is_editable")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
 
-  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  permissions    RolePermission[]
-  users          UserRole[]
-  invitations    Invitation[]
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  permissions  RolePermission[]
+  users        UserRole[]
+  invitations  Invitation[]
 
   @@unique([organizationId, id], name: "role_tenant_key")
   @@unique([organizationId, code])
@@ -527,17 +649,17 @@ model Role {
 }
 
 model RolePermission {
-  id             String       @id @db.Uuid
-  organizationId String       @map("organization_id") @db.Uuid
-  roleId         String       @map("role_id") @db.Uuid
-  permissionKey  String       @map("permission_key")
+  id             String    @id @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  roleId         String    @map("role_id") @db.Uuid
+  permissionKey  String    @map("permission_key")
   /// How far this grant reaches (FR-IAM-4).
-  scope          DataScope    @default(own)
-  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  scope          DataScope @default(own)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  role           Role         @relation(fields: [organizationId, roleId], references: [organizationId, id], onDelete: Cascade, map: "role_permissions_role_same_org_fk")
-  permission     Permission   @relation(fields: [permissionKey], references: [key], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  role         Role         @relation(fields: [organizationId, roleId], references: [organizationId, id], onDelete: Cascade, map: "role_permissions_role_same_org_fk")
+  permission   Permission   @relation(fields: [permissionKey], references: [key], onDelete: Cascade)
 
   @@unique([organizationId, roleId, permissionKey])
   @@index([organizationId, permissionKey])
@@ -545,15 +667,15 @@ model RolePermission {
 }
 
 model UserRole {
-  id             String       @id @db.Uuid
-  organizationId String       @map("organization_id") @db.Uuid
-  userId         String       @map("user_id") @db.Uuid
-  roleId         String       @map("role_id") @db.Uuid
-  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  id             String   @id @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  roleId         String   @map("role_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  membership     Membership   @relation(fields: [organizationId, userId], references: [organizationId, userId], onDelete: Cascade, map: "user_roles_membership_same_org_fk")
-  role           Role         @relation(fields: [organizationId, roleId], references: [organizationId, id], onDelete: Cascade, map: "user_roles_role_same_org_fk")
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  membership   Membership   @relation(fields: [organizationId, userId], references: [organizationId, userId], onDelete: Cascade, map: "user_roles_membership_same_org_fk")
+  role         Role         @relation(fields: [organizationId, roleId], references: [organizationId, id], onDelete: Cascade, map: "user_roles_role_same_org_fk")
 
   @@unique([organizationId, userId, roleId])
   @@index([organizationId, roleId])
@@ -575,8 +697,8 @@ model Invitation {
   revokedAt      DateTime?        @map("revoked_at") @db.Timestamptz(6)
   createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  role           Role             @relation(fields: [organizationId, roleId], references: [organizationId, id], onDelete: Cascade, map: "invitations_role_same_org_fk")
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  role         Role         @relation(fields: [organizationId, roleId], references: [organizationId, id], onDelete: Cascade, map: "invitations_role_same_org_fk")
 
   @@unique([organizationId, id], name: "invitation_tenant_key")
   @@index([organizationId, email, status])
@@ -587,20 +709,20 @@ model Invitation {
 // ── Working time: consumed by assignment, SLA clocks and automation delays ───
 
 model WorkingHours {
-  id             String       @id @db.Uuid
-  organizationId String       @map("organization_id") @db.Uuid
-  branchId       String?      @map("branch_id") @db.Uuid
-  userId         String?      @map("user_id") @db.Uuid
+  id             String   @id @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  branchId       String?  @map("branch_id") @db.Uuid
+  userId         String?  @map("user_id") @db.Uuid
   /// 0 = Sunday .. 6 = Saturday
-  dayOfWeek      Int          @map("day_of_week") @db.SmallInt
-  startMinute    Int          @map("start_minute") @db.SmallInt
-  endMinute      Int          @map("end_minute") @db.SmallInt
-  isWorking      Boolean      @default(true) @map("is_working")
-  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  dayOfWeek      Int      @map("day_of_week") @db.SmallInt
+  startMinute    Int      @map("start_minute") @db.SmallInt
+  endMinute      Int      @map("end_minute") @db.SmallInt
+  isWorking      Boolean  @default(true) @map("is_working")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  branch         Branch?      @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Cascade, map: "working_hours_branch_same_org_fk")
-  membership     Membership?  @relation(fields: [organizationId, userId], references: [organizationId, userId], onDelete: Cascade, map: "working_hours_membership_same_org_fk")
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch       Branch?      @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Cascade, map: "working_hours_branch_same_org_fk")
+  membership   Membership?  @relation(fields: [organizationId, userId], references: [organizationId, userId], onDelete: Cascade, map: "working_hours_membership_same_org_fk")
 
   @@index([organizationId, userId, dayOfWeek])
   @@index([organizationId, branchId, dayOfWeek])
@@ -608,16 +730,16 @@ model WorkingHours {
 }
 
 model Holiday {
-  id             String       @id @db.Uuid
-  organizationId String       @map("organization_id") @db.Uuid
-  branchId       String?      @map("branch_id") @db.Uuid
-  date           DateTime     @db.Date
+  id             String   @id @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  branchId       String?  @map("branch_id") @db.Uuid
+  date           DateTime @db.Date
   name           String
-  isWorking      Boolean      @default(false) @map("is_working")
-  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  isWorking      Boolean  @default(false) @map("is_working")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  branch         Branch?      @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Cascade, map: "holidays_branch_same_org_fk")
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch       Branch?      @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Cascade, map: "holidays_branch_same_org_fk")
 
   @@unique([organizationId, branchId, date])
   @@index([organizationId, date])
@@ -634,8 +756,8 @@ model UserAvailability {
   reason         String?
   createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  membership     Membership        @relation(fields: [organizationId, userId], references: [organizationId, userId], onDelete: Cascade, map: "user_availability_membership_same_org_fk")
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  membership   Membership   @relation(fields: [organizationId, userId], references: [organizationId, userId], onDelete: Cascade, map: "user_availability_membership_same_org_fk")
 
   @@index([organizationId, userId, fromAt])
   @@map("user_availability")
@@ -644,25 +766,25 @@ model UserAvailability {
 // ── Subscription, entitlements, usage ────────────────────────────────────────
 
 model Subscription {
-  id                 String             @id @db.Uuid
-  organizationId     String             @unique @map("organization_id") @db.Uuid
-  planId             String             @map("plan_id") @db.Uuid
-  status             SubscriptionStatus @default(trialing)
-  seats              Int                @default(1)
-  startedAt          DateTime           @default(now()) @map("started_at") @db.Timestamptz(6)
-  trialEndsAt        DateTime?          @map("trial_ends_at") @db.Timestamptz(6)
-  currentPeriodStart DateTime           @map("current_period_start") @db.Timestamptz(6)
-  currentPeriodEnd   DateTime           @map("current_period_end") @db.Timestamptz(6)
-  graceEndsAt        DateTime?          @map("grace_ends_at") @db.Timestamptz(6)
-  cancelAt           DateTime?          @map("cancel_at") @db.Timestamptz(6)
-  cancelledAt        DateTime?          @map("cancelled_at") @db.Timestamptz(6)
-  provider           String?
-  providerSubscriptionId String?        @map("provider_subscription_id")
-  createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt          DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id                     String             @id @db.Uuid
+  organizationId         String             @unique @map("organization_id") @db.Uuid
+  planId                 String             @map("plan_id") @db.Uuid
+  status                 SubscriptionStatus @default(trialing)
+  seats                  Int                @default(1)
+  startedAt              DateTime           @default(now()) @map("started_at") @db.Timestamptz(6)
+  trialEndsAt            DateTime?          @map("trial_ends_at") @db.Timestamptz(6)
+  currentPeriodStart     DateTime           @map("current_period_start") @db.Timestamptz(6)
+  currentPeriodEnd       DateTime           @map("current_period_end") @db.Timestamptz(6)
+  graceEndsAt            DateTime?          @map("grace_ends_at") @db.Timestamptz(6)
+  cancelAt               DateTime?          @map("cancel_at") @db.Timestamptz(6)
+  cancelledAt            DateTime?          @map("cancelled_at") @db.Timestamptz(6)
+  provider               String?
+  providerSubscriptionId String?            @map("provider_subscription_id")
+  createdAt              DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  organization       Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  plan               Plan               @relation(fields: [planId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  plan         Plan         @relation(fields: [planId], references: [id])
 
   @@unique([organizationId, id], name: "subscription_tenant_key")
   @@index([status, trialEndsAt])
@@ -673,35 +795,35 @@ model Subscription {
 /// Per-organization deviation from the plan. Sales will promise exceptions;
 /// hardcoding them would violate Rule 4, so they are data (FR-BIL-2).
 model EntitlementOverride {
-  id             String       @id @db.Uuid
-  organizationId String       @map("organization_id") @db.Uuid
-  featureKey     String       @map("feature_key")
-  limitValue     BigInt?      @map("limit_value")
-  isEnabled      Boolean?     @map("is_enabled")
-  reason         String
-  expiresAt      DateTime?    @map("expires_at") @db.Timestamptz(6)
-  setByPlatformUserId String?  @map("set_by_platform_user_id") @db.Uuid
-  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  id                  String    @id @db.Uuid
+  organizationId      String    @map("organization_id") @db.Uuid
+  featureKey          String    @map("feature_key")
+  limitValue          BigInt?   @map("limit_value")
+  isEnabled           Boolean?  @map("is_enabled")
+  reason              String
+  expiresAt           DateTime? @map("expires_at") @db.Timestamptz(6)
+  setByPlatformUserId String?   @map("set_by_platform_user_id") @db.Uuid
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@unique([organizationId, featureKey])
   @@map("entitlement_overrides")
 }
 
 model UsageCounter {
-  id             String       @id @db.Uuid
-  organizationId String       @map("organization_id") @db.Uuid
-  metricKey      String       @map("metric_key")
-  periodStart    DateTime     @map("period_start") @db.Timestamptz(6)
-  periodEnd      DateTime     @map("period_end") @db.Timestamptz(6)
-  used           BigInt       @default(0)
-  limitSnapshot  BigInt?      @map("limit_snapshot")
-  warnedAt       DateTime?    @map("warned_at") @db.Timestamptz(6)
-  exceededAt     DateTime?    @map("exceeded_at") @db.Timestamptz(6)
-  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id             String    @id @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  metricKey      String    @map("metric_key")
+  periodStart    DateTime  @map("period_start") @db.Timestamptz(6)
+  periodEnd      DateTime  @map("period_end") @db.Timestamptz(6)
+  used           BigInt    @default(0)
+  limitSnapshot  BigInt?   @map("limit_snapshot")
+  warnedAt       DateTime? @map("warned_at") @db.Timestamptz(6)
+  exceededAt     DateTime? @map("exceeded_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@unique([organizationId, metricKey, periodStart])
   @@index([organizationId, periodEnd])
@@ -716,20 +838,20 @@ model UsageCounter {
 /// migration per type would be friction for no benefit. The UI renders by type through a registry,
 /// exactly as the lead timeline does.
 model Notification {
-  id             String       @id @db.Uuid
-  organizationId String       @map("organization_id") @db.Uuid
-  userId         String       @map("user_id") @db.Uuid
+  id             String    @id @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
   type           String
   title          String
   body           String?
   /// Where clicking it should go, e.g. `/leads/{id}`.
   link           String?
-  data           Json         @default("{}") @db.JsonB
-  readAt         DateTime?    @map("read_at") @db.Timestamptz(6)
-  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  data           Json      @default("{}") @db.JsonB
+  readAt         DateTime? @map("read_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  membership     Membership   @relation(fields: [organizationId, userId], references: [organizationId, userId], onDelete: Cascade, map: "notifications_membership_same_org_fk")
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  membership   Membership   @relation(fields: [organizationId, userId], references: [organizationId, userId], onDelete: Cascade, map: "notifications_membership_same_org_fk")
 
   /// The unread badge query, and the list query, in one index.
   @@index([organizationId, userId, readAt, createdAt(sort: Desc)])
@@ -742,18 +864,18 @@ model Notification {
 /// Absence of a row means "the default for that type", so a new notification type does not require
 /// backfilling a row for every user.
 model NotificationPreference {
-  id             String       @id @db.Uuid
-  organizationId String       @map("organization_id") @db.Uuid
-  userId         String       @map("user_id") @db.Uuid
+  id             String   @id @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
   type           String
-  channels       Json         @default("[]") @db.JsonB
+  channels       Json     @default("[]") @db.JsonB
   /// Local time window during which non-urgent notifications are held.
-  quietHours     Json?        @map("quiet_hours") @db.JsonB
-  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  quietHours     Json?    @map("quiet_hours") @db.JsonB
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  membership     Membership   @relation(fields: [organizationId, userId], references: [organizationId, userId], onDelete: Cascade, map: "notification_preferences_membership_same_org_fk")
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  membership   Membership   @relation(fields: [organizationId, userId], references: [organizationId, userId], onDelete: Cascade, map: "notification_preferences_membership_same_org_fk")
 
   @@unique([organizationId, userId, type])
   @@map("notification_preferences")
@@ -764,26 +886,26 @@ model NotificationPreference {
 /// Append-only. The application role has no UPDATE/DELETE grant on this table
 /// (see the post-migration hardening SQL) — FR-AUD-2.
 model AuditLog {
-  id             String       @id @db.Uuid
-  organizationId String       @map("organization_id") @db.Uuid
-  actorType      ActorType    @map("actor_type")
-  actorId        String?      @map("actor_id") @db.Uuid
-  actorLabel     String?      @map("actor_label")
+  id             String    @id @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  actorType      ActorType @map("actor_type")
+  actorId        String?   @map("actor_id") @db.Uuid
+  actorLabel     String?   @map("actor_label")
   action         String
-  resourceType   String       @map("resource_type")
-  resourceId     String?      @map("resource_id") @db.Uuid
-  before         Json?        @db.JsonB
-  after          Json?        @db.JsonB
-  ipAddress      String?      @map("ip_address")
-  userAgent      String?      @map("user_agent")
-  requestId      String?      @map("request_id")
-  impersonatedBy String?      @map("impersonated_by") @db.Uuid
-  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  resourceType   String    @map("resource_type")
+  resourceId     String?   @map("resource_id") @db.Uuid
+  before         Json?     @db.JsonB
+  after          Json?     @db.JsonB
+  ipAddress      String?   @map("ip_address")
+  userAgent      String?   @map("user_agent")
+  requestId      String?   @map("request_id")
+  impersonatedBy String?   @map("impersonated_by") @db.Uuid
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   /// RESTRICT, not CASCADE: the audit trail must outlive the business data it
   /// describes, and a stray cascade must never wipe it. Purging is a deliberate,
   /// flag-guarded operation — see withAuditPurge() in src/audit-purge.ts.
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
 
   @@index([organizationId, createdAt(sort: Desc)])
   @@index([organizationId, resourceType, resourceId])
@@ -795,30 +917,556 @@ model AuditLog {
 /// Transactional outbox (ADR-0006). Written inside the business transaction;
 /// dispatched afterwards by a worker under withPlatformScope().
 model OutboxEvent {
-  id             String        @id @db.Uuid
+  id             String    @id @db.Uuid
   /// NULL for platform-level events.
-  organizationId String?       @map("organization_id") @db.Uuid
-  eventId        String        @unique @map("event_id") @db.Uuid
-  eventName      String        @map("event_name")
-  eventVersion   Int           @default(1) @map("event_version")
-  aggregateType  String        @map("aggregate_type")
-  aggregateId    String        @map("aggregate_id") @db.Uuid
-  payload        Json          @db.JsonB
-  actorType      ActorType     @default(system) @map("actor_type")
-  actorId        String?       @map("actor_id") @db.Uuid
-  correlationId  String?       @map("correlation_id")
-  causationId    String?       @map("causation_id")
-  causationDepth Int           @default(0) @map("causation_depth")
-  occurredAt     DateTime      @default(now()) @map("occurred_at") @db.Timestamptz(6)
-  publishedAt    DateTime?     @map("published_at") @db.Timestamptz(6)
-  attempts       Int           @default(0)
-  lastError      String?       @map("last_error")
+  organizationId String?   @map("organization_id") @db.Uuid
+  eventId        String    @unique @map("event_id") @db.Uuid
+  eventName      String    @map("event_name")
+  eventVersion   Int       @default(1) @map("event_version")
+  aggregateType  String    @map("aggregate_type")
+  aggregateId    String    @map("aggregate_id") @db.Uuid
+  payload        Json      @db.JsonB
+  actorType      ActorType @default(system) @map("actor_type")
+  actorId        String?   @map("actor_id") @db.Uuid
+  correlationId  String?   @map("correlation_id")
+  causationId    String?   @map("causation_id")
+  causationDepth Int       @default(0) @map("causation_depth")
+  occurredAt     DateTime  @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  publishedAt    DateTime? @map("published_at") @db.Timestamptz(6)
+  attempts       Int       @default(0)
+  lastError      String?   @map("last_error")
 
-  organization   Organization?  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   /// The dispatcher's hot query: unpublished events, oldest first.
   @@index([publishedAt, occurredAt])
   @@index([organizationId, eventName, occurredAt])
   @@index([aggregateType, aggregateId])
   @@map("outbox_events")
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// PHASE 2 — CRM CORE
+//
+// Everything a tenant can shape is a row: statuses, sources, lost reasons,
+// pipelines, stages, tags and custom fields (rule 4). Nothing here is an enum
+// a tenant would want to change.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// UI grouping for custom fields. Purely presentational — a field without a section still works.
+model CustomFieldSection {
+  id                 String            @id @db.Uuid
+  organizationId     String            @map("organization_id") @db.Uuid
+  entityType         CustomFieldEntity @map("entity_type")
+  name               String
+  sortOrder          Int               @default(0) @map("sort_order")
+  collapsedByDefault Boolean           @default(false) @map("collapsed_by_default")
+  createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt          DateTime?         @map("deleted_at") @db.Timestamptz(6)
+
+  organization Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  definitions  CustomFieldDefinition[]
+
+  @@unique([organizationId, id], name: "custom_field_section_tenant_key")
+  @@index([organizationId, entityType, sortOrder])
+  @@map("custom_field_sections")
+}
+
+/// The metadata that makes a custom field exist (ADR-0005). `key` is immutable after creation
+/// because it appears in stored JSONB, saved views, import mappings and expression index names —
+/// renaming it would silently orphan every value.
+model CustomFieldDefinition {
+  id             String            @id @db.Uuid
+  organizationId String            @map("organization_id") @db.Uuid
+  entityType     CustomFieldEntity @map("entity_type")
+  key            String
+  label          String
+  type           CustomFieldType
+  placeholder    String?
+  helpText       String?           @map("help_text")
+  isRequired     Boolean           @default(false) @map("is_required")
+  defaultValue   Json?             @map("default_value") @db.JsonB
+  /// Subset of min/max/minLength/maxLength/regex/precision/fileTypes/maxSizeKb, checked against the
+  /// type's registry entry so a definition cannot carry a rule its type ignores.
+  validation     Json              @default("{}") @db.JsonB
+  sectionId      String?           @map("section_id") @db.Uuid
+  sortOrder      Int               @default(0) @map("sort_order")
+  /// Role and stage conditions deciding when the field is shown; presentation only.
+  visibility     Json              @default("{}") @db.JsonB
+  showInList     Boolean           @default(false) @map("show_in_list")
+  isSearchable   Boolean           @default(false) @map("is_searchable")
+  isFilterable   Boolean           @default(true) @map("is_filterable")
+  /// True asks for a dedicated expression index. The index is created by a controlled job, and its
+  /// name is recorded so deactivation can drop exactly what was created.
+  isIndexed      Boolean           @default(false) @map("is_indexed")
+  indexName      String?           @map("index_name")
+  indexedAt      DateTime?         @map("indexed_at") @db.Timestamptz(6)
+  isPii          Boolean           @default(false) @map("is_pii")
+  isActive       Boolean           @default(true) @map("is_active")
+  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt      DateTime?         @map("deleted_at") @db.Timestamptz(6)
+
+  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  section      CustomFieldSection? @relation(fields: [organizationId, sectionId], references: [organizationId, id], onDelete: Restrict, map: "custom_field_definitions_section_same_org_fk")
+  options      CustomFieldOption[]
+
+  @@unique([organizationId, id], name: "custom_field_definition_tenant_key")
+  @@unique([organizationId, entityType, key])
+  @@index([organizationId, entityType, isActive, sortOrder])
+  @@index([organizationId, isIndexed])
+  @@map("custom_field_definitions")
+}
+
+/// A choice for a select-like field. `value` is what is stored; `label` is what is shown — so a
+/// tenant can rename "Hot" to "Very interested" without rewriting every lead.
+model CustomFieldOption {
+  id             String   @id @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  definitionId   String   @map("definition_id") @db.Uuid
+  value          String
+  label          String
+  colour         String?
+  sortOrder      Int      @default(0) @map("sort_order")
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  definition   CustomFieldDefinition @relation(fields: [organizationId, definitionId], references: [organizationId, id], onDelete: Cascade, map: "custom_field_options_definition_same_org_fk")
+
+  @@unique([organizationId, id], name: "custom_field_option_tenant_key")
+  @@unique([organizationId, definitionId, value])
+  @@index([organizationId, definitionId, sortOrder])
+  @@map("custom_field_options")
+}
+
+/// Tenant-defined lead statuses. `category` is what code branches on — never the name, which a
+/// tenant may rename to anything (rule 4).
+model LeadStatus {
+  id             String             @id @db.Uuid
+  organizationId String             @map("organization_id") @db.Uuid
+  name           String
+  colour         String?
+  category       LeadStatusCategory @default(open)
+  sortOrder      Int                @default(0) @map("sort_order")
+  isDefault      Boolean            @default(false) @map("is_default")
+  isActive       Boolean            @default(true) @map("is_active")
+  createdAt      DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt      DateTime?          @map("deleted_at") @db.Timestamptz(6)
+
+  organization      Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  leads             Lead[]
+  statusHistoryFrom LeadStatusHistory[] @relation("lead_status_history_from")
+  statusHistoryTo   LeadStatusHistory[] @relation("lead_status_history_to")
+
+  @@unique([organizationId, id], name: "lead_status_tenant_key")
+  @@unique([organizationId, name])
+  @@index([organizationId, category, sortOrder])
+  @@map("lead_statuses")
+}
+
+/// Where leads come from. Cost model is recorded here so source reports can join spend to revenue
+/// once campaigns exist (`FR-LEAD-7`).
+model LeadSource {
+  id             String    @id @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  name           String
+  /// Free-form grouping chosen by the tenant (paid, organic, referral, offline…).
+  type           String?
+  costModel      String?   @map("cost_model")
+  isActive       Boolean   @default(true) @map("is_active")
+  sortOrder      Int       @default(0) @map("sort_order")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  leads        Lead[]
+  touchpoints  LeadTouchpoint[]
+
+  @@unique([organizationId, id], name: "lead_source_tenant_key")
+  @@unique([organizationId, name])
+  @@index([organizationId, isActive, sortOrder])
+  @@map("lead_sources")
+}
+
+/// Why a lead was lost. `requiresNote` is what turns "Lost — other" into something a manager can act on.
+model LostReason {
+  id             String    @id @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  name           String
+  sortOrder      Int       @default(0) @map("sort_order")
+  requiresNote   Boolean   @default(false) @map("requires_note")
+  isActive       Boolean   @default(true) @map("is_active")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  leads        Lead[]
+
+  @@unique([organizationId, id], name: "lost_reason_tenant_key")
+  @@unique([organizationId, name])
+  @@index([organizationId, isActive, sortOrder])
+  @@map("lost_reasons")
+}
+
+model Tag {
+  id             String    @id @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  name           String
+  colour         String?
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  leadTags     LeadTag[]
+
+  @@unique([organizationId, id], name: "tag_tenant_key")
+  @@unique([organizationId, name])
+  @@map("tags")
+}
+
+model LeadTag {
+  id             String   @id @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  leadId         String   @map("lead_id") @db.Uuid
+  tagId          String   @map("tag_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lead         Lead         @relation(fields: [organizationId, leadId], references: [organizationId, id], onDelete: Cascade, map: "lead_tags_lead_same_org_fk")
+  tag          Tag          @relation(fields: [organizationId, tagId], references: [organizationId, id], onDelete: Cascade, map: "lead_tags_tag_same_org_fk")
+
+  @@unique([organizationId, id], name: "lead_tag_tenant_key")
+  @@unique([organizationId, leadId, tagId])
+  @@index([organizationId, tagId])
+  @@map("lead_tags")
+}
+
+model Pipeline {
+  id             String         @id @db.Uuid
+  organizationId String         @map("organization_id") @db.Uuid
+  name           String
+  entityType     PipelineEntity @default(lead) @map("entity_type")
+  isDefault      Boolean        @default(false) @map("is_default")
+  isActive       Boolean        @default(true) @map("is_active")
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt      DateTime?      @map("deleted_at") @db.Timestamptz(6)
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  stages       PipelineStage[]
+  leads        Lead[]
+
+  @@unique([organizationId, id], name: "pipeline_tenant_key")
+  @@unique([organizationId, entityType, name])
+  @@index([organizationId, entityType, isActive])
+  @@map("pipelines")
+}
+
+/// A stage a lead moves through. `isWon`/`isLost` are what code branches on; `requiredFields` lists
+/// the field keys that must be filled before a lead may enter the stage — the mechanism that stops a
+/// pipeline becoming a set of empty buckets.
+model PipelineStage {
+  id                  String    @id @db.Uuid
+  organizationId      String    @map("organization_id") @db.Uuid
+  pipelineId          String    @map("pipeline_id") @db.Uuid
+  name                String
+  colour              String?
+  sortOrder           Int       @default(0) @map("sort_order")
+  probability         Int?      @db.SmallInt
+  isWon               Boolean   @default(false) @map("is_won")
+  isLost              Boolean   @default(false) @map("is_lost")
+  requiredFields      Json      @default("[]") @map("required_fields") @db.JsonB
+  targetDurationHours Int?      @map("target_duration_hours")
+  /// Reserved for the automation engine (Phase 6); no reader yet, and validated as an object so a
+  /// later release does not have to migrate malformed rows.
+  automationHooks     Json      @default("{}") @map("automation_hooks") @db.JsonB
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt           DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  organization     Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  pipeline         Pipeline           @relation(fields: [organizationId, pipelineId], references: [organizationId, id], onDelete: Cascade, map: "pipeline_stages_pipeline_same_org_fk")
+  leads            Lead[]
+  stageHistoryFrom LeadStageHistory[] @relation("lead_stage_history_from")
+  stageHistoryTo   LeadStageHistory[] @relation("lead_stage_history_to")
+
+  @@unique([organizationId, id], name: "pipeline_stage_tenant_key")
+  @@unique([organizationId, pipelineId, name])
+  @@index([organizationId, pipelineId, sortOrder])
+  @@map("pipeline_stages")
+}
+
+/// The lead. The entity the whole product exists to serve.
+///
+/// Columns whose referenced table arrives in a later step (customer, campaign, form, website, ad
+/// entity, next-action task) are deliberately **absent** rather than present as unconstrained uuids:
+/// a nullable id with no foreign key is a column nothing can trust. They arrive with their tables.
+model Lead {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  // ── Ownership ────────────────────────────────────────────────────────────
+  branchId       String? @map("branch_id") @db.Uuid
+  teamId         String? @map("team_id") @db.Uuid
+  assignedUserId String? @map("assigned_user_id") @db.Uuid
+
+  // ── Identity ─────────────────────────────────────────────────────────────
+  firstName String? @map("first_name")
+  lastName  String? @map("last_name")
+  /// Maintained by the application rather than a generated column: Prisma sends every column it
+  /// knows about, and would fight a generated one exactly as it fights a trigger-maintained
+  /// `updated_at` (docs/database-design.md §16.10).
+  fullName  String  @map("full_name")
+  company   String?
+  jobTitle  String? @map("job_title")
+
+  // ── Contact ──────────────────────────────────────────────────────────────
+  /// Normalized to E.164 on write. Duplicate detection and search both rely on this being canonical.
+  phoneE164    String? @map("phone_e164")
+  /// Exactly what the customer typed or the provider sent, kept for support conversations.
+  phoneRaw     String? @map("phone_raw")
+  whatsappE164 String? @map("whatsapp_e164")
+  email        String?
+  city         String?
+  state        String?
+  country      String? @db.Char(2)
+  postalCode   String? @map("postal_code")
+  timezone     String?
+
+  // ── Attribution ──────────────────────────────────────────────────────────
+  leadSourceId   String?        @map("lead_source_id") @db.Uuid
+  landingPageUrl String?        @map("landing_page_url")
+  /// source/medium/campaign/term/content/gclid/fbclid, as captured.
+  utm            Json           @default("{}") @db.JsonB
+  createdVia     LeadCreatedVia @default(manual) @map("created_via")
+
+  // ── Position ─────────────────────────────────────────────────────────────
+  statusId   String       @map("status_id") @db.Uuid
+  pipelineId String       @map("pipeline_id") @db.Uuid
+  stageId    String       @map("stage_id") @db.Uuid
+  priority   LeadPriority @default(medium)
+  score      Int          @default(0)
+  scoreBand  String?      @map("score_band")
+  valueMinor BigInt?      @map("value_minor")
+  currency   String?      @db.Char(3)
+
+  // ── Custom fields (ADR-0005) ─────────────────────────────────────────────
+  customValues     Json                     @default("{}") @map("custom_values") @db.JsonB
+  /// Concatenated searchable custom values, maintained on write and folded into `search_vector`.
+  customSearchText String?                  @map("custom_search_text")
+  /// Maintained by a database trigger, so a write from raw SQL or an import cannot forget it.
+  /// Prisma has no tsvector type; it is never selected through the client.
+  searchVector     Unsupported("tsvector")? @map("search_vector")
+
+  // ── Engagement ───────────────────────────────────────────────────────────
+  firstContactedAt DateTime? @map("first_contacted_at") @db.Timestamptz(6)
+  lastContactedAt  DateTime? @map("last_contacted_at") @db.Timestamptz(6)
+  lastActivityAt   DateTime? @map("last_activity_at") @db.Timestamptz(6)
+  /// Denormalized from tasks for the executive's Today view (Phase 3 writes it).
+  nextActionAt     DateTime? @map("next_action_at") @db.Timestamptz(6)
+  openTasksCount   Int       @default(0) @map("open_tasks_count")
+  touchCount       Int       @default(0) @map("touch_count")
+
+  // ── Outcome ──────────────────────────────────────────────────────────────
+  convertedAt  DateTime? @map("converted_at") @db.Timestamptz(6)
+  lostAt       DateTime? @map("lost_at") @db.Timestamptz(6)
+  lostReasonId String?   @map("lost_reason_id") @db.Uuid
+  lostNote     String?   @map("lost_note")
+
+  // ── Consent (docs/security.md §8 — configurable, never assumed) ──────────
+  consentWhatsapp Boolean @default(false) @map("consent_whatsapp")
+  consentEmail    Boolean @default(false) @map("consent_email")
+  consentCalls    Boolean @default(false) @map("consent_calls")
+
+  createdById String?   @map("created_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(6)
+  deletedById String?   @map("deleted_by_id") @db.Uuid
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch       Branch?       @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict, map: "leads_branch_same_org_fk")
+  team         Team?         @relation(fields: [organizationId, teamId], references: [organizationId, id], onDelete: Restrict, map: "leads_team_same_org_fk")
+  /// Through Membership, not User: "assigned to someone in another tenant" is unrepresentable.
+  assignee     Membership?   @relation("lead_assignee", fields: [organizationId, assignedUserId], references: [organizationId, userId], onDelete: Restrict, map: "leads_assignee_same_org_fk")
+  status       LeadStatus    @relation(fields: [organizationId, statusId], references: [organizationId, id], onDelete: Restrict, map: "leads_status_same_org_fk")
+  pipeline     Pipeline      @relation(fields: [organizationId, pipelineId], references: [organizationId, id], onDelete: Restrict, map: "leads_pipeline_same_org_fk")
+  stage        PipelineStage @relation(fields: [organizationId, stageId], references: [organizationId, id], onDelete: Restrict, map: "leads_stage_same_org_fk")
+  source       LeadSource?   @relation(fields: [organizationId, leadSourceId], references: [organizationId, id], onDelete: Restrict, map: "leads_source_same_org_fk")
+  lostReason   LostReason?   @relation(fields: [organizationId, lostReasonId], references: [organizationId, id], onDelete: Restrict, map: "leads_lost_reason_same_org_fk")
+
+  tags          LeadTag[]
+  touchpoints   LeadTouchpoint[]
+  assignments   LeadAssignment[]
+  statusHistory LeadStatusHistory[]
+  stageHistory  LeadStageHistory[]
+
+  @@unique([organizationId, id], name: "lead_tenant_key")
+  /// The default list.
+  @@index([organizationId, createdAt(sort: Desc)])
+  /// The executive's Today view.
+  @@index([organizationId, assignedUserId, nextActionAt])
+  /// Kanban columns, one page per column.
+  @@index([organizationId, stageId, updatedAt(sort: Desc)])
+  @@index([organizationId, statusId])
+  /// Duplicate detection and phone search.
+  @@index([organizationId, phoneE164])
+  @@index([organizationId, whatsappE164])
+  @@index([organizationId, leadSourceId, createdAt])
+  @@index([organizationId, score(sort: Desc)])
+  /// Ageing and recycling.
+  @@index([organizationId, lastActivityAt])
+  /// The recycle bin.
+  @@index([organizationId, deletedAt])
+  @@map("leads")
+}
+
+/// The attribution spine (`FR-ATT-1`). **Never overwritten**: a second capture of the same person
+/// appends a row, which is what makes "same phone from three channels ⇒ one lead, three touchpoints"
+/// true rather than aspirational.
+model LeadTouchpoint {
+  id               String            @id @db.Uuid
+  organizationId   String            @map("organization_id") @db.Uuid
+  leadId           String            @map("lead_id") @db.Uuid
+  /// 1-based, per lead. Makes "first touch" and "last touch" attribution a lookup, not a sort guess.
+  sequence         Int
+  occurredAt       DateTime          @map("occurred_at") @db.Timestamptz(6)
+  channel          TouchpointChannel
+  leadSourceId     String?           @map("lead_source_id") @db.Uuid
+  landingPageUrl   String?           @map("landing_page_url")
+  utm              Json              @default("{}") @db.JsonB
+  sessionId        String?           @map("session_id")
+  /// False for touchpoints that must not be counted against ad spend (a manual entry, an import).
+  costAttributable Boolean           @default(false) @map("cost_attributable")
+  metadata         Json              @default("{}") @db.JsonB
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lead         Lead         @relation(fields: [organizationId, leadId], references: [organizationId, id], onDelete: Cascade, map: "lead_touchpoints_lead_same_org_fk")
+  source       LeadSource?  @relation(fields: [organizationId, leadSourceId], references: [organizationId, id], onDelete: Restrict, map: "lead_touchpoints_source_same_org_fk")
+
+  @@unique([organizationId, id], name: "lead_touchpoint_tenant_key")
+  @@unique([organizationId, leadId, sequence])
+  @@index([organizationId, leadId, occurredAt])
+  @@index([organizationId, channel, occurredAt])
+  @@map("lead_touchpoints")
+}
+
+/// Assignment history (`FR-ASG-5`). Kept separate from the timeline because a manager asks
+/// "who has had this lead" as a structured question, not as prose to read.
+model LeadAssignment {
+  id             String   @id @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  leadId         String   @map("lead_id") @db.Uuid
+  fromUserId     String?  @map("from_user_id") @db.Uuid
+  toUserId       String?  @map("to_user_id") @db.Uuid
+  toTeamId       String?  @map("to_team_id") @db.Uuid
+  assignedById   String?  @map("assigned_by_id") @db.Uuid
+  /// Why this assignment happened: manual, a rule's name, a fallback, a round-robin turn.
+  reason         String?
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lead         Lead         @relation(fields: [organizationId, leadId], references: [organizationId, id], onDelete: Cascade, map: "lead_assignments_lead_same_org_fk")
+
+  @@unique([organizationId, id], name: "lead_assignment_tenant_key")
+  @@index([organizationId, leadId, createdAt])
+  @@index([organizationId, toUserId, createdAt])
+  @@map("lead_assignments")
+}
+
+/// Status transitions with the time spent in the previous status — the raw material for
+/// "leads sit in Contacted for 9 days on average", which no amount of current-state querying can answer.
+model LeadStatusHistory {
+  id              String   @id @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  leadId          String   @map("lead_id") @db.Uuid
+  fromStatusId    String?  @map("from_status_id") @db.Uuid
+  toStatusId      String   @map("to_status_id") @db.Uuid
+  changedById     String?  @map("changed_by_id") @db.Uuid
+  durationSeconds Int?     @map("duration_seconds")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lead         Lead         @relation(fields: [organizationId, leadId], references: [organizationId, id], onDelete: Cascade, map: "lead_status_history_lead_same_org_fk")
+  fromStatus   LeadStatus?  @relation("lead_status_history_from", fields: [organizationId, fromStatusId], references: [organizationId, id], onDelete: Restrict, map: "lead_status_history_from_same_org_fk")
+  toStatus     LeadStatus   @relation("lead_status_history_to", fields: [organizationId, toStatusId], references: [organizationId, id], onDelete: Restrict, map: "lead_status_history_to_same_org_fk")
+
+  @@unique([organizationId, id], name: "lead_status_history_tenant_key")
+  @@index([organizationId, leadId, createdAt])
+  @@index([organizationId, toStatusId, createdAt])
+  @@map("lead_status_history")
+}
+
+model LeadStageHistory {
+  id              String   @id @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  leadId          String   @map("lead_id") @db.Uuid
+  fromStageId     String?  @map("from_stage_id") @db.Uuid
+  toStageId       String   @map("to_stage_id") @db.Uuid
+  changedById     String?  @map("changed_by_id") @db.Uuid
+  durationSeconds Int?     @map("duration_seconds")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lead         Lead           @relation(fields: [organizationId, leadId], references: [organizationId, id], onDelete: Cascade, map: "lead_stage_history_lead_same_org_fk")
+  fromStage    PipelineStage? @relation("lead_stage_history_from", fields: [organizationId, fromStageId], references: [organizationId, id], onDelete: Restrict, map: "lead_stage_history_from_same_org_fk")
+  toStage      PipelineStage  @relation("lead_stage_history_to", fields: [organizationId, toStageId], references: [organizationId, id], onDelete: Restrict, map: "lead_stage_history_to_same_org_fk")
+
+  @@unique([organizationId, id], name: "lead_stage_history_tenant_key")
+  @@index([organizationId, leadId, createdAt])
+  @@index([organizationId, toStageId, createdAt])
+  @@map("lead_stage_history")
+}
+
+/// The append-only timeline (ADR-0009). Rule 6: anything a business owner would want to see on a
+/// lead is written here, and a feature that skips it is unfinished.
+///
+/// **Partitioned monthly by `occurred_at`**, which forces two departures from this schema's usual
+/// shape, both required by PostgreSQL rather than chosen:
+///
+///  * the primary key must contain the partition key, hence `@@id([id, occurredAt])`;
+///  * a unique constraint must contain the partition key, so the idempotency key is
+///    `(organization_id, source_event_id, occurred_at)` rather than the pair named in ADR-0009.
+///    That still makes a retry a no-op **provided `occurred_at` comes from the event** and never from
+///    `now()` — which is why `TimelineService` requires it as an argument.
+///
+/// Subject columns for customers, deals and conversations arrive with those tables; adding a column
+/// to a partitioned table propagates to every partition, so there is nothing to retrofit.
+model Activity {
+  id             String             @db.Uuid
+  organizationId String             @map("organization_id") @db.Uuid
+  leadId         String?            @map("lead_id") @db.Uuid
+  /// A string from `ACTIVITY_TYPES` in `@leados/shared`, not a database enum: adding a type must not
+  /// need a migration, and a row written by an older release must still read (`FR-TL-3`).
+  type           String
+  actorType      ActorType          @default(user) @map("actor_type")
+  actorId        String?            @map("actor_id") @db.Uuid
+  /// Denormalized so a timeline renders without joining a person who may since have left.
+  actorLabel     String?            @map("actor_label")
+  /// When it happened, not when it was recorded. The partition key, and the idempotency anchor.
+  occurredAt     DateTime           @map("occurred_at") @db.Timestamptz(6)
+  /// A snapshot of what was true then. Deliberately allowed to drift from current state.
+  payload        Json               @default("{}") @db.JsonB
+  visibility     ActivityVisibility @default(all)
+  /// The domain event that produced this row, when there was one. Makes a job retry a no-op.
+  sourceEventId  String?            @map("source_event_id") @db.Uuid
+  createdAt      DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@id([id, occurredAt])
+  @@unique([organizationId, id, occurredAt], name: "activity_tenant_key")
+  @@unique([organizationId, sourceEventId, occurredAt], name: "activity_idempotency_key")
+  @@index([organizationId, leadId, occurredAt(sort: Desc)])
+  @@index([organizationId, type, occurredAt(sort: Desc)])
+  @@index([organizationId, actorId, occurredAt(sort: Desc)])
+  @@map("activities")
 }

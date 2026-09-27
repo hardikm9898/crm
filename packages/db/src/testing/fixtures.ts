@@ -25,6 +25,11 @@ export interface TestTenant {
   teamId: string;
   roleId: string;
   userId: string;
+  // Phase 2 — so the isolation suite can prove the CRM's own composite foreign keys.
+  statusId: string;
+  pipelineId: string;
+  stageId: string;
+  leadId: string;
   principal: TenantPrincipal;
 }
 
@@ -106,6 +111,32 @@ async function createTenant(db: UnscopedDbClient, label: string): Promise<TestTe
   });
   await db.userRole.create({ data: { id: newId(), organizationId, userId, roleId } });
 
+  // The minimum CRM vocabulary a lead needs. Written directly rather than through
+  // `seedCrmDefaults` so the fixture stays small and its ids are predictable to the tests.
+  const statusId = newId();
+  const pipelineId = newId();
+  const stageId = newId();
+  const leadId = newId();
+  await db.leadStatus.create({
+    data: { id: statusId, organizationId, name: 'New', category: 'open', isDefault: true },
+  });
+  await db.pipeline.create({
+    data: { id: pipelineId, organizationId, name: 'Sales', entityType: 'lead', isDefault: true },
+  });
+  await db.pipelineStage.create({
+    data: { id: stageId, organizationId, pipelineId, name: 'Enquiry', sortOrder: 0 },
+  });
+  await db.lead.create({
+    data: {
+      id: leadId,
+      organizationId,
+      fullName: `Lead ${label}`,
+      statusId,
+      pipelineId,
+      stageId,
+    },
+  });
+
   return {
     organizationId,
     slug,
@@ -113,6 +144,10 @@ async function createTenant(db: UnscopedDbClient, label: string): Promise<TestTe
     teamId,
     roleId,
     userId,
+    statusId,
+    pipelineId,
+    stageId,
+    leadId,
     principal: {
       ...systemPrincipal(organizationId, `test-${label}`),
       actorType: 'user',

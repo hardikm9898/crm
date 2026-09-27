@@ -34,6 +34,7 @@ export const JOBS = {
   INVITATION_EXPIRE: 'maintenance.invitation-expire',
   TRIAL_CHECK: 'maintenance.trial-check',
   OUTBOX_REAP: 'maintenance.outbox-reap',
+  ACTIVITY_PARTITIONS: 'maintenance.activity-partitions',
 } as const;
 
 export type JobName = (typeof JOBS)[keyof typeof JOBS];

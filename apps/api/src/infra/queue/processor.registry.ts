@@ -7,6 +7,7 @@ import {
 import { InvitationMailProcessor } from '../../modules/users/processors/invitation-mail.processor.js';
 import {
   InvitationExpiryProcessor,
+  ActivityPartitionProcessor,
   OutboxReapProcessor,
   SessionPruneProcessor,
   TrialCheckProcessor,
@@ -42,6 +43,7 @@ export const PROCESSOR_TYPES: readonly Type<JobProcessor>[] = [
   InvitationExpiryProcessor,
   TrialCheckProcessor,
   OutboxReapProcessor,
+  ActivityPartitionProcessor,
 ];
 
 /** Resolves the processors from a Nest context (application or test). */

@@ -207,7 +207,7 @@ Rules:
 
 ```
 id, organization_id, branch_id?, team_id?, assigned_user_id?,
-first_name, last_name, full_name (generated), company,
+first_name, last_name, full_name (application-maintained*), company, job_title?,
 phone_e164?, phone_raw?, whatsapp_e164?, email?,
 city?, state?, country?, postal_code?, timezone?,
 lead_source_id?, campaign_id?, ad_entity_id?, form_id?, website_id?, landing_page_url?,
@@ -226,6 +226,19 @@ consent_whatsapp BOOL, consent_email BOOL, consent_calls BOOL,
 created_by_id?, created_via (manual|form|api|webhook|import|whatsapp|meta_ads|google_ads|website),
 created_at, updated_at, deleted_at
 ```
+
+\* _Deviation:_ `full_name` is maintained by the application rather than being a generated column, for
+the same reason `updated_at` is not a trigger (§16.10) — Prisma sends every column it knows about and
+would fight a generated one. It is derived in one place (`buildFullName`) and falls back to the company,
+the email, then the phone number, because an unnamed enquiry from a phone number is still a lead.
+
+**Columns deferred to the step that brings their table.** `customer_id`, `campaign_id`, `ad_entity_id`,
+`form_id`, `website_id`, `next_action_task_id`, `is_duplicate_of_id`, `merged_into_id`,
+`sla_first_response_*` and `sla_state` are absent from the Phase 2 step-1 schema rather than present as
+unconstrained uuids: a nullable id with no foreign key is a column nothing can trust. They arrive with
+`customers`, `campaigns`, `forms`, `websites`, `tasks`, `lead_duplicates` and `sla_policies`
+respectively. `score` and `score_band` **are** present, because the columns are scalars and the scoring
+engine writes them without a new table.
 
 Indexes (all `WHERE deleted_at IS NULL` where applicable):
 
@@ -517,7 +530,7 @@ nightly job that respects `retention_policies` and legal holds.
 1. Composite FKs on every tenant child row (`FR-TEN-4`).
 2. `CHECK (status_id IS NOT NULL)` style guards plus FK to tenant config tables — a lead cannot hold another tenant's status.
 3. `UNIQUE (provider, provider_message_id)` on `messages`; `UNIQUE (organization_id, provider, external_event_id)` on `provider_events` — duplicate webhooks are impossible, not merely unlikely.
-4. `UNIQUE (organization_id, source_event_id)` on `activities` — duplicate timeline entries impossible under retry.
+4. `UNIQUE (organization_id, source_event_id, occurred_at)` on `activities` — duplicate timeline entries impossible under retry. _Deviation, forced by PostgreSQL:_ a unique constraint on a partitioned table must contain the partition key, so `occurred_at` is part of it and the primary key is `(id, occurred_at)`. The guarantee holds because `occurred_at` comes from the event, never from `now()` — see [ADR-0009](./decisions/ADR-0009-append-only-timeline.md#amendment-2026-09-27-implementation).
 5. `UNIQUE (organization_id, channel, idempotency_key)` on `inbound_payloads` and `idempotency_keys` — duplicate lead creation impossible under client retry.
 6. `EXCLUDE`/partial unique on `sla_clocks` so one subject has at most one active clock per policy.
 7. `CHECK (amount_minor >= 0)` on money; `CHECK (currency ~ '^[A-Z]{3}$')`.

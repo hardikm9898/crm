@@ -52,6 +52,15 @@ export const SCHEDULES: readonly ScheduleDefinition[] = [
     cron: '*/5 * * * *',
     description: 'Surface outbox events that are not being dispatched',
   },
+  {
+    queue: QUEUES.MAINTENANCE,
+    jobName: JOBS.ACTIVITY_PARTITIONS,
+    // Daily, well ahead of need. `activities` is partitioned monthly, and a month with no partition
+    // sends every timeline write to the default partition — which then blocks attaching the real
+    // one. Cheap to run, expensive to have forgotten.
+    cron: '41 2 * * *',
+    description: 'Pre-create upcoming activity partitions and report rows in the default one',
+  },
 ];
 
 const HEARTBEAT_INTERVAL_MS = 30_000;

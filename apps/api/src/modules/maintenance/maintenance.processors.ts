@@ -199,3 +199,58 @@ export class OutboxReapProcessor implements JobProcessor {
     });
   }
 }
+
+/**
+ * Keeps the `activities` table's partitions ahead of the calendar.
+ *
+ * Two jobs in one, because they are two halves of the same invariant:
+ *
+ *  * **Create the next few months' partitions.** A month with no partition does not fail — rows land
+ *    in `activities_default` — but that is the problem: the default then holds rows overlapping the
+ *    month, and PostgreSQL refuses to attach the real partition until they are moved. Running daily,
+ *    months ahead, means that never happens.
+ *  * **Report what is sitting in the default partition.** Rows arrive there from backdated imports and
+ *    from clock skew. They work, but they are un-prunable by the retention job and they block the
+ *    attach above, so they are surfaced rather than left to be discovered during an incident.
+ */
+const PARTITION_MONTHS_AHEAD = 3;
+
+@Injectable()
+export class ActivityPartitionProcessor implements JobProcessor {
+  readonly queue = QUEUES.MAINTENANCE;
+  readonly jobName = JOBS.ACTIVITY_PARTITIONS;
+
+  constructor(
+    private readonly db: DbService,
+    @Inject(LOGGER) private readonly logger: Logger,
+  ) {}
+
+  async process(_payload: JobPayload, _job: Job): Promise<void> {
+    await withPlatformScope('maintenance: activity partitions', async () => {
+      const created: string[] = [];
+      for (let month = 0; month <= PARTITION_MONTHS_AHEAD; month += 1) {
+        const target = new Date();
+        target.setUTCMonth(target.getUTCMonth() + month, 1);
+        const [row] = await this.db.client.$queryRaw<{ ensure_activity_partition: string }[]>`
+          SELECT ensure_activity_partition(${target}::timestamptz)
+        `;
+        if (row) created.push(row.ensure_activity_partition);
+      }
+
+      const [stranded] = await this.db.client.$queryRaw<{ count: bigint }[]>`
+        SELECT count(*)::bigint AS count FROM activities_default
+      `;
+      const strandedCount = Number(stranded?.count ?? 0n);
+
+      if (strandedCount > 0) {
+        // Warn, not error: the rows are readable and the product works. What they block is the next
+        // attach, which is a scheduled problem rather than an outage.
+        this.logger.warn(
+          { strandedCount },
+          'activities are sitting in the default partition; they block attaching the months they belong to',
+        );
+      }
+      this.logger.info({ partitions: created, strandedCount }, 'activity partitions checked');
+    });
+  }
+}

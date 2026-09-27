@@ -125,6 +125,65 @@ filter DSL + saved views; global search (tsvector + trgm); customers + conversio
 - payments (manual); import wizard + export jobs; bulk actions; lead list/detail/kanban UI; industry
   templates + onboarding wizard.
 
+### Step 1 — the lead model ✅ _(landed 2026-09-27)_
+
+The foundation the rest of Phase 2 is built on: the things a tenant shapes, the lead itself, and the
+timeline every later feature writes to.
+
+- **The custom-field engine.** Definitions, sections and options, with one registry in
+  `@leados/shared` describing each of the 17 types: its stored shape, whether it takes options, which
+  validation rules it honours, which filter operators it supports, whether it feeds search. The API
+  validates against that registry, the client renders from it (it travels with each definition as
+  `capabilities`), and `validateCustomValues` — pure, no database — is tested against **every type in
+  it**, so a type cannot be declared and left unimplemented. `key`, `type` and `entityType` are
+  immutable and a deleted key is never reusable, because all three appear in stored JSONB, saved views
+  and import mappings. Deleting a field keeps its values; retiring an option keeps the choices already
+  recorded while stopping new ones.
+- **The tenant's vocabulary as rows** (rule 4): statuses with a `category` code branches on instead of
+  a name, sources with a cost model, lost reasons that can demand a note, pipelines, stages with
+  required fields, and tags. Configuration still in use cannot be deleted — the refusal carries the
+  count and points at deactivation, because attribution and loss reports read _historical_
+  configuration. One default status and one default pipeline are enforced by partial unique indexes
+  rather than by a read-then-write.
+- **Leads.** CRUD, soft delete with a recycle bin, E.164 normalization that keeps what was typed,
+  transitions as endpoints rather than fields (each with its own permission, preconditions and history
+  table), manual assignment, tags, and full-text plus trigram search that finds a lead by the last four
+  digits of a number or a misspelt name. Reads are scoped twice: by grant for the list, and by
+  `canAct` on the row — knowing an id is never authority, and both answer 404 rather than 403.
+- **The append-only timeline** ([ADR-0009](./decisions/ADR-0009-append-only-timeline.md)),
+  monthly-partitioned, with the type registry as a code constant so a new event type needs no
+  migration. Every lead mutation writes its entry inside the same transaction as the change, so a lead
+  that moved with nothing knowing why is not a reachable state (rule 6).
+- **Every new organization is provisioned with a working vocabulary**, from the same definition the
+  development seed uses — a workspace with no default status is one where lead creation fails, which is
+  the half-provisioned state rule 18 forbids.
+- **15 new tables**, 26 new composite foreign keys, and hand-written SQL Prisma cannot express:
+  the partitioned `activities` table with an idempotent partition-creation function, a trigger-maintained
+  `search_vector`, trigram and `jsonb_path_ops` GIN indexes, partial indexes for "unassigned" and "no
+  next action", and a composite FK that makes **a lead in a stage of a different pipeline
+  unrepresentable** — the kind of corruption that surfaces as a kanban rendering a lead in a column
+  that is not on its board.
+
+**430 tests green** (210 unit, 220 integration). The isolation suite grew from 27 to 37, adding the CRM's
+own composite foreign keys; the generated route sweep now covers all 26 new parameterised routes
+cross-tenant; **95 routes** (13 public, 13 exempt, 69 permission-gated). Fifteen database guarantees were
+verified directly against PostgreSQL before any application code was written on top of them, and the
+whole surface was then exercised over HTTP against the built artifact (78 checks).
+
+Two Phase 0 statements were corrected by contact with PostgreSQL and are recorded where they were made:
+[ADR-0009](./decisions/ADR-0009-append-only-timeline.md#amendment-2026-09-27-implementation) (a unique
+constraint on a partitioned table must contain the partition key, so the idempotency key is
+`(organization_id, source_event_id, occurred_at)` and `occurred_at` must come from the event) and
+[§6.1](./database-design.md) (`full_name` is application-maintained, not a generated column, for the
+same reason `updated_at` is not a trigger).
+
+**Deferred, and why:** duplicate detection and merge, the assignment engine, scoring, the filter DSL and
+saved views, import/export, bulk actions, customers, deals and the lead UI are later steps. Columns whose
+tables do not exist yet (`customer_id`, `campaign_id`, `next_action_task_id`, the SLA columns…) are
+**absent** rather than present as unconstrained uuids — a nullable id with no foreign key is a column
+nothing can trust. The expression-index job behind `is_indexed` is not built; filterable-but-unindexed
+fields work through the GIN index today and it arrives with the filter DSL.
+
 **Exit criteria**
 
 - Creating a custom field of every supported type requires **no migration and no deploy**, and that

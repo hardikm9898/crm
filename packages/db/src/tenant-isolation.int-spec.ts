@@ -323,3 +323,180 @@ describe('append-only audit log (FR-AUD-2)', () => {
     );
   });
 });
+
+describe('layer 3 — the CRM core cannot reference across tenants either', () => {
+  /**
+   * Every one of these uses the UNSCOPED client on purpose: the scoping extension already stops
+   * them, so what is being proved is that the *database* stops them too. That is the layer that
+   * survives an application bug (docs/security.md §3, layer 3).
+   */
+  it('blocks a lead pointing at another tenant status', async () => {
+    await expect(
+      h.unscoped.lead.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          fullName: 'Cross-tenant status',
+          statusId: h.orgB.statusId,
+          pipelineId: h.orgA.pipelineId,
+          stageId: h.orgA.stageId,
+        },
+      }),
+    ).rejects.toThrow(/leads_status_same_org_fk|foreign key/i);
+  });
+
+  it('blocks a lead pointing at another tenant pipeline', async () => {
+    await expect(
+      h.unscoped.lead.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          fullName: 'Cross-tenant pipeline',
+          statusId: h.orgA.statusId,
+          pipelineId: h.orgB.pipelineId,
+          stageId: h.orgB.stageId,
+        },
+      }),
+    ).rejects.toThrow(/leads_pipeline_same_org_fk|leads_stage|foreign key/i);
+  });
+
+  it('blocks a lead in a stage belonging to a different pipeline of the SAME tenant', async () => {
+    // Not a tenancy bug but a correctness one: a lead in a column that is not on its board makes
+    // the kanban lie. The composite FK on (organization_id, pipeline_id, stage_id) catches it.
+    const otherPipelineId = newId();
+    const otherStageId = newId();
+    await h.unscoped.pipeline.create({
+      data: {
+        id: otherPipelineId,
+        organizationId: h.orgA.organizationId,
+        name: `Other ${newId().slice(0, 8)}`,
+        entityType: 'lead',
+      },
+    });
+    await h.unscoped.pipelineStage.create({
+      data: {
+        id: otherStageId,
+        organizationId: h.orgA.organizationId,
+        pipelineId: otherPipelineId,
+        name: 'Elsewhere',
+        sortOrder: 0,
+      },
+    });
+
+    await expect(
+      h.unscoped.lead.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          fullName: 'Wrong column',
+          statusId: h.orgA.statusId,
+          pipelineId: h.orgA.pipelineId,
+          stageId: otherStageId,
+        },
+      }),
+    ).rejects.toThrow(/leads_stage_in_pipeline_fk|foreign key/i);
+
+    await h.unscoped.pipelineStage.delete({ where: { id: otherStageId } });
+    await h.unscoped.pipeline.delete({ where: { id: otherPipelineId } });
+  });
+
+  it('blocks a tag applied to another tenant lead', async () => {
+    const tagId = newId();
+    await h.unscoped.tag.create({
+      data: { id: tagId, organizationId: h.orgA.organizationId, name: `t-${tagId.slice(0, 8)}` },
+    });
+    await expect(
+      h.unscoped.leadTag.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          leadId: h.orgB.leadId,
+          tagId,
+        },
+      }),
+    ).rejects.toThrow(/lead_tags_lead_same_org_fk|foreign key/i);
+    await h.unscoped.tag.delete({ where: { id: tagId } });
+  });
+
+  it('blocks a custom field option pointing at another tenant definition', async () => {
+    const definitionId = newId();
+    await h.unscoped.customFieldDefinition.create({
+      data: {
+        id: definitionId,
+        organizationId: h.orgB.organizationId,
+        entityType: 'lead',
+        key: 'orgb_only',
+        label: 'Org B only',
+        type: 'select',
+      },
+    });
+    await expect(
+      h.unscoped.customFieldOption.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          definitionId,
+          value: 'x',
+          label: 'X',
+        },
+      }),
+    ).rejects.toThrow(/custom_field_options_definition_same_org_fk|foreign key/i);
+    await h.unscoped.customFieldDefinition.delete({ where: { id: definitionId } });
+  });
+
+  it('blocks a touchpoint attached to another tenant lead', async () => {
+    await expect(
+      h.unscoped.leadTouchpoint.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          leadId: h.orgB.leadId,
+          sequence: 1,
+          occurredAt: new Date(),
+          channel: 'manual',
+        },
+      }),
+    ).rejects.toThrow(/lead_touchpoints_lead_same_org_fk|foreign key/i);
+  });
+});
+
+describe('layer 2 — the CRM models are scoped like every other tenant table', () => {
+  it('shows each tenant only its own leads', async () => {
+    const a = await tenantContext.run(h.orgA.principal, async () => h.db.lead.findMany({}));
+    const b = await tenantContext.run(h.orgB.principal, async () => h.db.lead.findMany({}));
+    expect(a.every((lead) => lead.organizationId === h.orgA.organizationId)).toBe(true);
+    expect(b.every((lead) => lead.organizationId === h.orgB.organizationId)).toBe(true);
+    expect(a.some((lead) => lead.id === h.orgB.leadId)).toBe(false);
+  });
+
+  it('returns null for another tenant lead addressed by primary key', async () => {
+    const found = await tenantContext.run(h.orgA.principal, async () =>
+      h.db.lead.findUnique({ where: { id: h.orgB.leadId } }),
+    );
+    expect(found).toBeNull();
+  });
+
+  it('scopes the partitioned activities table too', async () => {
+    const occurredAt = new Date();
+    await tenantContext.run(h.orgA.principal, async () =>
+      h.db.activity.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          leadId: h.orgA.leadId,
+          type: 'lead.created',
+          occurredAt,
+        },
+      }),
+    );
+    const seenByB = await tenantContext.run(h.orgB.principal, async () =>
+      h.db.activity.findMany({}),
+    );
+    // Partitioning changes the storage, not the isolation.
+    expect(seenByB.every((entry) => entry.organizationId === h.orgB.organizationId)).toBe(true);
+  });
+
+  it('refuses a lead read with no tenant context at all', async () => {
+    await expect(h.db.lead.findMany({})).rejects.toThrow(/No tenant context/);
+  });
+});

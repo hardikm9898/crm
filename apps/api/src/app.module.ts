@@ -7,6 +7,7 @@ import { CryptoModule } from './infra/crypto/crypto.module.js';
 import { MailModule } from './infra/mail/mail.module.js';
 import { AuditModule } from './infra/audit/audit.module.js';
 import { OutboxModule } from './infra/outbox/outbox.module.js';
+import { TimelineModule } from './infra/timeline/timeline.module.js';
 import { QueueModule } from './infra/queue/queue.module.js';
 import { MaintenanceModule } from './modules/maintenance/maintenance.module.js';
 import { LoggerModule } from './infra/observability/logger.module.js';
@@ -22,6 +23,9 @@ import { IamModule } from './modules/iam/iam.module.js';
 import { NotificationsModule } from './modules/notifications/notifications.module.js';
 import { AuthGuard } from './modules/auth/guards/auth.guard.js';
 import { OrganizationsModule } from './modules/organizations/organizations.module.js';
+import { CustomFieldsModule } from './modules/custom-fields/custom-fields.module.js';
+import { CrmConfigModule } from './modules/crm-config/crm-config.module.js';
+import { LeadsModule } from './modules/leads/leads.module.js';
 import { HealthModule } from './modules/health/health.module.js';
 
 /**
@@ -39,6 +43,7 @@ import { HealthModule } from './modules/health/health.module.js';
     MailModule,
     AuditModule,
     OutboxModule,
+    TimelineModule,
     QueueModule,
     AuthzModule,
     EntitlementsModule,
@@ -47,6 +52,10 @@ import { HealthModule } from './modules/health/health.module.js';
     UsersModule,
     IamModule,
     NotificationsModule,
+    // Phase 2 — CRM core
+    CustomFieldsModule,
+    CrmConfigModule,
+    LeadsModule,
     MaintenanceModule,
     HealthModule,
   ],

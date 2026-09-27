@@ -35,6 +35,16 @@ interface Tenant {
   branchId: string;
   invitationId: string;
   notificationId: string;
+  // Phase 2 — every parameterised CRM route needs a real id of this tenant's to aim at.
+  leadId: string;
+  statusId: string;
+  sourceId: string;
+  lostReasonId: string;
+  tagId: string;
+  pipelineId: string;
+  stageId: string;
+  customFieldId: string;
+  customFieldSectionId: string;
 }
 
 let orgA: Tenant;
@@ -92,6 +102,43 @@ async function createTenant(label: string): Promise<Tenant> {
     },
   });
 
+  // The CRM vocabulary is provisioned with the organization, so these are reads rather than writes.
+  const [status, source, lostReason, pipeline] = await Promise.all([
+    ctx.db.leadStatus.findFirstOrThrow({ where: { organizationId, isDefault: true } }),
+    ctx.db.leadSource.findFirstOrThrow({ where: { organizationId } }),
+    ctx.db.lostReason.findFirstOrThrow({ where: { organizationId } }),
+    ctx.db.pipeline.findFirstOrThrow({ where: { organizationId, isDefault: true } }),
+  ]);
+  const stage = await ctx.db.pipelineStage.findFirstOrThrow({
+    where: { organizationId, pipelineId: pipeline.id },
+    orderBy: { sortOrder: 'asc' },
+  });
+
+  const lead = await call<EnvelopeBody<{ id: string }>>(ctx.app, {
+    method: 'POST',
+    url: '/api/v1/leads',
+    payload: { firstName: 'Sweep', lastName: label },
+    token,
+  });
+  const tag = await call<EnvelopeBody<{ id: string }>>(ctx.app, {
+    method: 'POST',
+    url: '/api/v1/crm/tags',
+    payload: { name: `Sweep ${label} ${SUFFIX}` },
+    token,
+  });
+  const customField = await call<EnvelopeBody<{ id: string }>>(ctx.app, {
+    method: 'POST',
+    url: '/api/v1/custom-fields',
+    payload: { entityType: 'lead', key: 'sweep_note', label: 'Sweep note', type: 'text' },
+    token,
+  });
+  const section = await call<EnvelopeBody<{ id: string }>>(ctx.app, {
+    method: 'POST',
+    url: '/api/v1/custom-fields/sections',
+    payload: { entityType: 'lead', name: `Sweep ${label}` },
+    token,
+  });
+
   return {
     token,
     organizationId,
@@ -102,6 +149,15 @@ async function createTenant(label: string): Promise<Tenant> {
     branchId: branch.id,
     invitationId: invitation.body.data.invitationId,
     notificationId: notification.id,
+    leadId: lead.body.data.id,
+    statusId: status.id,
+    sourceId: source.id,
+    lostReasonId: lostReason.id,
+    tagId: tag.body.data.id,
+    pipelineId: pipeline.id,
+    stageId: stage.id,
+    customFieldId: customField.body.data.id,
+    customFieldSectionId: section.body.data.id,
   };
 }
 
@@ -212,6 +268,24 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       '/roles/:id': `/roles/${orgA.roleId}`,
       '/roles/:id/permissions': `/roles/${orgA.roleId}/permissions`,
       '/notifications/:id/read': `/notifications/${orgA.notificationId}/read`,
+      // Phase 2 — CRM core
+      '/custom-fields/:id': `/custom-fields/${orgA.customFieldId}`,
+      '/custom-fields/:id/options': `/custom-fields/${orgA.customFieldId}/options`,
+      '/custom-fields/sections/:id': `/custom-fields/sections/${orgA.customFieldSectionId}`,
+      '/crm/statuses/:id': `/crm/statuses/${orgA.statusId}`,
+      '/crm/sources/:id': `/crm/sources/${orgA.sourceId}`,
+      '/crm/lost-reasons/:id': `/crm/lost-reasons/${orgA.lostReasonId}`,
+      '/crm/tags/:id': `/crm/tags/${orgA.tagId}`,
+      '/crm/pipelines/:id': `/crm/pipelines/${orgA.pipelineId}`,
+      '/crm/pipelines/:id/stages': `/crm/pipelines/${orgA.pipelineId}/stages`,
+      '/leads/:id': `/leads/${orgA.leadId}`,
+      '/leads/:id/restore': `/leads/${orgA.leadId}/restore`,
+      '/leads/:id/status': `/leads/${orgA.leadId}/status`,
+      '/leads/:id/stage': `/leads/${orgA.leadId}/stage`,
+      '/leads/:id/assign': `/leads/${orgA.leadId}/assign`,
+      '/leads/:id/tags': `/leads/${orgA.leadId}/tags`,
+      '/leads/:id/touchpoints': `/leads/${orgA.leadId}/touchpoints`,
+      '/leads/:id/timeline': `/leads/${orgA.leadId}/timeline`,
     };
 
     // An unmapped parameter would test nothing meaningful, so it is reported instead.
@@ -281,6 +355,15 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       ['roleId', orgA.roleId],
       ['teamId', orgA.teamId],
       ['branchId', orgA.branchId],
+      ['leadId', orgA.leadId],
+      ['statusId', orgA.statusId],
+      ['sourceId', orgA.sourceId],
+      ['lostReasonId', orgA.lostReasonId],
+      ['tagId', orgA.tagId],
+      ['pipelineId', orgA.pipelineId],
+      ['stageId', orgA.stageId],
+      ['customFieldId', orgA.customFieldId],
+      ['customFieldSectionId', orgA.customFieldSectionId],
     ];
 
     const problems: string[] = [];
@@ -403,6 +486,52 @@ function bodyFor(
       return { roleIds: [target.roleId] };
     case '/notifications/:id/read':
     case '/notifications/read-all':
+      return {};
+    // Phase 2 — CRM core
+    case '/custom-fields':
+      return { entityType: 'lead', key: 'swept_field', label: 'Swept', type: 'text' };
+    case '/custom-fields/:id':
+      return { label: `Swept ${SUFFIX}` };
+    case '/custom-fields/:id/options':
+      return { options: [{ value: 'a', label: 'A' }] };
+    case '/custom-fields/sections':
+      return { entityType: 'lead', name: `Swept ${SUFFIX}` };
+    case '/custom-fields/sections/:id':
+      return { name: `Swept ${SUFFIX}` };
+    case '/crm/statuses':
+      return { name: `Swept status ${SUFFIX}`, category: 'open' };
+    case '/crm/statuses/:id':
+      return { name: `Swept status ${SUFFIX}` };
+    case '/crm/sources':
+    case '/crm/sources/:id':
+      return { name: `Swept source ${SUFFIX}` };
+    case '/crm/lost-reasons':
+    case '/crm/lost-reasons/:id':
+      return { name: `Swept reason ${SUFFIX}` };
+    case '/crm/tags':
+    case '/crm/tags/:id':
+      return { name: `Swept tag ${SUFFIX}` };
+    case '/crm/pipelines':
+      return { name: `Swept pipeline ${SUFFIX}`, stages: [{ name: 'One' }] };
+    case '/crm/pipelines/:id':
+      return { name: `Swept pipeline ${SUFFIX}` };
+    case '/crm/pipelines/:id/stages':
+      return { stages: [{ name: 'One' }] };
+    case '/leads':
+      return { firstName: 'Swept', lastName: 'Lead' };
+    case '/leads/:id':
+      return { city: 'Swept' };
+    case '/leads/:id/status':
+      return { statusId: target.statusId };
+    case '/leads/:id/stage':
+      return { stageId: target.stageId };
+    case '/leads/:id/assign':
+      return { assignedUserId: target.userId };
+    case '/leads/:id/tags':
+      return { tagIds: [target.tagId] };
+    case '/leads/:id/touchpoints':
+      return { channel: 'manual' };
+    case '/leads/:id/restore':
       return {};
     case '/auth/switch-org':
       return { organizationId: target.organizationId };
