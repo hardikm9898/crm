@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import {
   AppError,
   PERMISSIONS,
@@ -12,9 +12,6 @@ import { AuditService } from '../../infra/audit/audit.service.js';
 import { OutboxService } from '../../infra/outbox/outbox.service.js';
 import { EntitlementService } from '../../infra/entitlements/entitlement.service.js';
 import { DataScopeService, applyScopeFilter } from '../../infra/authz/data-scope.service.js';
-import { MAILER, type MailerPort } from '../../infra/mail/mailer.port.js';
-import { APP_CONFIG } from '../../infra/config/config.module.js';
-import type { AppConfig } from '../../infra/config/config.schema.js';
 import { PrincipalService } from '../auth/application/principal.service.js';
 import { TokenService } from '../auth/application/token.service.js';
 import type { InviteMemberInput, ListMembersQuery } from './members.dto.js';
@@ -53,8 +50,6 @@ export class MembersService {
     private readonly principals: PrincipalService,
     private readonly audit: AuditService,
     private readonly outbox: OutboxService,
-    @Inject(MAILER) private readonly mailer: MailerPort,
-    @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
   async list(query: ListMembersQuery): Promise<{
@@ -244,7 +239,6 @@ export class MembersService {
       throw AppError.conflict('An invitation is already pending for that email address');
     }
 
-    const token = newToken(32);
     const invitationId = newId();
     const expiresAt = new Date(Date.now() + INVITATION_TTL_HOURS * 3_600_000);
 
@@ -257,7 +251,9 @@ export class MembersService {
           roleId: input.roleId,
           teamId: input.teamId ?? null,
           branchId: input.branchId ?? null,
-          tokenHash: TokenService.hashToken(token),
+          // A placeholder hash keeps the column's uniqueness invariant while guaranteeing no
+          // usable link exists until the worker mints the real token at send time.
+          tokenHash: TokenService.hashToken(newToken(32)),
           invitedById: principal.actorId ?? null,
           expiresAt,
         },
@@ -275,18 +271,13 @@ export class MembersService {
           name: 'invitation.sent',
           aggregateType: 'invitation',
           aggregateId: invitationId,
-          payload: { organizationId, email: input.email, roleId: input.roleId },
+          payload: { invitationId, organizationId, email: input.email, roleId: input.roleId },
         },
       ]);
     });
 
-    await this.mailer.send({
-      to: input.email,
-      kind: 'invitation',
-      subject: 'You have been invited to a workspace',
-      text: `You have been invited to join a workspace as ${role.name}.\n\n${this.config.WEB_ORIGIN}/accept-invitation?token=${token}\n\nThis invitation expires in ${INVITATION_TTL_HOURS} hours.`,
-    });
-
+    // The email is sent by InvitationMailProcessor, reached through the outbox — so the request
+    // does not wait on a mail provider, and the send survives a crash here.
     return { invitationId, expiresAt };
   }
 

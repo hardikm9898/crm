@@ -51,6 +51,8 @@ export const PLATFORM_MODELS = [
   'PasswordReset',
   'EmailVerification',
   'MfaRecoveryCode',
+  'JobFailure',
+  'SchedulerHeartbeat',
 ] as const;
 
 export function isTenantModel(model: string | undefined): model is TenantModel {

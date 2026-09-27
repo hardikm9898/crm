@@ -1,62 +1,58 @@
-import { createHash, randomBytes } from 'node:crypto';
-import { Inject, Injectable } from '@nestjs/common';
-import { AppError, newId, withPlatformScope } from '@leados/shared';
+import { createHash } from 'node:crypto';
+import { Injectable } from '@nestjs/common';
+import { AppError, withPlatformScope } from '@leados/shared';
 import { DbService } from '../../../infra/db/db.service.js';
-import { APP_CONFIG } from '../../../infra/config/config.module.js';
-import type { AppConfig } from '../../../infra/config/config.schema.js';
-import { MAILER, type MailerPort } from '../../../infra/mail/mailer.port.js';
-import { requestStore } from '../../../infra/http/request-store.js';
+import { OutboxService } from '../../../infra/outbox/outbox.service.js';
 import { PasswordService } from './password.service.js';
 import { SessionService } from './session.service.js';
 
 /**
  * Email verification and password reset (FR-IAM-1).
  *
- * Shared properties of both flows:
+ * **Sending happens in a worker, not here.** The request records the intent as a domain event and
+ * returns; the processor mints the single-use token and sends the email. Two reasons: an HTTP
+ * handler must never wait on an email provider (Rule 17), and a token that is minted at send time
+ * never exists in the outbox table or a queue payload.
+ *
+ * Shared properties of both flows (token minting and TTLs live in the processors):
  *  • Only a hash of the token is stored; the plaintext exists in the email alone.
- *  • Single use, short expiry, and previous outstanding tokens are invalidated on issue.
+ *  • Single use, and previous outstanding tokens are invalidated on issue.
  *  • Requesting a reset for an unknown address returns the same response as a known one —
  *    otherwise the endpoint becomes an account-enumeration oracle.
  *  • Completing a reset revokes every existing session: if the password was reset because
  *    of a compromise, leaving the attacker's session alive defeats the point.
  */
-const VERIFICATION_TTL_HOURS = 72;
-const RESET_TTL_MINUTES = 60;
-
 @Injectable()
 export class CredentialRecoveryService {
   constructor(
     private readonly db: DbService,
     private readonly passwords: PasswordService,
     private readonly sessions: SessionService,
-    @Inject(MAILER) private readonly mailer: MailerPort,
-    @Inject(APP_CONFIG) private readonly config: AppConfig,
+    private readonly outbox: OutboxService,
   ) {}
 
   // ── Email verification ────────────────────────────────────────────────────
 
-  async sendVerificationEmail(userId: string, email: string): Promise<void> {
-    const token = randomBytes(32).toString('base64url');
-    const expiresAt = new Date(Date.now() + VERIFICATION_TTL_HOURS * 3_600_000);
-
-    await withPlatformScope('auth: issue email verification', async () => {
+  /**
+   * Requests a verification email. Enqueued through the outbox, so the send survives a crash
+   * between this transaction and delivery.
+   */
+  async requestEmailVerification(userId: string, email: string): Promise<void> {
+    await withPlatformScope('auth: request email verification', async () => {
       await this.db.client.$transaction(async (tx) => {
-        await tx.emailVerification.updateMany({
-          where: { userId, verifiedAt: null },
-          data: { expiresAt: new Date() },
-        });
-        await tx.emailVerification.create({
-          data: { id: newId(), userId, email, tokenHash: hashToken(token), expiresAt },
-        });
+        await this.outbox.emit(
+          tx,
+          [
+            {
+              name: 'user.registered',
+              aggregateType: 'user',
+              aggregateId: userId,
+              payload: { userId, email },
+            },
+          ],
+          { organizationId: null },
+        );
       });
-    });
-
-    const link = `${this.config.WEB_ORIGIN}/verify-email?token=${token}`;
-    await this.mailer.send({
-      to: email,
-      kind: 'email_verification',
-      subject: 'Confirm your email address',
-      text: `Confirm your email address to finish setting up your account:\n\n${link}\n\nThis link expires in ${VERIFICATION_TTL_HOURS} hours.`,
     });
   }
 
@@ -97,36 +93,24 @@ export class CredentialRecoveryService {
     const user = await withPlatformScope('auth: find user for reset', async () =>
       this.db.client.user.findUnique({ where: { email: normalized } }),
     );
+    // Returning early for an unknown or disabled account keeps the response identical either way.
     if (!user || user.deletedAt !== null || user.status === 'disabled') return;
 
-    const token = randomBytes(32).toString('base64url');
-    const expiresAt = new Date(Date.now() + RESET_TTL_MINUTES * 60_000);
-
-    await withPlatformScope('auth: issue password reset', async () => {
+    await withPlatformScope('auth: request password reset', async () => {
       await this.db.client.$transaction(async (tx) => {
-        // Only the newest link works, so an older email cannot be replayed.
-        await tx.passwordReset.updateMany({
-          where: { userId: user.id, usedAt: null },
-          data: { expiresAt: new Date() },
-        });
-        await tx.passwordReset.create({
-          data: {
-            id: newId(),
-            userId: user.id,
-            tokenHash: hashToken(token),
-            requestedIp: requestStore.get()?.ip ?? null,
-            expiresAt,
-          },
-        });
+        await this.outbox.emit(
+          tx,
+          [
+            {
+              name: 'user.password_reset_requested',
+              aggregateType: 'user',
+              aggregateId: user.id,
+              payload: { userId: user.id },
+            },
+          ],
+          { organizationId: null },
+        );
       });
-    });
-
-    const link = `${this.config.WEB_ORIGIN}/reset-password?token=${token}`;
-    await this.mailer.send({
-      to: user.email,
-      kind: 'password_reset',
-      subject: 'Reset your password',
-      text: `Someone asked to reset the password for this account.\n\n${link}\n\nThis link expires in ${RESET_TTL_MINUTES} minutes. If it wasn't you, you can ignore this email.`,
     });
   }
 
@@ -169,11 +153,21 @@ export class CredentialRecoveryService {
     // The reset may be a response to a compromise; existing sessions must not survive it.
     await this.sessions.revokeAllForUser(record.userId, 'password_reset');
 
-    await this.mailer.send({
-      to: record.user.email,
-      kind: 'security_notice',
-      subject: 'Your password was changed',
-      text: 'Your password was just changed and you have been signed out on all devices. If this was not you, reset your password immediately.',
+    await withPlatformScope('auth: notify password change', async () => {
+      await this.db.client.$transaction(async (tx) => {
+        await this.outbox.emit(
+          tx,
+          [
+            {
+              name: 'user.password_changed',
+              aggregateType: 'user',
+              aggregateId: record.userId,
+              payload: { userId: record.userId },
+            },
+          ],
+          { organizationId: null },
+        );
+      });
     });
 
     return { userId: record.userId };

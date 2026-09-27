@@ -121,7 +121,7 @@ export class AuthService {
       country: input.country,
     });
 
-    await this.recovery.sendVerificationEmail(userId, email);
+    await this.recovery.requestEmailVerification(userId, email);
 
     const session = await this.sessions.issue({
       userId,

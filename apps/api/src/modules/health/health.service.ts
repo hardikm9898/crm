@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { withPlatformScope } from '@leados/shared';
 import { DbService } from '../../infra/db/db.service.js';
 import { RedisService } from '../../infra/redis/redis.service.js';
+import { QueueService } from '../../infra/queue/queue.service.js';
 import { APP_CONFIG } from '../../infra/config/config.module.js';
 import type { AppConfig } from '../../infra/config/config.schema.js';
 
@@ -34,6 +35,9 @@ export interface DeepHealthReport extends ReadinessReport {
     readonly unpublished: number;
     readonly oldestUnpublishedAgeSeconds: number | null;
   };
+  readonly queues: Record<string, Record<string, number>>;
+  readonly jobs: { readonly deadLettered: number; readonly oldestWaitingAgeSeconds: number | null };
+  readonly scheduler: { readonly instances: number; readonly lastBeatAgeSeconds: number | null };
 }
 
 /**
@@ -47,6 +51,7 @@ export class HealthService {
   constructor(
     private readonly db: DbService,
     private readonly redis: RedisService,
+    private readonly queues: QueueService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
@@ -77,11 +82,21 @@ export class HealthService {
 
     // Platform-scoped: these reads deliberately span tenants, and saying so explicitly
     // is what keeps the bypass reviewable.
-    const [migrations, outbox] = await withPlatformScope('health: platform diagnostics', async () =>
-      Promise.all([this.migrationState(), this.outboxLag()]),
+    const [migrations, outbox, jobs, scheduler] = await withPlatformScope(
+      'health: platform diagnostics',
+      async () =>
+        Promise.all([
+          this.migrationState(),
+          this.outboxLag(),
+          this.jobState(),
+          this.schedulerState(),
+        ]),
     );
 
-    return { ...readiness, migrations, outbox };
+    // Queue counts come from Redis, not the database, so they sit outside the platform scope.
+    const queues = await this.queues.counts().catch(() => ({}));
+
+    return { ...readiness, migrations, outbox, queues, jobs, scheduler };
   }
 
   private async check(probe: () => Promise<number>): Promise<ComponentHealth> {
@@ -91,6 +106,42 @@ export class HealthService {
     } catch (error) {
       return { status: 'down', detail: error instanceof Error ? error.message : 'unknown error' };
     }
+  }
+
+  /**
+   * Dead-lettered jobs and the oldest waiting job: the pair that distinguishes "busy" from
+   * "stuck" (docs/deployment-architecture.md §7).
+   */
+  private async jobState(): Promise<{
+    deadLettered: number;
+    oldestWaitingAgeSeconds: number | null;
+  }> {
+    const [deadLettered, oldestWaitingAgeSeconds] = await Promise.all([
+      this.db.client.jobFailure.count({ where: { retriedAt: null } }),
+      this.queues.oldestWaitingAgeSeconds().catch(() => null),
+    ]);
+    return { deadLettered, oldestWaitingAgeSeconds };
+  }
+
+  /**
+   * A scheduler fails silently — the only symptom is that something which should have run did
+   * not — so its heartbeat age is reported explicitly.
+   */
+  private async schedulerState(): Promise<{
+    instances: number;
+    lastBeatAgeSeconds: number | null;
+  }> {
+    const since = new Date(Date.now() - 5 * 60_000);
+    const [instances, latest] = await Promise.all([
+      this.db.client.schedulerHeartbeat.count({ where: { lastBeatAt: { gte: since } } }),
+      this.db.client.schedulerHeartbeat.findFirst({ orderBy: { lastBeatAt: 'desc' } }),
+    ]);
+    return {
+      instances,
+      lastBeatAgeSeconds: latest
+        ? Math.round((Date.now() - latest.lastBeatAt.getTime()) / 1_000)
+        : null,
+    };
   }
 
   private async migrationState(): Promise<{ applied: number; pending: string[] }> {

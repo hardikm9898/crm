@@ -581,18 +581,44 @@ describe('password reset', () => {
     expect(known.body.message).toBe(unknown.body.message);
   });
 
-  it('issues a single-use token, and only the newest one works', async () => {
+  it('records the request as an event and mints the token in the worker', async () => {
+    // The request must not wait on a mail provider, so it emits an intent and returns; the
+    // processor mints the single-use token at send time (step 4 refactor, Rule 17).
     const user = await ctx.db.user.findUniqueOrThrow({ where: { email: email('reset') } });
+    await ctx.db.passwordReset.deleteMany({ where: { userId: user.id } });
 
     await call(ctx.app, {
       method: 'POST',
       url: '/api/v1/auth/forgot-password',
       payload: { email: email('reset') },
     });
-    const outstanding = await ctx.db.passwordReset.count({
-      where: { userId: user.id, usedAt: null, expiresAt: { gt: new Date() } },
+
+    const event = await ctx.db.outboxEvent.findFirst({
+      where: { eventName: 'user.password_reset_requested', aggregateId: user.id },
+      orderBy: { occurredAt: 'desc' },
     });
-    expect(outstanding).toBe(1);
+    expect(event).not.toBeNull();
+    expect(await ctx.db.passwordReset.count({ where: { userId: user.id } })).toBe(0);
+
+    const { PasswordResetMailProcessor } =
+      await import('../src/modules/auth/processors/credential-mail.processor.js');
+    const processor = ctx.app.get(PasswordResetMailProcessor);
+    await processor.process({ organizationId: null, aggregateId: user.id }, {} as never);
+
+    expect(
+      await ctx.db.passwordReset.count({
+        where: { userId: user.id, usedAt: null, expiresAt: { gt: new Date() } },
+      }),
+    ).toBe(1);
+
+    // A second request supersedes the first, so only the newest link works.
+    await processor.process({ organizationId: null, aggregateId: user.id }, {} as never);
+    expect(
+      await ctx.db.passwordReset.count({
+        where: { userId: user.id, usedAt: null, expiresAt: { gt: new Date() } },
+      }),
+    ).toBe(1);
+    expect(await ctx.db.passwordReset.count({ where: { userId: user.id } })).toBe(2);
   });
 
   it('resets the password, revokes every session, and enforces the policy', async () => {

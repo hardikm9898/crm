@@ -7,6 +7,8 @@ import { CryptoModule } from './infra/crypto/crypto.module.js';
 import { MailModule } from './infra/mail/mail.module.js';
 import { AuditModule } from './infra/audit/audit.module.js';
 import { OutboxModule } from './infra/outbox/outbox.module.js';
+import { QueueModule } from './infra/queue/queue.module.js';
+import { MaintenanceModule } from './modules/maintenance/maintenance.module.js';
 import { LoggerModule } from './infra/observability/logger.module.js';
 import { RequestContextMiddleware } from './infra/http/request-context.middleware.js';
 import { AuthzModule } from './infra/authz/authz.module.js';
@@ -35,11 +37,13 @@ import { HealthModule } from './modules/health/health.module.js';
     MailModule,
     AuditModule,
     OutboxModule,
+    QueueModule,
     AuthzModule,
     EntitlementsModule,
     AuthModule,
     OrganizationsModule,
     UsersModule,
+    MaintenanceModule,
     HealthModule,
   ],
   providers: [

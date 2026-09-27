@@ -9,6 +9,11 @@ import { PasswordService } from './application/password.service.js';
 import { PrincipalService } from './application/principal.service.js';
 import { SessionService } from './application/session.service.js';
 import { TokenService } from './application/token.service.js';
+import {
+  EmailVerificationMailProcessor,
+  PasswordResetMailProcessor,
+  SecurityNoticeMailProcessor,
+} from './processors/credential-mail.processor.js';
 
 /**
  * Authentication and identity. Exports the services the global `AuthGuard` needs, so the
@@ -26,7 +31,18 @@ import { TokenService } from './application/token.service.js';
     MfaService,
     CredentialRecoveryService,
     LoginThrottleService,
+    EmailVerificationMailProcessor,
+    PasswordResetMailProcessor,
+    SecurityNoticeMailProcessor,
   ],
-  exports: [TokenService, SessionService, PrincipalService, PasswordService],
+  exports: [
+    TokenService,
+    SessionService,
+    PrincipalService,
+    PasswordService,
+    EmailVerificationMailProcessor,
+    PasswordResetMailProcessor,
+    SecurityNoticeMailProcessor,
+  ],
 })
 export class AuthModule {}

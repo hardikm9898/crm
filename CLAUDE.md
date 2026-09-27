@@ -44,6 +44,15 @@ change, or typecheck will fail confusingly.
   route handler — silently. The request middleware opens an empty scope with
   `tenantContext.runEmpty()` and the guard fills it via `setPrincipal()`; the store object is
   shared by reference, which is what makes it visible.
+- **A `@Global()` module's own provider shadows the root module's override for the same token.**
+  That produced a worker injected with an empty processor list — no error, just silence. Background
+  processors are therefore passed to `WorkerService.start()` from the bootstrap, listed once in
+  `processor.registry.ts`.
+- **BullMQ rejects a custom job id containing `:`** (it reserves the character for key names). Use
+  `outboxJobId()`; never build the id inline.
+- **Job processors read their subject from `payload.aggregateId`**, not from a field inside
+  `payload`. The envelope is stable; payload bodies change, and events emitted by an older release
+  still have to process.
 - **Prisma promises are lazy.** `tenantContext.run(ctx, () => db.x.find())` loses the context —
   the callback must be `async`. Covered by a test in `@leados/shared`.
 - **`import type` breaks NestJS DI.** Injected classes must be runtime imports;

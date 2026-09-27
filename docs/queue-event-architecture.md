@@ -65,6 +65,24 @@ needs. Breaking a payload = new `version`; consumers support the previous versio
 
 ---
 
+> **Implemented in Phase 1 step 4.** Two queues exist today — `notifications` and `maintenance` —
+> plus the outbox dispatcher, the worker and scheduler roles, and the dead-letter mirror. The rest of
+> the catalogue below is the design; each queue arrives with the phase that produces its work.
+> Implementation notes that differ from this document:
+>
+> - **Job ids** are `"{jobName}-{eventId}"`, not `"{jobName}:{eventId}"`: BullMQ reserves `:` in key
+>   names and rejects a custom id containing one. The helper `outboxJobId()` is the single source of
+>   that format, so producer and tests cannot drift.
+> - **Processors are passed to `WorkerService.start()`**, not injected. They live in the domain
+>   modules that own them, which depend on the queue infrastructure; injecting them would invert that
+>   and — because the queue module is global — a module-local default silently shadowed the root
+>   override, yielding a worker that consumed nothing.
+> - **A processor identifies its subject from the envelope's `aggregateId`**, not from a field inside
+>   `payload`. The envelope is the stable contract; payload bodies evolve, and an event emitted by an
+>   earlier release must still be processable.
+> - **Single-use tokens are minted in the worker, at send time** (invitation, verification, reset), so
+>   no usable credential is ever written to `outbox_events` or a queue payload.
+
 ## 3. Queue catalogue
 
 Separate queues (not one firehose) so a WhatsApp backlog cannot delay analytics and a slow tenant

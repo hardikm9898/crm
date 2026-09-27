@@ -260,6 +260,43 @@ model Session {
   @@map("sessions")
 }
 
+/// Dead-letter mirror for jobs that exhausted their retries.
+///
+/// BullMQ already keeps failed jobs in Redis; this table is what makes them visible to an
+/// operator instead of to redis-cli (FR-SA-4). Payloads are redacted before storage, because a
+/// failure table is exactly where a customer's phone number or a single-use token would linger.
+model JobFailure {
+  id        String    @id @db.Uuid
+  queue     String
+  jobName   String    @map("job_name")
+  jobId     String?   @map("job_id")
+  payload   Json      @db.JsonB
+  error     String
+  stack     String?
+  attempts  Int       @default(0)
+  retriedAt DateTime? @map("retried_at") @db.Timestamptz(6)
+  retriedBy String?   @map("retried_by") @db.Uuid
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([queue, createdAt(sort: Desc)])
+  @@index([retriedAt])
+  @@map("job_failures")
+}
+
+/// Heartbeat for the scheduler process, so "the schedule stopped running" is detectable rather
+/// than only noticed when something that should have happened did not
+/// (docs/deployment-architecture.md §7).
+model SchedulerHeartbeat {
+  id           String   @id @db.Uuid
+  instanceId   String   @unique @map("instance_id")
+  lastBeatAt   DateTime @map("last_beat_at") @db.Timestamptz(6)
+  registered   Json     @db.JsonB
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([lastBeatAt])
+  @@map("scheduler_heartbeats")
+}
+
 /// Single-use, hashed password-reset tokens. The plaintext token exists only in the
 /// email we send; only its hash is stored, so a database read cannot reset anyone's
 /// password (docs/security.md §2).

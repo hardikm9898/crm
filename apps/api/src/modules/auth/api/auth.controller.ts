@@ -239,7 +239,7 @@ export class AuthController {
       this.db.client.user.findUnique({ where: { email } }),
     );
     if (user && user.emailVerifiedAt === null && user.deletedAt === null) {
-      await this.recovery.sendVerificationEmail(user.id, user.email);
+      await this.recovery.requestEmailVerification(user.id, user.email);
     }
     // Same response either way: this endpoint must not confirm whether an address is registered.
     return withMessage(
