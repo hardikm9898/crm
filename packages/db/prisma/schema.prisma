@@ -1,0 +1,670 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Lead OS — Phase 1 schema: platform, organization, identity, access, audit,
+// outbox and subscription. CRM entities (leads, tasks, conversations, ...) arrive
+// in Phase 2. Conventions and rationale: docs/database-design.md §1.
+//
+// Two rules govern every tenant table here:
+//   1. `organization_id` is NOT NULL and leads every index.
+//   2. Children reference parents with a COMPOSITE foreign key that includes
+//      `organization_id`, so a row can never point at another tenant's row.
+//      That is isolation layer 3 (docs/security.md §3) — it turns an application
+//      bug into a foreign-key error instead of a data breach.
+// ─────────────────────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ── Enums: developer-owned values that code branches on. ─────────────────────
+// Anything a tenant can rename or extend (statuses, sources, task types, ...)
+// is a TABLE, never an enum — Rules 5-8 in docs/README.md.
+
+enum OrganizationStatus {
+  trialing
+  active
+  past_due
+  grace
+  suspended
+  cancelled
+
+  @@map("organization_status")
+}
+
+enum UserStatus {
+  invited
+  active
+  disabled
+
+  @@map("user_status")
+}
+
+enum MembershipStatus {
+  invited
+  active
+  suspended
+
+  @@map("membership_status")
+}
+
+enum InvitationStatus {
+  pending
+  accepted
+  revoked
+  expired
+
+  @@map("invitation_status")
+}
+
+enum SubscriptionStatus {
+  trialing
+  active
+  past_due
+  grace
+  cancelled
+  expired
+
+  @@map("subscription_status")
+}
+
+enum PlanInterval {
+  month
+  year
+
+  @@map("plan_interval")
+}
+
+enum FeatureUnit {
+  bool
+  count
+  per_month
+  bytes
+
+  @@map("feature_unit")
+}
+
+enum DataScope {
+  own
+  team
+  branch
+  organization
+
+  @@map("data_scope")
+}
+
+enum ActorType {
+  user
+  system
+  automation
+  api_key
+  platform
+
+  @@map("actor_type")
+}
+
+enum AvailabilityState {
+  available
+  busy
+  leave
+  offline
+
+  @@map("availability_state")
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// PLATFORM TABLES — no organization_id, unreachable from tenant routes.
+// ═════════════════════════════════════════════════════════════════════════════
+
+model Plan {
+  id            String         @id @db.Uuid
+  code          String         @unique
+  name          String
+  description   String?
+  interval      PlanInterval
+  priceMinor    BigInt         @map("price_minor")
+  currency      String         @db.Char(3)
+  trialDays     Int            @default(7) @map("trial_days")
+  isPublic      Boolean        @default(true) @map("is_public")
+  isActive      Boolean        @default(true) @map("is_active")
+  sortOrder     Int            @default(0) @map("sort_order")
+  createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+  features      PlanFeature[]
+  subscriptions Subscription[]
+
+  @@map("plans")
+}
+
+/// Catalogue of entitlement keys. Super Admin editable, never hardcoded (FR-BIL-2).
+model Feature {
+  key         String        @id
+  name        String
+  description String?
+  unit        FeatureUnit
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  plans       PlanFeature[]
+
+  @@map("features")
+}
+
+model PlanFeature {
+  planId     String  @map("plan_id") @db.Uuid
+  featureKey String  @map("feature_key")
+  /// NULL means unlimited.
+  limitValue BigInt? @map("limit_value")
+  isEnabled  Boolean @default(true) @map("is_enabled")
+  plan       Plan    @relation(fields: [planId], references: [id], onDelete: Cascade)
+  feature    Feature @relation(fields: [featureKey], references: [key], onDelete: Cascade)
+
+  @@id([planId, featureKey])
+  @@map("plan_features")
+}
+
+model PlatformSetting {
+  key       String   @id
+  value     Json     @db.JsonB
+  isSecret  Boolean  @default(false) @map("is_secret")
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("platform_settings")
+}
+
+/// Our own staff. A separate auth realm from tenant users: no tenant token can
+/// ever resolve to a platform user (docs/security.md §4).
+model PlatformUser {
+  id           String    @id @db.Uuid
+  email        String    @unique
+  passwordHash String    @map("password_hash")
+  name         String
+  isSuperAdmin Boolean   @default(false) @map("is_super_admin")
+  mfaEnabled   Boolean   @default(false) @map("mfa_enabled")
+  status       UserStatus @default(active)
+  lastLoginAt  DateTime? @map("last_login_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("platform_users")
+}
+
+/// Permission catalogue. Code checks permission keys, never role names (FR-IAM-3).
+model Permission {
+  key           String           @id
+  module        String
+  description   String
+  supportsScope Boolean          @default(true) @map("supports_scope")
+  grants        RolePermission[]
+
+  @@index([module])
+  @@map("permissions")
+}
+
+/// Global identity. Credentials live here so one person can belong to several
+/// organizations (FR-IAM-6); org-specific state lives on `memberships`.
+model User {
+  id           String    @id @db.Uuid
+  email        String    @unique
+  passwordHash String?   @map("password_hash")
+  name         String
+  firstName    String?   @map("first_name")
+  lastName     String?   @map("last_name")
+  phoneE164    String?   @map("phone_e164") @db.VarChar(20)
+  avatarUrl    String?   @map("avatar_url")
+  status       UserStatus @default(invited)
+  timezone     String?
+  locale       String?   @default("en")
+  mfaEnabled   Boolean   @default(false) @map("mfa_enabled")
+  mfaSecret    String?   @map("mfa_secret")
+  emailVerifiedAt DateTime? @map("email_verified_at") @db.Timestamptz(6)
+  lastLoginAt  DateTime? @map("last_login_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  memberships  Membership[]
+  sessions     Session[]
+
+  @@index([status])
+  @@map("users")
+}
+
+/// Refresh-token family. Rotation with reuse detection: presenting a rotated
+/// token revokes the whole family (FR-IAM-2, docs/security.md §2).
+model Session {
+  id               String    @id @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  familyId         String    @map("family_id") @db.Uuid
+  previousSessionId String?  @map("previous_session_id") @db.Uuid
+  refreshTokenHash String    @unique @map("refresh_token_hash")
+  activeOrganizationId String? @map("active_organization_id") @db.Uuid
+  userAgent        String?   @map("user_agent")
+  ipAddress        String?   @map("ip_address")
+  lastUsedAt       DateTime? @map("last_used_at") @db.Timestamptz(6)
+  expiresAt        DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(6)
+  revokedReason    String?   @map("revoked_reason")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([familyId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// TENANT TABLES — every row carries organization_id.
+// ═════════════════════════════════════════════════════════════════════════════
+
+model Organization {
+  id                  String             @id @db.Uuid
+  slug                String             @unique
+  name                String
+  legalName           String?            @map("legal_name")
+  industry            String?
+  country             String             @default("IN") @db.Char(2)
+  timezone            String             @default("Asia/Kolkata")
+  defaultCurrency     String             @default("INR") @map("default_currency") @db.Char(3)
+  defaultPhoneCountry String             @default("IN") @map("default_phone_country") @db.Char(2)
+  status              OrganizationStatus @default(trialing)
+  /// Tenant identifier used by the public ingestion API (docs/api-architecture.md §6).
+  publicKey           String             @unique @map("public_key")
+  logoUrl             String?            @map("logo_url")
+  settings            Json               @default("{}") @db.JsonB
+  onboardingState     Json               @default("{}") @map("onboarding_state") @db.JsonB
+  suspendedAt         DateTime?          @map("suspended_at") @db.Timestamptz(6)
+  suspendedReason     String?            @map("suspended_reason")
+  createdAt           DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt           DateTime?          @map("deleted_at") @db.Timestamptz(6)
+
+  branches            Branch[]
+  teams               Team[]
+  teamMembers         TeamMember[]
+  memberships         Membership[]
+  roles               Role[]
+  rolePermissions     RolePermission[]
+  userRoles           UserRole[]
+  invitations         Invitation[]
+  auditLogs           AuditLog[]
+  outboxEvents        OutboxEvent[]
+  subscription        Subscription?
+  usageCounters       UsageCounter[]
+  entitlementOverrides EntitlementOverride[]
+  workingHours        WorkingHours[]
+  holidays            Holiday[]
+  availability        UserAvailability[]
+
+  @@index([status])
+  @@index([createdAt])
+  @@map("organizations")
+}
+
+model Branch {
+  id             String       @id @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  name           String
+  code           String?
+  addressLine    String?      @map("address_line")
+  city           String?
+  state          String?
+  country        String?      @db.Char(2)
+  timezone       String?
+  isDefault      Boolean      @default(false) @map("is_default")
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt      DateTime?    @map("deleted_at") @db.Timestamptz(6)
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  teams          Team[]
+  memberships    Membership[]
+  workingHours   WorkingHours[]
+  holidays       Holiday[]
+
+  @@unique([organizationId, id], name: "branch_tenant_key")
+  @@unique([organizationId, code])
+  @@index([organizationId, deletedAt])
+  @@map("branches")
+}
+
+model Team {
+  id             String       @id @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  branchId       String?      @map("branch_id") @db.Uuid
+  name           String
+  description    String?
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt      DateTime?    @map("deleted_at") @db.Timestamptz(6)
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  // Composite FK: a team cannot belong to another tenant's branch.
+  branch         Branch?      @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict, map: "teams_branch_same_org_fk")
+  members        TeamMember[]
+
+  @@unique([organizationId, id], name: "team_tenant_key")
+  @@index([organizationId, deletedAt])
+  @@map("teams")
+}
+
+model TeamMember {
+  id             String       @id @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  teamId         String       @map("team_id") @db.Uuid
+  userId         String       @map("user_id") @db.Uuid
+  isLead         Boolean      @default(false) @map("is_lead")
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  team           Team         @relation(fields: [organizationId, teamId], references: [organizationId, id], onDelete: Cascade, map: "team_members_team_same_org_fk")
+  // Referencing the MEMBERSHIP (not the global user) is what keeps this tenant-safe:
+  // only someone who is a member of this organization can be on one of its teams.
+  membership     Membership   @relation(fields: [organizationId, userId], references: [organizationId, userId], onDelete: Cascade, map: "team_members_membership_same_org_fk")
+
+  @@unique([organizationId, id], name: "team_member_tenant_key")
+  @@unique([organizationId, teamId, userId])
+  @@index([organizationId, userId])
+  @@map("team_members")
+}
+
+/// A user's participation in one organization. The join that makes multi-org
+/// membership possible, and the anchor every tenant row uses to reference a person.
+model Membership {
+  id              String           @id @db.Uuid
+  organizationId  String           @map("organization_id") @db.Uuid
+  userId          String           @map("user_id") @db.Uuid
+  status          MembershipStatus @default(invited)
+  defaultBranchId String?          @map("default_branch_id") @db.Uuid
+  isOwner         Boolean          @default(false) @map("is_owner")
+  invitedById     String?          @map("invited_by_id") @db.Uuid
+  joinedAt        DateTime?        @map("joined_at") @db.Timestamptz(6)
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt       DateTime?        @map("deleted_at") @db.Timestamptz(6)
+
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  defaultBranch   Branch?          @relation(fields: [organizationId, defaultBranchId], references: [organizationId, id], onDelete: Restrict, map: "memberships_branch_same_org_fk")
+  teamMemberships TeamMember[]
+  roles           UserRole[]
+  availability    UserAvailability[]
+  workingHours    WorkingHours[]
+
+  @@unique([organizationId, id], name: "membership_tenant_key")
+  @@unique([organizationId, userId], name: "membership_org_user_key")
+  @@index([organizationId, status, deletedAt])
+  @@index([userId])
+  @@map("memberships")
+}
+
+model Role {
+  id             String           @id @db.Uuid
+  organizationId String           @map("organization_id") @db.Uuid
+  code           String
+  name           String
+  description    String?
+  /// Seeded roles are marked system: they can be edited but not deleted.
+  isSystem       Boolean          @default(false) @map("is_system")
+  isEditable     Boolean          @default(true) @map("is_editable")
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt      DateTime?        @map("deleted_at") @db.Timestamptz(6)
+
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  permissions    RolePermission[]
+  users          UserRole[]
+  invitations    Invitation[]
+
+  @@unique([organizationId, id], name: "role_tenant_key")
+  @@unique([organizationId, code])
+  @@map("roles")
+}
+
+model RolePermission {
+  id             String       @id @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  roleId         String       @map("role_id") @db.Uuid
+  permissionKey  String       @map("permission_key")
+  /// How far this grant reaches (FR-IAM-4).
+  scope          DataScope    @default(own)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  role           Role         @relation(fields: [organizationId, roleId], references: [organizationId, id], onDelete: Cascade, map: "role_permissions_role_same_org_fk")
+  permission     Permission   @relation(fields: [permissionKey], references: [key], onDelete: Cascade)
+
+  @@unique([organizationId, roleId, permissionKey])
+  @@index([organizationId, permissionKey])
+  @@map("role_permissions")
+}
+
+model UserRole {
+  id             String       @id @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  userId         String       @map("user_id") @db.Uuid
+  roleId         String       @map("role_id") @db.Uuid
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  membership     Membership   @relation(fields: [organizationId, userId], references: [organizationId, userId], onDelete: Cascade, map: "user_roles_membership_same_org_fk")
+  role           Role         @relation(fields: [organizationId, roleId], references: [organizationId, id], onDelete: Cascade, map: "user_roles_role_same_org_fk")
+
+  @@unique([organizationId, userId, roleId])
+  @@index([organizationId, roleId])
+  @@map("user_roles")
+}
+
+model Invitation {
+  id             String           @id @db.Uuid
+  organizationId String           @map("organization_id") @db.Uuid
+  email          String
+  roleId         String           @map("role_id") @db.Uuid
+  teamId         String?          @map("team_id") @db.Uuid
+  branchId       String?          @map("branch_id") @db.Uuid
+  tokenHash      String           @unique @map("token_hash")
+  status         InvitationStatus @default(pending)
+  invitedById    String?          @map("invited_by_id") @db.Uuid
+  expiresAt      DateTime         @map("expires_at") @db.Timestamptz(6)
+  acceptedAt     DateTime?        @map("accepted_at") @db.Timestamptz(6)
+  revokedAt      DateTime?        @map("revoked_at") @db.Timestamptz(6)
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  role           Role             @relation(fields: [organizationId, roleId], references: [organizationId, id], onDelete: Cascade, map: "invitations_role_same_org_fk")
+
+  @@unique([organizationId, id], name: "invitation_tenant_key")
+  @@index([organizationId, email, status])
+  @@index([expiresAt])
+  @@map("invitations")
+}
+
+// ── Working time: consumed by assignment, SLA clocks and automation delays ───
+
+model WorkingHours {
+  id             String       @id @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  branchId       String?      @map("branch_id") @db.Uuid
+  userId         String?      @map("user_id") @db.Uuid
+  /// 0 = Sunday .. 6 = Saturday
+  dayOfWeek      Int          @map("day_of_week") @db.SmallInt
+  startMinute    Int          @map("start_minute") @db.SmallInt
+  endMinute      Int          @map("end_minute") @db.SmallInt
+  isWorking      Boolean      @default(true) @map("is_working")
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch         Branch?      @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Cascade, map: "working_hours_branch_same_org_fk")
+  membership     Membership?  @relation(fields: [organizationId, userId], references: [organizationId, userId], onDelete: Cascade, map: "working_hours_membership_same_org_fk")
+
+  @@index([organizationId, userId, dayOfWeek])
+  @@index([organizationId, branchId, dayOfWeek])
+  @@map("working_hours")
+}
+
+model Holiday {
+  id             String       @id @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  branchId       String?      @map("branch_id") @db.Uuid
+  date           DateTime     @db.Date
+  name           String
+  isWorking      Boolean      @default(false) @map("is_working")
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch         Branch?      @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Cascade, map: "holidays_branch_same_org_fk")
+
+  @@unique([organizationId, branchId, date])
+  @@index([organizationId, date])
+  @@map("holidays")
+}
+
+model UserAvailability {
+  id             String            @id @db.Uuid
+  organizationId String            @map("organization_id") @db.Uuid
+  userId         String            @map("user_id") @db.Uuid
+  state          AvailabilityState @default(available)
+  fromAt         DateTime?         @map("from_at") @db.Timestamptz(6)
+  toAt           DateTime?         @map("to_at") @db.Timestamptz(6)
+  reason         String?
+  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  membership     Membership        @relation(fields: [organizationId, userId], references: [organizationId, userId], onDelete: Cascade, map: "user_availability_membership_same_org_fk")
+
+  @@index([organizationId, userId, fromAt])
+  @@map("user_availability")
+}
+
+// ── Subscription, entitlements, usage ────────────────────────────────────────
+
+model Subscription {
+  id                 String             @id @db.Uuid
+  organizationId     String             @unique @map("organization_id") @db.Uuid
+  planId             String             @map("plan_id") @db.Uuid
+  status             SubscriptionStatus @default(trialing)
+  seats              Int                @default(1)
+  startedAt          DateTime           @default(now()) @map("started_at") @db.Timestamptz(6)
+  trialEndsAt        DateTime?          @map("trial_ends_at") @db.Timestamptz(6)
+  currentPeriodStart DateTime           @map("current_period_start") @db.Timestamptz(6)
+  currentPeriodEnd   DateTime           @map("current_period_end") @db.Timestamptz(6)
+  graceEndsAt        DateTime?          @map("grace_ends_at") @db.Timestamptz(6)
+  cancelAt           DateTime?          @map("cancel_at") @db.Timestamptz(6)
+  cancelledAt        DateTime?          @map("cancelled_at") @db.Timestamptz(6)
+  provider           String?
+  providerSubscriptionId String?        @map("provider_subscription_id")
+  createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization       Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  plan               Plan               @relation(fields: [planId], references: [id])
+
+  @@unique([organizationId, id], name: "subscription_tenant_key")
+  @@index([status, trialEndsAt])
+  @@index([status, currentPeriodEnd])
+  @@map("subscriptions")
+}
+
+/// Per-organization deviation from the plan. Sales will promise exceptions;
+/// hardcoding them would violate Rule 4, so they are data (FR-BIL-2).
+model EntitlementOverride {
+  id             String       @id @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  featureKey     String       @map("feature_key")
+  limitValue     BigInt?      @map("limit_value")
+  isEnabled      Boolean?     @map("is_enabled")
+  reason         String
+  expiresAt      DateTime?    @map("expires_at") @db.Timestamptz(6)
+  setByPlatformUserId String?  @map("set_by_platform_user_id") @db.Uuid
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, featureKey])
+  @@map("entitlement_overrides")
+}
+
+model UsageCounter {
+  id             String       @id @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  metricKey      String       @map("metric_key")
+  periodStart    DateTime     @map("period_start") @db.Timestamptz(6)
+  periodEnd      DateTime     @map("period_end") @db.Timestamptz(6)
+  used           BigInt       @default(0)
+  limitSnapshot  BigInt?      @map("limit_snapshot")
+  warnedAt       DateTime?    @map("warned_at") @db.Timestamptz(6)
+  exceededAt     DateTime?    @map("exceeded_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, metricKey, periodStart])
+  @@index([organizationId, periodEnd])
+  @@map("usage_counters")
+}
+
+// ── Audit & outbox: infrastructure every later module depends on ─────────────
+
+/// Append-only. The application role has no UPDATE/DELETE grant on this table
+/// (see the post-migration hardening SQL) — FR-AUD-2.
+model AuditLog {
+  id             String       @id @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  actorType      ActorType    @map("actor_type")
+  actorId        String?      @map("actor_id") @db.Uuid
+  actorLabel     String?      @map("actor_label")
+  action         String
+  resourceType   String       @map("resource_type")
+  resourceId     String?      @map("resource_id") @db.Uuid
+  before         Json?        @db.JsonB
+  after          Json?        @db.JsonB
+  ipAddress      String?      @map("ip_address")
+  userAgent      String?      @map("user_agent")
+  requestId      String?      @map("request_id")
+  impersonatedBy String?      @map("impersonated_by") @db.Uuid
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  /// RESTRICT, not CASCADE: the audit trail must outlive the business data it
+  /// describes, and a stray cascade must never wipe it. Purging is a deliberate,
+  /// flag-guarded operation — see withAuditPurge() in src/audit-purge.ts.
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([organizationId, resourceType, resourceId])
+  @@index([organizationId, actorId, createdAt(sort: Desc)])
+  @@index([organizationId, action])
+  @@map("audit_logs")
+}
+
+/// Transactional outbox (ADR-0006). Written inside the business transaction;
+/// dispatched afterwards by a worker under withPlatformScope().
+model OutboxEvent {
+  id             String        @id @db.Uuid
+  /// NULL for platform-level events.
+  organizationId String?       @map("organization_id") @db.Uuid
+  eventId        String        @unique @map("event_id") @db.Uuid
+  eventName      String        @map("event_name")
+  eventVersion   Int           @default(1) @map("event_version")
+  aggregateType  String        @map("aggregate_type")
+  aggregateId    String        @map("aggregate_id") @db.Uuid
+  payload        Json          @db.JsonB
+  actorType      ActorType     @default(system) @map("actor_type")
+  actorId        String?       @map("actor_id") @db.Uuid
+  correlationId  String?       @map("correlation_id")
+  causationId    String?       @map("causation_id")
+  causationDepth Int           @default(0) @map("causation_depth")
+  occurredAt     DateTime      @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  publishedAt    DateTime?     @map("published_at") @db.Timestamptz(6)
+  attempts       Int           @default(0)
+  lastError      String?       @map("last_error")
+
+  organization   Organization?  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// The dispatcher's hot query: unpublished events, oldest first.
+  @@index([publishedAt, occurredAt])
+  @@index([organizationId, eventName, occurredAt])
+  @@index([aggregateType, aggregateId])
+  @@map("outbox_events")
+}

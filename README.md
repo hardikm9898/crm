@@ -4,10 +4,10 @@ A multi-tenant SaaS **Lead Operating System** for B2C businesses: lead managemen
 WhatsApp communication, marketing automation, website building, website analytics and revenue
 attribution — built so a small business can answer four questions without training:
 
-- **Sales executive:** *What do I need to do today?*
-- **Sales manager:** *Which leads are being missed?*
-- **Business owner:** *Where do my leads come from, and which source makes revenue?*
-- **Marketing manager:** *Where am I spending, and what actually converts?*
+- **Sales executive:** _What do I need to do today?_
+- **Sales manager:** _Which leads are being missed?_
+- **Business owner:** _Where do my leads come from, and which source makes revenue?_
+- **Marketing manager:** _Where am I spending, and what actually converts?_
 
 ## Status
 
@@ -15,22 +15,22 @@ attribution — built so a small business can answer four questions without trai
 
 The full architecture is in [`docs/`](./docs/) and is the contract implementation must follow:
 
-| Document | Contents |
-|---|---|
-| [docs/README.md](./docs/README.md) | Index, one-paragraph architecture, non-negotiable rules |
-| [product-requirements.md](./docs/product-requirements.md) | Numbered requirements (`FR-*`, `NFR-*`) + gap analysis |
-| [system-architecture.md](./docs/system-architecture.md) | Topology, modules, tenancy, request lifecycle, scaling |
-| [database-design.md](./docs/database-design.md) | ERD, ~100 tables, indexes, isolation constraints, partitioning |
-| [api-architecture.md](./docs/api-architecture.md) | REST conventions, errors, filter DSL, public ingestion, webhooks |
-| [frontend-architecture.md](./docs/frontend-architecture.md) | Next.js structure, design system, mobile-first executive workspace |
-| [queue-event-architecture.md](./docs/queue-event-architecture.md) | Outbox, queues, retries, automation engine |
-| [integration-architecture.md](./docs/integration-architecture.md) | Provider adapters, WhatsApp Cloud API, credential vault |
-| [security.md](./docs/security.md) | Threat model, authn/authz, 4-layer tenant isolation, privacy |
-| [deployment-architecture.md](./docs/deployment-architecture.md) | Docker, CI/CD, observability, backup/restore, runbooks |
-| [implementation-roadmap.md](./docs/implementation-roadmap.md) | Phases 1–12 with **exit criteria** |
-| [traceability.md](./docs/traceability.md) | Every brief section → requirement → design location |
-| [decisions/](./docs/decisions/) | ADRs 0001–0010 with rejected alternatives |
-| [open-questions.md](./docs/open-questions.md) | Gaps, working assumptions, decisions still needed |
+| Document                                                          | Contents                                                           |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------ |
+| [docs/README.md](./docs/README.md)                                | Index, one-paragraph architecture, non-negotiable rules            |
+| [product-requirements.md](./docs/product-requirements.md)         | Numbered requirements (`FR-*`, `NFR-*`) + gap analysis             |
+| [system-architecture.md](./docs/system-architecture.md)           | Topology, modules, tenancy, request lifecycle, scaling             |
+| [database-design.md](./docs/database-design.md)                   | ERD, ~100 tables, indexes, isolation constraints, partitioning     |
+| [api-architecture.md](./docs/api-architecture.md)                 | REST conventions, errors, filter DSL, public ingestion, webhooks   |
+| [frontend-architecture.md](./docs/frontend-architecture.md)       | Next.js structure, design system, mobile-first executive workspace |
+| [queue-event-architecture.md](./docs/queue-event-architecture.md) | Outbox, queues, retries, automation engine                         |
+| [integration-architecture.md](./docs/integration-architecture.md) | Provider adapters, WhatsApp Cloud API, credential vault            |
+| [security.md](./docs/security.md)                                 | Threat model, authn/authz, 4-layer tenant isolation, privacy       |
+| [deployment-architecture.md](./docs/deployment-architecture.md)   | Docker, CI/CD, observability, backup/restore, runbooks             |
+| [implementation-roadmap.md](./docs/implementation-roadmap.md)     | Phases 1–12 with **exit criteria**                                 |
+| [traceability.md](./docs/traceability.md)                         | Every brief section → requirement → design location                |
+| [decisions/](./docs/decisions/)                                   | ADRs 0001–0010 with rejected alternatives                          |
+| [open-questions.md](./docs/open-questions.md)                     | Gaps, working assumptions, decisions still needed                  |
 
 ## Planned stack
 

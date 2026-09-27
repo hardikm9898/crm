@@ -5,7 +5,7 @@
 while the previous one is red (brief §69, §62).
 
 Estimates assume one focused full-stack engineer (or an agent working in reviewed increments) and are
-*relative sizing*, not commitments. Each phase ends in a working, demoable product — never a
+_relative sizing_, not commitments. Each phase ends in a working, demoable product — never a
 half-integrated layer.
 
 ---
@@ -25,7 +25,32 @@ silently assumed.
 
 ---
 
-## Phase 1 — Foundation  *(largest single phase; everything later rests on it)*
+## Phase 1 — Foundation _(largest single phase; everything later rests on it)_
+
+### Step 1 — workspace, schema, tenant isolation ✅ _(landed 2026-09-27)_
+
+Delivered and verified against a real PostgreSQL 16 + Redis:
+
+- pnpm + Turborepo monorepo, ESM throughout, TS 6 strict, ESLint 10, Prettier, CI workflow, docker compose dev stack, `scripts/dev-bootstrap.sh`.
+- `@leados/shared`: UUIDv7 ids, E.164 phone normalization, integer money, timezone/DST-safe time helpers, the tenant context (ALS), the RBAC permission catalogue + system role templates, the error contract.
+- `@leados/db`: 24-model Phase 1 schema (platform, organization, identity, access, working time, subscription/entitlement/usage, audit, outbox), 4 migrations including hand-written hardening SQL, the tenant-scoping Prisma extension, the tenant-model registry + drift check, the audit-purge path, an idempotent two-tenant seed.
+- `@leados/api`: NestJS 12 on Fastify, boot-time config validation with a production safety net, the tenant-scoped database service, request context + request id, the global response envelope, the global exception filter, `live`/`ready`/`deep` health probes including outbox lag.
+- **98 tests green** — 63 unit, 35 integration (27 of them the tenant-isolation suite) — plus lint, typecheck, format and build. The built artifact was booted and its endpoints exercised by hand.
+
+Two Phase 0 assumptions were corrected by contact with reality and are recorded as
+[ADR-0011](./decisions/ADR-0011-esm-and-toolchain-pins.md) (ESM-only NestJS 12, Prisma 7's
+config/adapter model, the TypeScript 6 ceiling) and
+[ADR-0012](./decisions/ADR-0012-global-identity-tenant-membership.md) (global `users`, with
+`memberships` as the tenant anchor for every person-reference).
+
+### Remaining steps
+
+- **Step 2 — auth:** Argon2id hashing, register/login/refresh with rotation + reuse detection, logout, email verification, password reset, TOTP MFA, session listing/revocation, invitations.
+- **Step 3 — guards:** tenant guard (organization status), permission guard, data-scope resolution, entitlement/usage guard, and the generated cross-tenant route suite that runs against every route.
+- **Step 4 — outbox runtime:** dispatcher worker, BullMQ wiring, scheduler, DLQ mirror, audit-log writer service.
+- **Step 5 — surface:** organizations/branches/teams/users/roles endpoints, onboarding state, notification skeleton, web app shell + login + org switcher.
+
+### Original scope (for reference)
 
 **Scope:** monorepo + tooling + CI; Docker compose dev stack; Prisma schema for platform/org/identity;
 tenant-context + scoped repository layer; auth (register, login, refresh rotation, logout, verify,
@@ -36,6 +61,7 @@ transactional outbox + BullMQ wiring + scheduler + DLQ plumbing; audit log; noti
 skeleton, user management UI; health endpoints; logging/tracing/metrics baseline; `.env.example`.
 
 **Exit criteria**
+
 - The **tenancy test suite exists and runs in CI** (even with few routes) and fails the build on a leak.
 - A tenant-scoped query without a tenant context **throws**, proven by test.
 - Refresh-token reuse revokes the family, proven by test.
@@ -58,10 +84,12 @@ pipelines + stages; **lead timeline** (`activities`, partitioned, with the rende
 touchpoints; duplicate rules + detection + merge/unmerge; assignment engine (all strategies, working
 hours, capacity, round-robin state, fallback + rule tester); scoring engine + bands + explainability;
 filter DSL + saved views; global search (tsvector + trgm); customers + conversion; deals + quotations
-+ payments (manual); import wizard + export jobs; bulk actions; lead list/detail/kanban UI; industry
-templates + onboarding wizard.
+
+- payments (manual); import wizard + export jobs; bulk actions; lead list/detail/kanban UI; industry
+  templates + onboarding wizard.
 
 **Exit criteria**
+
 - Creating a custom field of every supported type requires **no migration and no deploy**, and that
   field is immediately filterable, importable, exportable and usable in a view.
 - Duplicate rules verified: same phone from 3 channels ⇒ 1 lead, 3 touchpoints, 3 timeline entries.
@@ -84,6 +112,7 @@ hours; **Today workspace (mobile-first)**; manager oversight views; leaderboard;
 click-to-call abstraction; email sending adapter + bounce→suppression.
 
 **Exit criteria**
+
 - `GET /my/today` returns the entire executive screen in one request, p95 < 400 ms on the 100 k fixture.
 - Reschedule **cannot** be completed without date, time and reason (API + UI tested).
 - SLA clocks respect working hours and holidays across timezones (DST case included in tests).
@@ -103,6 +132,7 @@ manual retry, auto-disable); OpenAPI + published docs; **integration framework**
 credential vault, health checks, generic mapping templates); Meta Lead Ads; Google Ads lead forms.
 
 **Exit criteria**
+
 - A lead posted to the public API with unknown extra fields is created, its raw payload stored, and the
   unmapped fields surfaced with a one-click "create custom field".
 - Duplicate `Idempotency-Key` returns the first response and creates nothing new.
@@ -124,6 +154,7 @@ send); outbound queue with per-number rate limiting; consent + suppression at se
 usage metering; conversation events on the lead timeline.
 
 **Exit criteria**
+
 - Meta's duplicate/retried webhook deliveries produce exactly one message, one activity, one automation
   trigger — the headline test of this phase (`FR-WA-6`).
 - Out-of-window free-form send is blocked with a clear reason; template send succeeds.
@@ -140,10 +171,12 @@ usage metering; conversation events on the lead timeline.
 **Scope:** registry (triggers/conditions/actions with JSON Schemas); workflow + versioning + publish;
 durable step executor (conditions, branches, delays with working-hours awareness, resume + reconcile
 sweep); guardrails (re-entry, caps, loop detection, kill switch, per-org concurrency); run/step logging
-+ per-lead run view + retry-from-failed-step; dry-run; registry-driven editor UI; starter workflow
-templates per industry.
+
+- per-lead run view + retry-from-failed-step; dry-run; registry-driven editor UI; starter workflow
+  templates per industry.
 
 **Exit criteria**
+
 - Adding a new action type requires **no engine change and no frontend release** (proven by adding one).
 - Editing a live workflow does not alter in-flight runs (version pinning tested).
 - A deliberately dropped delayed job is recovered by the reconciliation sweep.

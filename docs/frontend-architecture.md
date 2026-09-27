@@ -14,7 +14,7 @@ Traces to: `NFR-UX-*`, `FR-VIEW-*`, `FR-TSK-7`, `FR-WA-7/8`, `FR-LEAD-3..6`
 4. **Mobile-first where the work happens** (`NFR-UX-1`): Today, lead list, lead detail, tasks, WhatsApp, call, notes are designed at 375 px first, then scaled up. Analytics/config screens are desktop-first but never broken on mobile.
 5. **Every screen has four states designed up front**: empty (with a primary action), skeleton, error (retryable), permission-denied. A "blank page while loading" is a defect (`NFR-UX-3`).
 6. **Nothing unbounded reaches the browser.** Lists are paginated + virtualized; a kanban column loads a page per column (`NFR-PERF-4`).
-7. **Metadata-driven UI.** Custom fields, statuses, stages, task types and sources are *fetched configuration*, rendered by registries. Adding a field type means adding a renderer, not editing 12 screens.
+7. **Metadata-driven UI.** Custom fields, statuses, stages, task types and sources are _fetched configuration_, rendered by registries. Adding a field type means adding a renderer, not editing 12 screens.
 
 ---
 
@@ -62,13 +62,13 @@ plan allows (`FR-BIL-3`).
 
 ### Rendering strategy
 
-| Surface | Strategy | Why |
-|---|---|---|
-| App shell, navigation, permissions, org config | **Server Components**, fetched once per navigation, cached per request | Fast first paint; no client waterfall for config |
-| Lists, boards, inbox, dashboards | Client Components + TanStack Query with a server-prefetched `HydrationBoundary` | Interactive filtering without losing SSR speed |
-| Lead detail | Server shell (header/context) + client tabs (timeline, inbox, tasks) | Header is instant, heavy tabs stream in |
-| Published tenant websites | ISR/static + CDN, revalidated by tag on publish | `FR-WEB-5` performance |
-| Admin console | Mostly client-side after an SSR shell | Low traffic, high interactivity |
+| Surface                                        | Strategy                                                                        | Why                                              |
+| ---------------------------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------ |
+| App shell, navigation, permissions, org config | **Server Components**, fetched once per navigation, cached per request          | Fast first paint; no client waterfall for config |
+| Lists, boards, inbox, dashboards               | Client Components + TanStack Query with a server-prefetched `HydrationBoundary` | Interactive filtering without losing SSR speed   |
+| Lead detail                                    | Server shell (header/context) + client tabs (timeline, inbox, tasks)            | Header is instant, heavy tabs stream in          |
+| Published tenant websites                      | ISR/static + CDN, revalidated by tag on publish                                 | `FR-WEB-5` performance                           |
+| Admin console                                  | Mostly client-side after an SSR shell                                           | Low traffic, high interactivity                  |
 
 The web app **never** talks to Postgres or Redis. Server Components call the API over HTTP with the
 user's token forwarded; there is exactly one authorization implementation, in the API
@@ -78,15 +78,15 @@ user's token forwarded; there is exactly one authorization implementation, in th
 
 ## 3. Data & state layers
 
-| Concern | Tool | Rules |
-|---|---|---|
-| Server state | **TanStack Query v5** | Query keys are always `[entity, orgId, params]` — org id in every key, so an org switch cannot show stale cross-org data. `staleTime` 30 s for lists, 5 min for config, `Infinity` for immutable (timeline pages). |
-| Mutations | TanStack `useMutation` | Optimistic updates for status/stage/assignment/read-state with rollback on error; `Idempotency-Key` on creates/sends; invalidate by entity tag. |
-| UI state | **Zustand** slices | Sidebar, modals, selection, filter drafts, composer drafts (persisted to `localStorage` per conversation so a refresh never loses typing). No server data in Zustand. |
-| Forms | RHF + Zod resolver | Schemas imported from `packages/contracts`; server field errors mapped back onto inputs via `error.details[].field`. |
-| URL as state | `nuqs`-style search params | Filters, view id, tab, cursor and sort live in the URL so views are shareable and the back button works. |
-| Realtime | Socket.IO client | On event: patch the cache or invalidate the key; never render straight from socket payloads. Reconnect triggers a `since` catch-up fetch. |
-| Auth tokens | httpOnly, `SameSite=Lax` refresh cookie; access token in memory only | No token in `localStorage` (`NFR-SEC-2`); silent refresh on 401 with a single-flight queue. |
+| Concern      | Tool                                                                 | Rules                                                                                                                                                                                                              |
+| ------------ | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Server state | **TanStack Query v5**                                                | Query keys are always `[entity, orgId, params]` — org id in every key, so an org switch cannot show stale cross-org data. `staleTime` 30 s for lists, 5 min for config, `Infinity` for immutable (timeline pages). |
+| Mutations    | TanStack `useMutation`                                               | Optimistic updates for status/stage/assignment/read-state with rollback on error; `Idempotency-Key` on creates/sends; invalidate by entity tag.                                                                    |
+| UI state     | **Zustand** slices                                                   | Sidebar, modals, selection, filter drafts, composer drafts (persisted to `localStorage` per conversation so a refresh never loses typing). No server data in Zustand.                                              |
+| Forms        | RHF + Zod resolver                                                   | Schemas imported from `packages/contracts`; server field errors mapped back onto inputs via `error.details[].field`.                                                                                               |
+| URL as state | `nuqs`-style search params                                           | Filters, view id, tab, cursor and sort live in the URL so views are shareable and the back button works.                                                                                                           |
+| Realtime     | Socket.IO client                                                     | On event: patch the cache or invalidate the key; never render straight from socket payloads. Reconnect triggers a `since` catch-up fetch.                                                                          |
+| Auth tokens  | httpOnly, `SameSite=Lax` refresh cookie; access token in memory only | No token in `localStorage` (`NFR-SEC-2`); silent refresh on 401 with a single-flight queue.                                                                                                                        |
 
 **Org switching** clears the query cache, re-reads `/auth/me`, and re-resolves navigation — no
 cross-tenant residue in memory (`FR-IAM-6`).
@@ -188,7 +188,7 @@ action with an audit trail. Realtime throughout; unread counts update across pan
 ### 5.4 Dashboards
 
 Owner: today's funnel counts, pipeline value by stage, conversion rate trend, leads by source with
-*revenue* (not just counts), top/bottom performers, overdue exposure. Manager: SLA board, overdue by
+_revenue_ (not just counts), top/bottom performers, overdue exposure. Manager: SLA board, overdue by
 executive, unassigned queue, no-next-action list, leaderboard, response times. Marketing: spend →
 leads → CPL → customers → CAC → revenue → ROAS by channel/campaign, funnel, journey explorer,
 attribution model selector (visibly labelled on every number). WhatsApp: volume in/out, median
@@ -213,11 +213,24 @@ visual canvas later; no migration of workflow data will be required.
 ```ts
 // packages/ui/src/dynamic-fields/registry.ts
 export const fieldRenderers: Record<CustomFieldType, FieldRenderer> = {
-  text: TextField, textarea: TextareaField, number: NumberField, currency: CurrencyField,
-  date: DateField, datetime: DateTimeField, select: SelectField, multiselect: MultiSelectField,
-  radio: RadioField, checkbox: CheckboxField, boolean: SwitchField, url: UrlField,
-  email: EmailField, phone: PhoneField, file: FileField, image: ImageField,
-  user_ref: UserPicker, lead_ref: LeadPicker,
+  text: TextField,
+  textarea: TextareaField,
+  number: NumberField,
+  currency: CurrencyField,
+  date: DateField,
+  datetime: DateTimeField,
+  select: SelectField,
+  multiselect: MultiSelectField,
+  radio: RadioField,
+  checkbox: CheckboxField,
+  boolean: SwitchField,
+  url: UrlField,
+  email: EmailField,
+  phone: PhoneField,
+  file: FileField,
+  image: ImageField,
+  user_ref: UserPicker,
+  lead_ref: LeadPicker,
 };
 ```
 
@@ -259,11 +272,11 @@ mutation queue is the seam where it would be added.
 
 ## 9. Testing
 
-| Layer | Tool | Scope |
-|---|---|---|
-| Unit | Vitest + Testing Library | Field renderers, validators from definitions, filter-DSL builder, date/timezone helpers, permission gates |
-| Component | Vitest + MSW | Lists, forms, composer, timeline renderers against mocked API contracts |
-| Contract | Generated client + OpenAPI diff | Typecheck fails if the API shape changed |
-| E2E | Playwright | Critical journeys: register → onboarding → create lead → assign → complete follow-up with reschedule reason → send WhatsApp template → convert; plus an executive mobile-viewport run and a permission run (executive cannot open settings) |
-| Visual | Playwright screenshots on key screens | Catch layout regressions in Today / lead detail / inbox |
-| A11y | `axe-core` in E2E | Zero critical violations on the top 10 screens |
+| Layer     | Tool                                  | Scope                                                                                                                                                                                                                                       |
+| --------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Unit      | Vitest + Testing Library              | Field renderers, validators from definitions, filter-DSL builder, date/timezone helpers, permission gates                                                                                                                                   |
+| Component | Vitest + MSW                          | Lists, forms, composer, timeline renderers against mocked API contracts                                                                                                                                                                     |
+| Contract  | Generated client + OpenAPI diff       | Typecheck fails if the API shape changed                                                                                                                                                                                                    |
+| E2E       | Playwright                            | Critical journeys: register → onboarding → create lead → assign → complete follow-up with reschedule reason → send WhatsApp template → convert; plus an executive mobile-viewport run and a permission run (executive cannot open settings) |
+| Visual    | Playwright screenshots on key screens | Catch layout regressions in Today / lead detail / inbox                                                                                                                                                                                     |
+| A11y      | `axe-core` in E2E                     | Zero critical violations on the top 10 screens                                                                                                                                                                                              |

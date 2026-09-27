@@ -1,7 +1,7 @@
 # Lead OS — Documentation Index
 
 **Lead OS** is a multi-tenant B2C Lead Management, CRM, WhatsApp Communication, Marketing
-Automation and Business Growth platform. It is designed as a *Lead Operating System*: every
+Automation and Business Growth platform. It is designed as a _Lead Operating System_: every
 capability in the product hangs off a single, complete, auditable lead timeline.
 
 > **Status: Phase 0 (Architecture).** No application code exists yet. This directory is the
@@ -10,22 +10,22 @@ capability in the product hangs off a single, complete, auditable lead timeline.
 
 ## Reading order
 
-| # | Document | What it answers |
-|---|---|---|
-| 1 | [product-requirements.md](./product-requirements.md) | What we are building, for whom, with numbered requirements (`FR-*`, `NFR-*`) that everything else traces back to. |
-| 2 | [system-architecture.md](./system-architecture.md) | Runtime topology, module boundaries, tenancy model, request lifecycle, scaling plan. |
-| 3 | [database-design.md](./database-design.md) | ERD, every table, keys, indexes, tenant-isolation constraints, custom-field and timeline strategy, partitioning. |
-| 4 | [api-architecture.md](./api-architecture.md) | REST conventions, envelopes, errors, pagination, filter DSL, public ingestion API, outbound webhooks, OpenAPI. |
-| 5 | [frontend-architecture.md](./frontend-architecture.md) | Next.js structure, state/data layer, design system, dynamic field rendering, mobile-first executive workspace. |
-| 6 | [queue-event-architecture.md](./queue-event-architecture.md) | Domain events, transactional outbox, queue catalogue, retry/DLQ, schedulers, the automation engine runtime. |
-| 7 | [integration-architecture.md](./integration-architecture.md) | Provider adapter contracts (WhatsApp, Ads, telephony, payments, storage), credential vault, health monitoring. |
-| 8 | [security.md](./security.md) | Authn/authz, RBAC + data scopes, tenant isolation defence-in-depth, crypto, webhook verification, privacy controls. |
-| 9 | [deployment-architecture.md](./deployment-architecture.md) | Environments, Docker/compose, CI/CD, migrations, observability, backup/restore, runbooks. |
-| 10 | [implementation-roadmap.md](./implementation-roadmap.md) | Phase-by-phase plan with deliverables and **exit criteria** per phase. |
-| — | [decisions/](./decisions/) | ADRs: the *why* behind each binding choice, with rejected alternatives. |
-| — | [traceability.md](./traceability.md) | Brief section → requirement → design doc. The coverage proof. |
-| — | [glossary.md](./glossary.md) | Canonical vocabulary. Use these words in code, UI and docs. |
-| — | [open-questions.md](./open-questions.md) | Gaps found in the requirements, assumptions taken, and decisions the business owner still has to make. |
+| #   | Document                                                     | What it answers                                                                                                     |
+| --- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| 1   | [product-requirements.md](./product-requirements.md)         | What we are building, for whom, with numbered requirements (`FR-*`, `NFR-*`) that everything else traces back to.   |
+| 2   | [system-architecture.md](./system-architecture.md)           | Runtime topology, module boundaries, tenancy model, request lifecycle, scaling plan.                                |
+| 3   | [database-design.md](./database-design.md)                   | ERD, every table, keys, indexes, tenant-isolation constraints, custom-field and timeline strategy, partitioning.    |
+| 4   | [api-architecture.md](./api-architecture.md)                 | REST conventions, envelopes, errors, pagination, filter DSL, public ingestion API, outbound webhooks, OpenAPI.      |
+| 5   | [frontend-architecture.md](./frontend-architecture.md)       | Next.js structure, state/data layer, design system, dynamic field rendering, mobile-first executive workspace.      |
+| 6   | [queue-event-architecture.md](./queue-event-architecture.md) | Domain events, transactional outbox, queue catalogue, retry/DLQ, schedulers, the automation engine runtime.         |
+| 7   | [integration-architecture.md](./integration-architecture.md) | Provider adapter contracts (WhatsApp, Ads, telephony, payments, storage), credential vault, health monitoring.      |
+| 8   | [security.md](./security.md)                                 | Authn/authz, RBAC + data scopes, tenant isolation defence-in-depth, crypto, webhook verification, privacy controls. |
+| 9   | [deployment-architecture.md](./deployment-architecture.md)   | Environments, Docker/compose, CI/CD, migrations, observability, backup/restore, runbooks.                           |
+| 10  | [implementation-roadmap.md](./implementation-roadmap.md)     | Phase-by-phase plan with deliverables and **exit criteria** per phase.                                              |
+| —   | [decisions/](./decisions/)                                   | ADRs: the _why_ behind each binding choice, with rejected alternatives.                                             |
+| —   | [traceability.md](./traceability.md)                         | Brief section → requirement → design doc. The coverage proof.                                                       |
+| —   | [glossary.md](./glossary.md)                                 | Canonical vocabulary. Use these words in code, UI and docs.                                                         |
+| —   | [open-questions.md](./open-questions.md)                     | Gaps found in the requirements, assumptions taken, and decisions the business owner still has to make.              |
 
 ## The one-paragraph architecture
 

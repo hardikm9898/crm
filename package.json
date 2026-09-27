@@ -1,0 +1,47 @@
+{
+  "name": "leados",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lead OS \u2014 multi-tenant lead management, CRM, WhatsApp and marketing automation platform",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "test:int": "turbo run test:int",
+    "format": "prettier --write \"**/*.{ts,tsx,js,mjs,json,md,yml,yaml}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,mjs,json,md,yml,yaml}\"",
+    "infra:up": "docker compose -f infra/docker/compose.yml up -d",
+    "infra:down": "docker compose -f infra/docker/compose.yml down",
+    "db:generate": "pnpm --filter @leados/db generate",
+    "db:migrate": "pnpm --filter @leados/db migrate:dev",
+    "db:deploy": "pnpm --filter @leados/db migrate:deploy",
+    "db:reset": "pnpm --filter @leados/db migrate:reset",
+    "db:seed": "turbo run seed --filter @leados/db",
+    "db:studio": "pnpm --filter @leados/db studio",
+    "bootstrap": "bash scripts/dev-bootstrap.sh"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.10.2",
+    "eslint": "^10.11.0",
+    "prettier": "^3.4.2",
+    "turbo": "^2.11.4",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.70.1"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@swc/core",
+      "esbuild",
+      "prisma",
+      "@prisma/client",
+      "@prisma/engines"
+    ]
+  }
+}

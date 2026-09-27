@@ -10,21 +10,21 @@ B2C businesses buy leads from many channels (Meta Lead Ads, Google Ads, website 
 pages, WhatsApp, QR codes, marketplaces, referrals, walk-ins, imports) and then lose most of the
 value of that spend for operational reasons, not marketing reasons:
 
-| Failure | Root cause | What the product must do |
-|---|---|---|
-| Leads scattered across platforms | No common ingestion layer | One normalized `lead` per human, whatever the channel |
-| Executives forget follow-ups | Work lives in memory and spreadsheets | A **Next Action** on every lead, and a "today" view that is the executive's whole job |
-| Managers cannot see who handled what | No assignment history | Immutable assignment + activity history |
-| WhatsApp on personal phones | No shared business inbox | Shared inbox on an official WhatsApp Business number |
-| No lead timeline | Events written to different silos | A single append-only `activities` stream per lead |
-| Nobody knows which channel makes money | Revenue not linked to touchpoints | Touchpoint capture + configurable attribution to revenue |
-| Website behaviour invisible | No first-party analytics | Tracking script → events → rollups → funnels |
-| Managers assign leads by hand | No rules engine | Declarative assignment rules (round-robin, geo, value, workload, availability) |
-| Overdue work invisible | No SLA model | SLA clocks, ageing, escalation, manager alerts |
+| Failure                                | Root cause                            | What the product must do                                                              |
+| -------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------- |
+| Leads scattered across platforms       | No common ingestion layer             | One normalized `lead` per human, whatever the channel                                 |
+| Executives forget follow-ups           | Work lives in memory and spreadsheets | A **Next Action** on every lead, and a "today" view that is the executive's whole job |
+| Managers cannot see who handled what   | No assignment history                 | Immutable assignment + activity history                                               |
+| WhatsApp on personal phones            | No shared business inbox              | Shared inbox on an official WhatsApp Business number                                  |
+| No lead timeline                       | Events written to different silos     | A single append-only `activities` stream per lead                                     |
+| Nobody knows which channel makes money | Revenue not linked to touchpoints     | Touchpoint capture + configurable attribution to revenue                              |
+| Website behaviour invisible            | No first-party analytics              | Tracking script → events → rollups → funnels                                          |
+| Managers assign leads by hand          | No rules engine                       | Declarative assignment rules (round-robin, geo, value, workload, availability)        |
+| Overdue work invisible                 | No SLA model                          | SLA clocks, ageing, escalation, manager alerts                                        |
 
 **Product loop:** `Capture → Normalize → Assign → Qualify → Communicate → Follow Up → Convert → Analyze → Retarget`
 
-**Core principle:** *everything is designed around the lead.* If a feature produces an event that
+**Core principle:** _everything is designed around the lead._ If a feature produces an event that
 a business owner would want to see when opening one lead, that event **must** be written to that
 lead's timeline. This is a hard architectural rule, not a nice-to-have (see `FR-TL-*`).
 
@@ -32,13 +32,13 @@ lead's timeline. This is a hard architectural rule, not a nice-to-have (see `FR-
 
 ## 2. Personas and the question each one opens the app to answer
 
-| Persona | Opens the app asking | Primary surface |
-|---|---|---|
-| **Sales / Calling Executive** | "What do I need to do today?" | Mobile-first Today workspace: due now, overdue, new leads, unread WhatsApp |
-| **Sales Manager** | "Which leads are being missed?" | Team SLA/overdue board, leaderboard, pipeline, conversation oversight |
-| **Business Owner / Admin** | "Where do my leads come from and which source makes revenue?" | Source/campaign revenue attribution, pipeline value, team performance |
-| **Marketing Manager** | "Where am I spending and what actually converts?" | Spend → leads → CPL → customers → CAC → revenue → ROAS, funnels, journeys |
-| **Platform Super Admin** | "Which tenants are healthy, and is the SaaS operating correctly?" | Tenant list + health scores, MRR/ARR, usage, integration health, failed jobs |
+| Persona                       | Opens the app asking                                              | Primary surface                                                              |
+| ----------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| **Sales / Calling Executive** | "What do I need to do today?"                                     | Mobile-first Today workspace: due now, overdue, new leads, unread WhatsApp   |
+| **Sales Manager**             | "Which leads are being missed?"                                   | Team SLA/overdue board, leaderboard, pipeline, conversation oversight        |
+| **Business Owner / Admin**    | "Where do my leads come from and which source makes revenue?"     | Source/campaign revenue attribution, pipeline value, team performance        |
+| **Marketing Manager**         | "Where am I spending and what actually converts?"                 | Spend → leads → CPL → customers → CAC → revenue → ROAS, funnels, journeys    |
+| **Platform Super Admin**      | "Which tenants are healthy, and is the SaaS operating correctly?" | Tenant list + health scores, MRR/ARR, usage, integration health, failed jobs |
 
 Design acceptance test: each persona's primary question must be answered **above the fold, without
 filtering or clicking**, on their default screen.
@@ -60,7 +60,7 @@ Each carries a target phase (see `implementation-roadmap.md`). `MUST` / `SHOULD`
 - **FR-TEN-2** Hierarchy MUST be: Platform → Organization → Branch → Team → User; leads, customers, conversations, tasks and deals belong to exactly one organization and optionally to a branch/team.
 - **FR-TEN-3** No request, job, report, export, search or webhook MAY return data belonging to another organization. Enforcement MUST be server-side and layered (repository scoping + database constraints + tests). Frontend filtering is never the control.
 - **FR-TEN-4** Every tenant-scoped table MUST carry `organization_id`, and cross-row references MUST be constrained so a row cannot reference a row of another organization.
-- **FR-TEN-5** Branch and team are *data scopes*, not separate tenants: a manager scoped to a branch MUST NOT see other branches' leads unless granted `all` scope.
+- **FR-TEN-5** Branch and team are _data scopes_, not separate tenants: a manager scoped to a branch MUST NOT see other branches' leads unless granted `all` scope.
 - **FR-TEN-6** Organizations MUST have lifecycle states: `trialing`, `active`, `past_due`, `grace`, `suspended`, `cancelled`, `deleted (soft)`. State MUST gate access, never destroy data.
 - **FR-TEN-7** Super Admin MAY impersonate a tenant user for support. Impersonation MUST be explicitly audited (actor, target, reason, start/end) and visibly banner-flagged in the UI. Impersonators MUST NOT perform destructive billing actions while impersonating.
 
@@ -68,7 +68,7 @@ Each carries a target phase (see `implementation-roadmap.md`). `MUST` / `SHOULD`
 
 - **FR-IAM-1** Email + password authentication with strong hashing (Argon2id), email verification, password reset, and optional TOTP 2FA (2FA mandatory-capable per org policy).
 - **FR-IAM-2** Short-lived access tokens + rotating refresh tokens with reuse detection and device/session listing + remote revoke.
-- **FR-IAM-3** RBAC MUST be data-driven: permissions are rows, roles are rows, roles are per-organization, and system roles are seeded but editable clones. No role name MAY be hardcoded in business logic — code checks *permissions*, never role names.
+- **FR-IAM-3** RBAC MUST be data-driven: permissions are rows, roles are rows, roles are per-organization, and system roles are seeded but editable clones. No role name MAY be hardcoded in business logic — code checks _permissions_, never role names.
 - **FR-IAM-4** Permissions MUST carry a **data scope**: `own | team | branch | organization`. Example: `lead:read` with scope `team`.
 - **FR-IAM-5** Seeded roles: Platform Super Admin, Platform Support, Org Owner, Org Admin, Sales Manager, Sales Executive, Marketing Manager, Read-only/Auditor.
 - **FR-IAM-6** A user MAY belong to multiple organizations with different roles; the UI MUST offer an org switcher.
@@ -291,6 +291,7 @@ Each carries a target phase (see `implementation-roadmap.md`). `MUST` / `SHOULD`
 ## 5. Non-functional requirements
 
 ### Performance (`NFR-PERF`)
+
 - **NFR-PERF-1** API p95 < 300 ms for reads, < 500 ms for writes, excluding third-party latency.
 - **NFR-PERF-2** Dashboards p95 < 1 s, served from rollups/cache.
 - **NFR-PERF-3** No endpoint may return an unbounded collection; default page 25, max 100 (max 1000 for API-key exports via cursor).
@@ -298,25 +299,29 @@ Each carries a target phase (see `implementation-roadmap.md`). `MUST` / `SHOULD`
 - **NFR-PERF-5** Webhook receipt (WhatsApp, ads, tracking) MUST acknowledge in < 1 s by persisting and queueing, never by processing inline.
 
 ### Scalability (`NFR-SCALE`)
+
 - **NFR-SCALE-1** Milestones: 100 orgs → 1,000 orgs → 10,000+ orgs, with the same architecture and no rewrite.
 - **NFR-SCALE-2** API and workers MUST be stateless and horizontally scalable; no in-process schedulers, no in-memory session or rate-limit state, no sticky routing requirement (realtime uses a Redis adapter).
 - **NFR-SCALE-3** High-volume tables (activities, messages, website_events, api_logs, webhook_deliveries, automation_run_steps) MUST be time-partitioned with a retention policy from day one of their introduction.
 - **NFR-SCALE-4** Analytics MUST be able to move to a columnar store (ClickHouse) without changing the collector API or dashboard contracts.
 
 ### Availability & correctness (`NFR-REL`)
+
 - **NFR-REL-1** Target 99.9% monthly availability for API and inbox; ingestion endpoints are the highest-priority tier and degrade last.
 - **NFR-REL-2** **A lead is never lost.** If downstream processing fails, the raw payload is persisted and replayable.
 - **NFR-REL-3** All external calls: timeouts, bounded retries with jittered backoff, circuit breaker, and a visible failure state. Never fail silently.
 - **NFR-REL-4** All inbound webhooks idempotent; all jobs idempotent and retryable; DLQ for anything that exhausts retries.
-- **NFR-REL-5** Nightly automated backups with documented, *tested* restore (PITR); quarterly restore drill.
+- **NFR-REL-5** Nightly automated backups with documented, _tested_ restore (PITR); quarterly restore drill.
 
 ### Security (`NFR-SEC`) — detail in `security.md`
+
 - **NFR-SEC-1** Tenant isolation is the highest-severity class of bug; a dedicated automated test suite must attempt cross-tenant access on every endpoint in CI.
 - **NFR-SEC-2** OWASP ASVS L2-aligned controls: authn, authz, validation, output encoding, rate limiting, secure headers, CSRF where cookies are used, upload validation.
 - **NFR-SEC-3** Integration credentials encrypted with envelope encryption; plaintext never logged, never returned by any API, never rendered in the frontend.
 - **NFR-SEC-4** All webhook receivers verify signatures; all webhook senders sign.
 
 ### Usability (`NFR-UX`)
+
 - **NFR-UX-1** Mobile-first for executive surfaces (today, lead list, lead detail, tasks, WhatsApp, call, notes); fully responsive elsewhere.
 - **NFR-UX-2** A small-business user must be able to use the executive workspace without training; advanced features are progressively disclosed.
 - **NFR-UX-3** Every screen has designed empty, loading (skeleton), error and permission-denied states.
@@ -325,10 +330,12 @@ Each carries a target phase (see `implementation-roadmap.md`). `MUST` / `SHOULD`
 - **NFR-UX-6** Modern SaaS aesthetic: clean sidebar, card-based information hierarchy, restrained colour used for meaning, no decorative gradients.
 
 ### Observability (`NFR-OBS`)
+
 - **NFR-OBS-1** Structured JSON logs with request id, org id, user id, route and duration; PII redacted.
 - **NFR-OBS-2** Error tracking, distributed tracing, RED/USE metrics, queue depth/latency/failure dashboards, integration health checks, DB/Redis/worker health endpoints, and a Super Admin system-health page.
 
 ### Maintainability (`NFR-MNT`)
+
 - **NFR-MNT-1** TypeScript strict everywhere; no `any` in domain code; runtime validation at every boundary.
 - **NFR-MNT-2** Domain-module structure; no god controllers/services; shared logic in services, not copy-paste.
 - **NFR-MNT-3** Tests required for: ingestion, duplicate detection, assignment, scoring, follow-up/reschedule, SLA, WhatsApp webhook (incl. duplicate delivery), automation execution, tenant isolation, permissions, trial/subscription transitions, webhook retry, import.
@@ -340,25 +347,25 @@ Each carries a target phase (see `implementation-roadmap.md`). `MUST` / `SHOULD`
 
 Identified during Phase 0 as necessary for this product class; accepted into scope at the phase noted.
 
-| Added requirement | Why it is necessary | Phase |
-|---|---|---|
-| E.164 normalization + duplicate matching on normalized numbers | Duplicate detection is meaningless if `+91 98…`, `098…` and `98…` are different strings | 2 |
-| Touchpoint table separate from `lead.source` | Attribution and duplicate-merge both need *many* sources per lead; a single `source` column cannot express "Facebook first, website later" | 2 |
-| SLA + first-response-time model | "Which leads are being missed" is unanswerable without a clock | 3 |
-| "No next action" detection | The brief's follow-up discipline goal fails silently without it | 3 |
-| Working hours / holiday / leave calendars | Assignment, SLA and delays are wrong without them | 1–3 |
-| Transactional outbox | Otherwise events are lost on crash between commit and enqueue — silent lead loss | 1 |
-| Idempotency keys on public writes | Retrying clients would duplicate leads | 4 |
-| Raw payload store for every capture | Required to honour "never lose a lead" and to debug tenant integrations | 4 |
-| Consent + suppression enforced at send time | WhatsApp policy and privacy risk; enrollment-time checks are stale | 5 |
-| Automation guardrails (loop detection, caps, kill switch) | A bad workflow could message thousands of customers and get the WABA banned | 6 |
-| Workflow versioning | Editing a live workflow must not corrupt in-flight runs | 6 |
-| Visitor → lead identity stitching | Website analytics is only valuable on the lead timeline | 8 |
-| Rollup tables + aggregation workers | Dashboards over raw events do not survive 1,000 tenants | 8 |
-| Per-org feature-flag/entitlement overrides | Sales will promise exceptions; hardcoding them violates Rule 4 | 1 |
-| Recycle bin + restore for soft-deleted business data | Rule 15 needs a UI, not just a column | 2 |
-| Cost metering for AI | Optional AI with unbounded cost is a business risk | 11 |
-| Data-scope model (`own/team/branch/org`) on permissions | Roles alone cannot express "manager sees their branch" | 1 |
+| Added requirement                                              | Why it is necessary                                                                                                                        | Phase |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ----- |
+| E.164 normalization + duplicate matching on normalized numbers | Duplicate detection is meaningless if `+91 98…`, `098…` and `98…` are different strings                                                    | 2     |
+| Touchpoint table separate from `lead.source`                   | Attribution and duplicate-merge both need _many_ sources per lead; a single `source` column cannot express "Facebook first, website later" | 2     |
+| SLA + first-response-time model                                | "Which leads are being missed" is unanswerable without a clock                                                                             | 3     |
+| "No next action" detection                                     | The brief's follow-up discipline goal fails silently without it                                                                            | 3     |
+| Working hours / holiday / leave calendars                      | Assignment, SLA and delays are wrong without them                                                                                          | 1–3   |
+| Transactional outbox                                           | Otherwise events are lost on crash between commit and enqueue — silent lead loss                                                           | 1     |
+| Idempotency keys on public writes                              | Retrying clients would duplicate leads                                                                                                     | 4     |
+| Raw payload store for every capture                            | Required to honour "never lose a lead" and to debug tenant integrations                                                                    | 4     |
+| Consent + suppression enforced at send time                    | WhatsApp policy and privacy risk; enrollment-time checks are stale                                                                         | 5     |
+| Automation guardrails (loop detection, caps, kill switch)      | A bad workflow could message thousands of customers and get the WABA banned                                                                | 6     |
+| Workflow versioning                                            | Editing a live workflow must not corrupt in-flight runs                                                                                    | 6     |
+| Visitor → lead identity stitching                              | Website analytics is only valuable on the lead timeline                                                                                    | 8     |
+| Rollup tables + aggregation workers                            | Dashboards over raw events do not survive 1,000 tenants                                                                                    | 8     |
+| Per-org feature-flag/entitlement overrides                     | Sales will promise exceptions; hardcoding them violates Rule 4                                                                             | 1     |
+| Recycle bin + restore for soft-deleted business data           | Rule 15 needs a UI, not just a column                                                                                                      | 2     |
+| Cost metering for AI                                           | Optional AI with unbounded cost is a business risk                                                                                         | 11    |
+| Data-scope model (`own/team/branch/org`) on permissions        | Roles alone cannot express "manager sees their branch"                                                                                     | 1     |
 
 Open decisions requiring business input are tracked in [open-questions.md](./open-questions.md).
 
@@ -366,7 +373,7 @@ Open decisions requiring business input are tracked in [open-questions.md](./ope
 
 ## 7. Explicitly out of scope for v1
 
-Unofficial WhatsApp automation of any kind; SMS/IVR blast; full e-commerce checkout/payments engine (we *track* commerce events, we do not run a store); accounting/GST invoicing beyond quotations and payment records; native mobile apps (responsive PWA-capable web instead); multi-touch attribution beyond first/last/lead-source/campaign; visual drag-and-drop automation canvas (engine is built for it in Phase 6, canvas is post-v1); AI as a required dependency; self-serve white-label reseller hierarchy (single platform → org hierarchy only).
+Unofficial WhatsApp automation of any kind; SMS/IVR blast; full e-commerce checkout/payments engine (we _track_ commerce events, we do not run a store); accounting/GST invoicing beyond quotations and payment records; native mobile apps (responsive PWA-capable web instead); multi-touch attribution beyond first/last/lead-source/campaign; visual drag-and-drop automation canvas (engine is built for it in Phase 6, canvas is post-v1); AI as a required dependency; self-serve white-label reseller hierarchy (single platform → org hierarchy only).
 
 ---
 

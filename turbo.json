@@ -1,0 +1,41 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "ui": "stream",
+  "globalDependencies": [".env", "tsconfig.base.json"],
+  "globalEnv": ["NODE_ENV", "DATABASE_URL", "REDIS_URL"],
+  "tasks": {
+    "generate": {
+      "cache": false,
+      "outputs": ["generated/**"]
+    },
+    "build": {
+      "dependsOn": ["^build", "@leados/db#generate"],
+      "outputs": ["dist/**"]
+    },
+    "typecheck": {
+      "dependsOn": ["^build", "@leados/db#generate"],
+      "outputs": []
+    },
+    "lint": {
+      "dependsOn": ["@leados/db#generate"],
+      "outputs": []
+    },
+    "test": {
+      "dependsOn": ["^build", "@leados/db#generate"],
+      "outputs": ["coverage/**"]
+    },
+    "test:int": {
+      "dependsOn": ["^build", "@leados/db#generate"],
+      "cache": false,
+      "outputs": []
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "seed": {
+      "dependsOn": ["^build", "@leados/db#generate"],
+      "cache": false
+    }
+  }
+}

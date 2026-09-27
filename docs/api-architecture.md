@@ -7,14 +7,14 @@ Traces to: `FR-API-*`, `FR-CAP-6`, `NFR-PERF-3`, `NFR-SEC-*`
 
 ## 1. Surfaces
 
-| Surface | Base path | Auth | Audience | Notes |
-|---|---|---|---|---|
-| Tenant API | `/api/v1/*` | Bearer JWT **or** API key | Web app + tenant integrations | The product's main API |
-| Public ingestion | `/api/public/v1/*` | Tenant public key (+ HMAC for server-to-server) | Customer websites, third parties | Write-mostly, heavily rate limited, CORS-open per allowlist |
-| Platform admin | `/api/admin/v1/*` | Platform JWT (MFA required) | Super Admin console | Never reachable with a tenant token |
-| Collector | `/t/*`, `/wh/*` | Signature / site key | Browsers, Meta, Google, payment providers | Ack-fast, no business logic |
-| Realtime | `/socket.io` | JWT handshake | Web app | Rooms are org-scoped |
-| Docs | `/docs`, `/openapi.json` | Public spec, auth'd "try it" | Developers | Generated from code (`FR-API-3`) |
+| Surface          | Base path                | Auth                                            | Audience                                  | Notes                                                       |
+| ---------------- | ------------------------ | ----------------------------------------------- | ----------------------------------------- | ----------------------------------------------------------- |
+| Tenant API       | `/api/v1/*`              | Bearer JWT **or** API key                       | Web app + tenant integrations             | The product's main API                                      |
+| Public ingestion | `/api/public/v1/*`       | Tenant public key (+ HMAC for server-to-server) | Customer websites, third parties          | Write-mostly, heavily rate limited, CORS-open per allowlist |
+| Platform admin   | `/api/admin/v1/*`        | Platform JWT (MFA required)                     | Super Admin console                       | Never reachable with a tenant token                         |
+| Collector        | `/t/*`, `/wh/*`          | Signature / site key                            | Browsers, Meta, Google, payment providers | Ack-fast, no business logic                                 |
+| Realtime         | `/socket.io`             | JWT handshake                                   | Web app                                   | Rooms are org-scoped                                        |
+| Docs             | `/docs`, `/openapi.json` | Public spec, auth'd "try it"                    | Developers                                | Generated from code (`FR-API-3`)                            |
 
 ---
 
@@ -23,7 +23,12 @@ Traces to: `FR-API-*`, `FR-CAP-6`, `NFR-PERF-3`, `NFR-SEC-*`
 Success:
 
 ```json
-{ "success": true, "data": { }, "message": "Lead created successfully", "meta": { "requestId": "req_01J…" } }
+{
+  "success": true,
+  "data": {},
+  "message": "Lead created successfully",
+  "meta": { "requestId": "req_01J…" }
+}
 ```
 
 Collections:
@@ -31,10 +36,17 @@ Collections:
 ```json
 {
   "success": true,
-  "data": [ { } ],
+  "data": [{}],
   "meta": {
     "requestId": "req_01J…",
-    "pagination": { "limit": 25, "nextCursor": "eyJpZCI6…", "prevCursor": null, "hasMore": true, "total": 1423, "totalIsEstimate": false }
+    "pagination": {
+      "limit": 25,
+      "nextCursor": "eyJpZCI6…",
+      "prevCursor": null,
+      "hasMore": true,
+      "total": 1423,
+      "totalIsEstimate": false
+    }
   }
 }
 ```
@@ -47,7 +59,13 @@ Error:
   "error": {
     "code": "LEAD_NOT_FOUND",
     "message": "Lead not found",
-    "details": [ { "field": "phone", "code": "INVALID_PHONE", "message": "Not a valid phone number for country IN" } ],
+    "details": [
+      {
+        "field": "phone",
+        "code": "INVALID_PHONE",
+        "message": "Not a valid phone number for country IN"
+      }
+    ],
     "requestId": "req_01J…"
   }
 }
@@ -59,19 +77,19 @@ field-level validation. Stack traces and provider payloads never appear in respo
 
 ### Error code catalogue (extract)
 
-| HTTP | Code | Meaning |
-|---|---|---|
-| 400 | `VALIDATION_FAILED` | Body/query failed schema validation |
-| 400 | `INVALID_PHONE`, `INVALID_CUSTOM_FIELD`, `UNKNOWN_FIELD` | Ingestion/field-specific |
-| 401 | `UNAUTHENTICATED`, `TOKEN_EXPIRED`, `TOKEN_REUSED` | Refresh-reuse revokes the family |
-| 403 | `FORBIDDEN`, `PERMISSION_DENIED`, `OUT_OF_DATA_SCOPE`, `ORG_SUSPENDED`, `TRIAL_EXPIRED`, `SUBSCRIPTION_INACTIVE` | Distinct so the UI can show the right screen |
-| 403 | `FEATURE_NOT_IN_PLAN`, `LIMIT_EXCEEDED` | Carries `details.feature`, `details.limit`, `details.used`, `details.upgradeUrl` |
-| 404 | `NOT_FOUND`, `LEAD_NOT_FOUND`, … | Cross-tenant access returns 404, never 403, to avoid existence disclosure |
-| 409 | `CONFLICT`, `DUPLICATE_LEAD`, `STALE_VERSION`, `IDEMPOTENT_REPLAY_MISMATCH` | `DUPLICATE_LEAD` includes the existing lead id when the caller may see it |
-| 422 | `BUSINESS_RULE_VIOLATION` | e.g. stage requires fields that are empty; `details.requiredFields` |
-| 429 | `RATE_LIMITED` | `Retry-After` + `X-RateLimit-*` headers |
-| 502/503 | `INTEGRATION_UNAVAILABLE`, `PROVIDER_ERROR` | Includes `details.provider`, retry guidance |
-| 500 | `INTERNAL_ERROR` | Opaque; `requestId` is the support handle |
+| HTTP    | Code                                                                                                             | Meaning                                                                          |
+| ------- | ---------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| 400     | `VALIDATION_FAILED`                                                                                              | Body/query failed schema validation                                              |
+| 400     | `INVALID_PHONE`, `INVALID_CUSTOM_FIELD`, `UNKNOWN_FIELD`                                                         | Ingestion/field-specific                                                         |
+| 401     | `UNAUTHENTICATED`, `TOKEN_EXPIRED`, `TOKEN_REUSED`                                                               | Refresh-reuse revokes the family                                                 |
+| 403     | `FORBIDDEN`, `PERMISSION_DENIED`, `OUT_OF_DATA_SCOPE`, `ORG_SUSPENDED`, `TRIAL_EXPIRED`, `SUBSCRIPTION_INACTIVE` | Distinct so the UI can show the right screen                                     |
+| 403     | `FEATURE_NOT_IN_PLAN`, `LIMIT_EXCEEDED`                                                                          | Carries `details.feature`, `details.limit`, `details.used`, `details.upgradeUrl` |
+| 404     | `NOT_FOUND`, `LEAD_NOT_FOUND`, …                                                                                 | Cross-tenant access returns 404, never 403, to avoid existence disclosure        |
+| 409     | `CONFLICT`, `DUPLICATE_LEAD`, `STALE_VERSION`, `IDEMPOTENT_REPLAY_MISMATCH`                                      | `DUPLICATE_LEAD` includes the existing lead id when the caller may see it        |
+| 422     | `BUSINESS_RULE_VIOLATION`                                                                                        | e.g. stage requires fields that are empty; `details.requiredFields`              |
+| 429     | `RATE_LIMITED`                                                                                                   | `Retry-After` + `X-RateLimit-*` headers                                          |
+| 502/503 | `INTEGRATION_UNAVAILABLE`, `PROVIDER_ERROR`                                                                      | Includes `details.provider`, retry guidance                                      |
+| 500     | `INTERNAL_ERROR`                                                                                                 | Opaque; `requestId` is the support handle                                        |
 
 ---
 
@@ -120,12 +138,15 @@ Complex (JSON body on `POST /leads/search`, identical semantics):
   "filter": {
     "op": "and",
     "conditions": [
-      { "field": "stage.id", "op": "in", "value": ["…","…"] },
+      { "field": "stage.id", "op": "in", "value": ["…", "…"] },
       { "field": "cf.propertyType", "op": "eq", "value": "Apartment" },
-      { "op": "or", "conditions": [
-        { "field": "nextActionAt", "op": "lte", "value": "now" },
-        { "field": "nextActionAt", "op": "is_null" }
-      ]}
+      {
+        "op": "or",
+        "conditions": [
+          { "field": "nextActionAt", "op": "lte", "value": "now" },
+          { "field": "nextActionAt", "op": "is_null" }
+        ]
+      }
     ]
   },
   "sort": [{ "field": "score", "dir": "desc" }],
@@ -151,6 +172,7 @@ Abbreviated: `C`reate `R`ead `L`ist `U`pdate `D`elete. Every route declares its 
 data-scope behaviour in code; the table names the primary permission.
 
 ### Auth & session
+
 ```
 POST   /auth/register                        create org + owner (public, rate limited)
 POST   /auth/login                           → access + refresh (httpOnly cookie for web)
@@ -165,7 +187,8 @@ GET    /auth/sessions        DELETE /auth/sessions/{id}
 POST   /invitations/accept
 ```
 
-### Organization & settings  · `organization:*`
+### Organization & settings · `organization:*`
+
 ```
 GET/PATCH /organization                      profile, timezone, currency, defaults
 GET/PATCH /organization/settings             feature-level preferences
@@ -178,7 +201,8 @@ POST      /organization/apply-template/{code}
 GET       /audit-logs                        filter by actor/action/resource/date (read-only)
 ```
 
-### Leads  · `lead:*`
+### Leads · `lead:*`
+
 ```
 GET    /leads                                filter DSL, saved view via ?viewId=
 POST   /leads/search                         complex filter
@@ -203,7 +227,8 @@ GET    /leads/recycle-bin
 GET    /customers … (same shape)             `customer:*`
 ```
 
-### Configuration  · `settings:*`
+### Configuration · `settings:*`
+
 ```
 CRUD /custom-fields | /custom-field-sections | /custom-fields/{id}/options
 POST /custom-fields/{id}/reindex             sets is_indexed, runs index job
@@ -217,7 +242,8 @@ CRUD /duplicate-rules POST /duplicate-rules/test
 CRUD /sla-policies    CRUD /saved-views
 ```
 
-### Tasks & work  · `task:*`
+### Tasks & work · `task:*`
+
 ```
 GET  /tasks                                  ?bucket=due_now|today|overdue|upcoming|completed
 GET  /tasks/summary                          the Today counters (FR-TSK-7)
@@ -231,6 +257,7 @@ GET  /sla/board                              at-risk + breached (manager)  `sla:
 ```
 
 ### Pipeline & deals
+
 ```
 GET  /pipelines/{id}/board                   per-stage first page + counts + value totals
 POST /pipelines/{id}/move                    { leadId, toStageId, position } (If-Match)
@@ -238,7 +265,8 @@ CRUD /deals | /deals/{id}/items | /quotations | /quotations/{id}/send | /payment
 GET  /deals/{id}/pdf
 ```
 
-### Conversations & WhatsApp  · `conversation:*`, `whatsapp:*`
+### Conversations & WhatsApp · `conversation:*`, `whatsapp:*`
+
 ```
 GET  /conversations                          ?status=&assigned=me|unassigned&channel=&tag=&unread=
 GET  /conversations/{id}                     + lead context block (FR-WA-8)
@@ -256,6 +284,7 @@ POST /whatsapp/campaigns                     consent-checked bulk (FR-WA-10)
 ```
 
 ### Capture, integrations, developer platform
+
 ```
 CRUD /forms | /forms/{id}/fields    GET /forms/{id}/embed-code
 GET  /forms/{id}/submissions
@@ -271,6 +300,7 @@ POST /exports                       GET /exports/{id}
 ```
 
 ### Automation, websites, analytics, marketing
+
 ```
 CRUD /workflows | /workflows/{id}/versions | /steps
 POST /workflows/{id}/{publish|activate|deactivate|kill}   POST /workflows/{id}/test-run
@@ -288,6 +318,7 @@ CRUD /seo/keywords  GET /seo/rankings
 ```
 
 ### Dashboards, billing, notifications
+
 ```
 GET  /dashboard/{owner|manager|executive|marketing|whatsapp}   role-shaped, cached
 GET  /reports/{leads|sources|campaigns|users|pipeline|sla|conversion}  + ?format=csv (→ export job)
@@ -302,6 +333,7 @@ POST /ai/{summarize-lead|summarize-conversation|suggest-reply|next-best-action} 
 ```
 
 ### Platform admin (`/api/admin/v1`)
+
 ```
 GET  /dashboard                              FR-SA-2 cards + charts
 CRUD /organizations                          + /{id}/{suspend|activate|extend-trial|change-plan|impersonate}
@@ -347,7 +379,12 @@ Idempotency-Key: website-form-8f21a4         # optional but recommended
 ```json
 {
   "success": true,
-  "data": { "leadId": "01J8…", "status": "created", "duplicateOf": null, "assignedTo": { "id": "01J8…", "name": "Rahul" } },
+  "data": {
+    "leadId": "01J8…",
+    "status": "created",
+    "duplicateOf": null,
+    "assignedTo": { "id": "01J8…", "name": "Rahul" }
+  },
   "message": "Lead received"
 }
 ```
@@ -376,14 +413,14 @@ not appear" answer, self-serve.
 
 ## 7. Inbound webhooks (collector)
 
-| Route | Provider | Verification |
-|---|---|---|
-| `GET /wh/whatsapp/{connectionId}` | Meta | `hub.verify_token` echo challenge |
-| `POST /wh/whatsapp/{connectionId}` | Meta | `X-Hub-Signature-256` HMAC over the **raw** body (`FR-WA-6`) |
-| `POST /wh/meta-leadgen/{connectionId}` | Meta Lead Ads | Same; then fetch the lead by `leadgen_id` |
-| `POST /wh/google-ads/{connectionId}` | Google lead forms | Shared-secret in payload + allowlist |
-| `POST /wh/payments/{provider}/{connectionId}` | Razorpay/Stripe | Provider signature scheme |
-| `POST /wh/telephony/{provider}/{connectionId}` | Telephony | Provider signature |
+| Route                                          | Provider          | Verification                                                 |
+| ---------------------------------------------- | ----------------- | ------------------------------------------------------------ |
+| `GET /wh/whatsapp/{connectionId}`              | Meta              | `hub.verify_token` echo challenge                            |
+| `POST /wh/whatsapp/{connectionId}`             | Meta              | `X-Hub-Signature-256` HMAC over the **raw** body (`FR-WA-6`) |
+| `POST /wh/meta-leadgen/{connectionId}`         | Meta Lead Ads     | Same; then fetch the lead by `leadgen_id`                    |
+| `POST /wh/google-ads/{connectionId}`           | Google lead forms | Shared-secret in payload + allowlist                         |
+| `POST /wh/payments/{provider}/{connectionId}`  | Razorpay/Stripe   | Provider signature scheme                                    |
+| `POST /wh/telephony/{provider}/{connectionId}` | Telephony         | Provider signature                                           |
 
 Uniform handling: parse raw body → verify signature (constant-time) → resolve tenant from the path's
 connection id **and** cross-check the payload's account id → insert `provider_events`
@@ -405,8 +442,14 @@ X-LeadOS-Signature: v1=5d41402abc4b2a76…       # HMAC-SHA256("{timestamp}.{raw
 ```
 
 ```json
-{ "id": "evt_01J8…", "type": "lead.created", "occurredAt": "2026-09-27T10:30:00Z",
-  "organizationId": "01J8…", "apiVersion": "v1", "data": { "lead": { } } }
+{
+  "id": "evt_01J8…",
+  "type": "lead.created",
+  "occurredAt": "2026-09-27T10:30:00Z",
+  "organizationId": "01J8…",
+  "apiVersion": "v1",
+  "data": { "lead": {} }
+}
 ```
 
 Events: `lead.created|updated|assigned|stage_changed|status_changed|converted|merged|deleted`,
@@ -426,20 +469,20 @@ delivery log with response status + truncated body and manual retry (`FR-API-4`)
 Token buckets in Redis, evaluated most-specific-first; every response carries
 `X-RateLimit-Limit/Remaining/Reset`.
 
-| Scope | Default |
-|---|---|
-| Unauthenticated auth routes | 10/min per IP, 50/hour per IP, progressive lockout per account |
-| Authenticated user | 300/min |
-| API key | plan-based (e.g. 60/min starter → 600/min growth), overridable per key |
-| Public ingestion per key | 60/min, 5 000/day (plan-based) |
-| Public ingestion per IP | 20/min (browser abuse guard) |
-| Collector beacons per site | 600/min per visitor id, bot-filtered |
-| Exports / bulk / reports | 5 concurrent jobs per org |
-| WhatsApp sends | per phone number, provider-tier aligned (queue-level, not HTTP) |
+| Scope                       | Default                                                                |
+| --------------------------- | ---------------------------------------------------------------------- |
+| Unauthenticated auth routes | 10/min per IP, 50/hour per IP, progressive lockout per account         |
+| Authenticated user          | 300/min                                                                |
+| API key                     | plan-based (e.g. 60/min starter → 600/min growth), overridable per key |
+| Public ingestion per key    | 60/min, 5 000/day (plan-based)                                         |
+| Public ingestion per IP     | 20/min (browser abuse guard)                                           |
+| Collector beacons per site  | 600/min per visitor id, bot-filtered                                   |
+| Exports / bulk / reports    | 5 concurrent jobs per org                                              |
+| WhatsApp sends              | per phone number, provider-tier aligned (queue-level, not HTTP)        |
 
 Limits are **entitlements**, stored per plan, overridable per org — never constants in code
-(Rule 7). Exceeding a *plan* quota returns `403 LIMIT_EXCEEDED` (a business condition); exceeding a
-*burst* limit returns `429 RATE_LIMITED` (a technical condition). The distinction matters to clients.
+(Rule 7). Exceeding a _plan_ quota returns `403 LIMIT_EXCEEDED` (a business condition); exceeding a
+_burst_ limit returns `429 RATE_LIMITED` (a technical condition). The distinction matters to clients.
 
 ---
 

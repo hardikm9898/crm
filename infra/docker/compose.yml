@@ -1,0 +1,55 @@
+# Local development dependencies only. Application processes run on the host via
+# `pnpm dev` for fast reload; see docs/deployment-architecture.md §2.
+name: leados-dev
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: leados-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: leados
+      POSTGRES_PASSWORD: leados
+      POSTGRES_DB: leados
+    ports: ['5432:5432']
+    volumes: ['pgdata:/var/lib/postgresql/data']
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U leados -d leados']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: leados-redis
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    ports: ['6379:6379']
+    volumes: ['redisdata:/data']
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio
+    container_name: leados-minio
+    restart: unless-stopped
+    command: ['server', '/data', '--console-address', ':9001']
+    environment:
+      MINIO_ROOT_USER: leadosdev
+      MINIO_ROOT_PASSWORD: leadosdev
+    ports: ['9000:9000', '9001:9001']
+    volumes: ['miniodata:/data']
+
+  mailhog:
+    image: mailhog/mailhog
+    container_name: leados-mailhog
+    restart: unless-stopped
+    ports: ['1025:1025', '8025:8025']
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:

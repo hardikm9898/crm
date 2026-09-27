@@ -1,0 +1,6 @@
+pnpm-lock.yaml
+packages/db/generated
+packages/db/prisma/migrations
+dist
+.turbo
+coverage

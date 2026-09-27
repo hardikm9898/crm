@@ -35,3 +35,6 @@ Thumbs.db
 # local data
 docker-data/
 tmp/
+
+# generated code (produced by `pnpm db:generate`)
+packages/db/generated/

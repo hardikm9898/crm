@@ -6,12 +6,12 @@ Traces to: `NFR-SCALE-2`, `NFR-REL-5`, `NFR-OBS-*`, `FR-SA-4`
 
 ## 1. Environments
 
-| Env | Purpose | Data | Providers |
-|---|---|---|---|
-| `local` | Development | Seeded fixtures | Meta sandbox / mocked adapters; MinIO; Mailhog |
-| `ci` | Automated tests | Created and destroyed per run (testcontainers) | All adapters faked with recorded fixtures |
-| `staging` | Production-shaped verification | Anonymized/synthetic tenants only — **never** production PII | Meta test WABA, sandbox payments |
-| `production` | Live | Real | Live |
+| Env          | Purpose                        | Data                                                         | Providers                                      |
+| ------------ | ------------------------------ | ------------------------------------------------------------ | ---------------------------------------------- |
+| `local`      | Development                    | Seeded fixtures                                              | Meta sandbox / mocked adapters; MinIO; Mailhog |
+| `ci`         | Automated tests                | Created and destroyed per run (testcontainers)               | All adapters faked with recorded fixtures      |
+| `staging`    | Production-shaped verification | Anonymized/synthetic tenants only — **never** production PII | Meta test WABA, sandbox payments               |
+| `production` | Live                           | Real                                                         | Live                                           |
 
 Config comes only from the environment, validated at boot by a Zod schema — the process refuses to
 start with a missing or malformed variable. No environment-specific `if` statements in application
@@ -24,10 +24,16 @@ code; behaviour differences are configuration (`NFR-SEC`, Rule 9).
 ```yaml
 # infra/docker/compose.yml (dev)
 services:
-  postgres:  { image: postgres:16-alpine, ports: ["5432:5432"], volumes: [pgdata:/var/lib/postgresql/data] }
-  redis:     { image: redis:7-alpine,     ports: ["6379:6379"] }
-  minio:     { image: minio/minio,        ports: ["9000:9000","9001:9001"], command: server /data --console-address ":9001" }
-  mailhog:   { image: mailhog/mailhog,    ports: ["8025:8025"] }
+  postgres:
+    { image: postgres:16-alpine, ports: ['5432:5432'], volumes: [pgdata:/var/lib/postgresql/data] }
+  redis: { image: redis:7-alpine, ports: ['6379:6379'] }
+  minio:
+    {
+      image: minio/minio,
+      ports: ['9000:9000', '9001:9001'],
+      command: server /data --console-address ":9001",
+    }
+  mailhog: { image: mailhog/mailhog, ports: ['8025:8025'] }
   # api, worker, web run on the host via `pnpm dev` (fast HMR); `--profile full` runs them containerized
 ```
 
@@ -111,39 +117,39 @@ path — no manual `docker push` from a laptop.
 
 ## 6. Database operations
 
-| Concern | Practice |
-|---|---|
-| Migrations | Prisma Migrate, forward-only, reviewed SQL; no destructive step without a written rollback note; `CREATE INDEX CONCURRENTLY` for hot tables; long backfills run as jobs, not migrations |
-| Zero-downtime pattern | Add nullable column → deploy writer → backfill job → add constraint → remove old reads → drop old column in a later release |
-| Connections | PgBouncer (transaction mode) from stage B; Prisma pool sized per process class; workers get a smaller pool than the API |
-| Partitions | `partition.maintain` pre-creates the next 3 periods, detaches and drops expired ones, `ANALYZE`s after attach; alerts if the next partition is missing (a missing future partition = failed inserts) |
-| Slow queries | `pg_stat_statements` + `auto_explain` above 500 ms; a weekly review of the top 20; `EXPLAIN` required in review for any new query on `leads`, `messages`, `activities` or `website_events` |
-| Read replica | From stage B, used for reports, exports and platform analytics only; replica lag is monitored and read-after-write paths always use the primary |
-| Backups | Managed automated backups + PITR (7 d minimum, 30 d target), encrypted, cross-region copy; **plus** a monthly logical dump of platform-critical tables |
-| Restore | Documented runbook, rehearsed **quarterly**, with recovery time recorded. An untested backup is not a backup (`NFR-REL-5`) |
-| RPO/RTO | RPO ≤ 5 min (PITR), RTO ≤ 2 h for full region restore; ingestion degradation buffer keeps capture alive during a failover window |
+| Concern               | Practice                                                                                                                                                                                             |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Migrations            | Prisma Migrate, forward-only, reviewed SQL; no destructive step without a written rollback note; `CREATE INDEX CONCURRENTLY` for hot tables; long backfills run as jobs, not migrations              |
+| Zero-downtime pattern | Add nullable column → deploy writer → backfill job → add constraint → remove old reads → drop old column in a later release                                                                          |
+| Connections           | PgBouncer (transaction mode) from stage B; Prisma pool sized per process class; workers get a smaller pool than the API                                                                              |
+| Partitions            | `partition.maintain` pre-creates the next 3 periods, detaches and drops expired ones, `ANALYZE`s after attach; alerts if the next partition is missing (a missing future partition = failed inserts) |
+| Slow queries          | `pg_stat_statements` + `auto_explain` above 500 ms; a weekly review of the top 20; `EXPLAIN` required in review for any new query on `leads`, `messages`, `activities` or `website_events`           |
+| Read replica          | From stage B, used for reports, exports and platform analytics only; replica lag is monitored and read-after-write paths always use the primary                                                      |
+| Backups               | Managed automated backups + PITR (7 d minimum, 30 d target), encrypted, cross-region copy; **plus** a monthly logical dump of platform-critical tables                                               |
+| Restore               | Documented runbook, rehearsed **quarterly**, with recovery time recorded. An untested backup is not a backup (`NFR-REL-5`)                                                                           |
+| RPO/RTO               | RPO ≤ 5 min (PITR), RTO ≤ 2 h for full region restore; ingestion degradation buffer keeps capture alive during a failover window                                                                     |
 
 ---
 
 ## 7. Observability
 
-| Signal | Implementation |
-|---|---|
-| Logs | pino → JSON on stdout → log platform. Every line carries `requestId`, `organizationId`, `userId`, `route`, `durationMs`, `jobId`/`eventId` where relevant. Redaction list enforced (`security.md` §9). Sampled debug logs per-connection behind a flag |
-| Traces | OpenTelemetry auto-instrumentation (HTTP, Prisma, Redis, BullMQ, outbound HTTP) with the request id as the trace correlator; a capture→assignment→WhatsApp-send chain is one trace across processes |
-| Metrics | Prometheus: RED per route, DB pool saturation, cache hit rate, queue depth/age/failure per queue, outbox lag, provider latency/error rate per provider, WhatsApp send outcomes, ingestion success rate, rollup freshness, active tenants/users |
-| Errors | Sentry with release + org/user context (ids only, no PII), alert rules on new-issue and spike |
-| Uptime | External probes on `/health/ready`, the public ingestion endpoint and a published tenant site |
-| Health endpoints | `/health/live` (process), `/health/ready` (DB + Redis + storage reachable), `/health/deep` (admin-only: partitions present, scheduler heartbeat, outbox lag, DLQ depth, integration health summary) |
-| Product analytics | `daily_org_metrics` + feature-usage events feed the Super Admin tenant-health view (`FR-SA-6`) |
+| Signal            | Implementation                                                                                                                                                                                                                                         |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Logs              | pino → JSON on stdout → log platform. Every line carries `requestId`, `organizationId`, `userId`, `route`, `durationMs`, `jobId`/`eventId` where relevant. Redaction list enforced (`security.md` §9). Sampled debug logs per-connection behind a flag |
+| Traces            | OpenTelemetry auto-instrumentation (HTTP, Prisma, Redis, BullMQ, outbound HTTP) with the request id as the trace correlator; a capture→assignment→WhatsApp-send chain is one trace across processes                                                    |
+| Metrics           | Prometheus: RED per route, DB pool saturation, cache hit rate, queue depth/age/failure per queue, outbox lag, provider latency/error rate per provider, WhatsApp send outcomes, ingestion success rate, rollup freshness, active tenants/users         |
+| Errors            | Sentry with release + org/user context (ids only, no PII), alert rules on new-issue and spike                                                                                                                                                          |
+| Uptime            | External probes on `/health/ready`, the public ingestion endpoint and a published tenant site                                                                                                                                                          |
+| Health endpoints  | `/health/live` (process), `/health/ready` (DB + Redis + storage reachable), `/health/deep` (admin-only: partitions present, scheduler heartbeat, outbox lag, DLQ depth, integration health summary)                                                    |
+| Product analytics | `daily_org_metrics` + feature-usage events feed the Super Admin tenant-health view (`FR-SA-6`)                                                                                                                                                         |
 
 ### Alert catalogue (initial)
 
-| Severity | Condition |
-|---|---|
-| **Page** | API 5xx rate > 2% for 5 min · `/health/ready` failing on >1 replica · ingestion success < 99% for 10 min · outbox lag > 60 s · Postgres replica lag > 60 s or connections > 85% · Redis unavailable · next partition missing · scheduler heartbeat stale > 5 min |
+| Severity | Condition                                                                                                                                                                                                                                                                                         |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Page** | API 5xx rate > 2% for 5 min · `/health/ready` failing on >1 replica · ingestion success < 99% for 10 min · outbox lag > 60 s · Postgres replica lag > 60 s or connections > 85% · Redis unavailable · next partition missing · scheduler heartbeat stale > 5 min                                  |
 | **Warn** | Queue depth > 10 000 or oldest job age > 5 min · DLQ depth > 0 for 15 min · provider error rate > 10% for one provider · integration connections in `error` spiking across tenants (provider outage) · p95 latency > 1 s · disk/storage > 80% · failed payments spike · rollup freshness > 30 min |
-| **Info** | Trial expiring cohort · usage threshold crossings per tenant · new org signup · export volume anomaly |
+| **Info** | Trial expiring cohort · usage threshold crossings per tenant · new org signup · export volume anomaly                                                                                                                                                                                             |
 
 Every alert links to a runbook section. An alert without a runbook is deleted or given one — noisy
 unactionable alerts are how real incidents get missed.

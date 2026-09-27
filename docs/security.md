@@ -10,36 +10,36 @@ Traces to: `NFR-SEC-*`, `FR-TEN-3/4/7`, `FR-IAM-*`, `FR-AUD-*`, `FR-PRV-*`, Rule
 
 ## 1. Threat model
 
-| Asset | Threat | Primary controls |
-|---|---|---|
-| Tenant lead/customer PII | Cross-tenant read via a missing `organization_id` filter, IDOR, broken cache key | 4-layer isolation (§3), composite FKs, generated tenancy test suite, org-prefixed cache keys |
-| WhatsApp conversations | Same as above; also an agent reading conversations outside their scope | Data scopes, conversation ownership, audit |
-| Integration credentials (Meta tokens, ad accounts, payment keys) | Exfiltration via API response, logs, audit diffs, backups | Envelope encryption, never-returned rule, log redaction, encrypted backups |
-| Auth tokens | Theft via XSS, token leakage in storage/URLs, refresh replay | httpOnly cookies, short access TTL, refresh rotation + reuse detection, CSP |
-| Public ingestion endpoints | Lead spam/injection, enumeration of tenants, DoS | Key + HMAC, rate limits, honeypot/CAPTCHA, origin allowlist, no tenant enumeration |
-| Inbound webhooks | Forged WhatsApp/payment events | Constant-time signature verification over raw body, connection↔payload cross-check, replay window |
-| Exports & reports | Insider mass exfiltration | Permission-gated, audited, rate-limited, watermarked filenames, admin-visible export log |
-| Platform admin plane | Privilege escalation from a tenant, impersonation abuse | Separate auth realm, mandatory MFA, no tenant-token path to `/api/admin/*`, impersonation audit + banner |
-| Availability of capture | Volumetric attack losing leads | Separate collector tier, ack-fast design, raw-payload durability, per-key limits |
-| Uploaded files | Malware distribution, stored XSS | Type/size validation, magic-byte sniffing, quarantine + scan, no inline serving from an app origin |
+| Asset                                                            | Threat                                                                           | Primary controls                                                                                         |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Tenant lead/customer PII                                         | Cross-tenant read via a missing `organization_id` filter, IDOR, broken cache key | 4-layer isolation (§3), composite FKs, generated tenancy test suite, org-prefixed cache keys             |
+| WhatsApp conversations                                           | Same as above; also an agent reading conversations outside their scope           | Data scopes, conversation ownership, audit                                                               |
+| Integration credentials (Meta tokens, ad accounts, payment keys) | Exfiltration via API response, logs, audit diffs, backups                        | Envelope encryption, never-returned rule, log redaction, encrypted backups                               |
+| Auth tokens                                                      | Theft via XSS, token leakage in storage/URLs, refresh replay                     | httpOnly cookies, short access TTL, refresh rotation + reuse detection, CSP                              |
+| Public ingestion endpoints                                       | Lead spam/injection, enumeration of tenants, DoS                                 | Key + HMAC, rate limits, honeypot/CAPTCHA, origin allowlist, no tenant enumeration                       |
+| Inbound webhooks                                                 | Forged WhatsApp/payment events                                                   | Constant-time signature verification over raw body, connection↔payload cross-check, replay window        |
+| Exports & reports                                                | Insider mass exfiltration                                                        | Permission-gated, audited, rate-limited, watermarked filenames, admin-visible export log                 |
+| Platform admin plane                                             | Privilege escalation from a tenant, impersonation abuse                          | Separate auth realm, mandatory MFA, no tenant-token path to `/api/admin/*`, impersonation audit + banner |
+| Availability of capture                                          | Volumetric attack losing leads                                                   | Separate collector tier, ack-fast design, raw-payload durability, per-key limits                         |
+| Uploaded files                                                   | Malware distribution, stored XSS                                                 | Type/size validation, magic-byte sniffing, quarantine + scan, no inline serving from an app origin       |
 
 ---
 
 ## 2. Authentication
 
-| Control | Decision |
-|---|---|
-| Password hashing | **Argon2id** (m=64 MiB, t=3, p=1, tuned to ~250 ms), per-password salt, transparent rehash on login when params change |
-| Password policy | ≥ 10 chars, zxcvbn strength floor, breach-list check (k-anonymity HIBP), no forced rotation, no composition puzzles |
-| Access token | JWT (RS256), TTL **15 min**, claims `{ sub, org_id, roles, scope_ver, jti, imp? }`; `scope_ver` bumps invalidate cached permissions instantly on a role change |
-| Refresh token | Opaque 256-bit, hashed at rest, TTL 30 d, **rotated on every use**, family-tracked; reuse of a rotated token revokes the whole family and alerts the user (`TOKEN_REUSED`) |
-| Web transport | Refresh in an httpOnly `Secure` `SameSite=Lax` cookie; access token kept in memory only — never `localStorage` |
-| MFA | TOTP + single-use recovery codes; enforceable per org policy; **mandatory** for platform staff |
-| Brute force | Per-IP and per-account throttling with progressive delay, then temporary lockout + notification; generic error messages (no "user not found") |
-| Sessions | Listed per device with IP/UA/last-seen, individually and bulk revocable (`FR-IAM-2`) |
-| Invitations / resets | Single-use, hashed tokens, 72 h / 1 h expiry, invalidated on use and on password change |
-| Machine auth | API key = `pk_live_<id>.<secret>`; only the hash stored, prefix shown; optional HMAC request signing with a 5-minute timestamp window for replay resistance; scopes + IP allowlist + expiry + rotation |
-| Public ingestion | Org public key identifies the tenant; HMAC secret authenticates server-to-server; browser origin restricted by allowlist; a public key alone never grants read access |
+| Control              | Decision                                                                                                                                                                                               |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Password hashing     | **Argon2id** (m=64 MiB, t=3, p=1, tuned to ~250 ms), per-password salt, transparent rehash on login when params change                                                                                 |
+| Password policy      | ≥ 10 chars, zxcvbn strength floor, breach-list check (k-anonymity HIBP), no forced rotation, no composition puzzles                                                                                    |
+| Access token         | JWT (RS256), TTL **15 min**, claims `{ sub, org_id, roles, scope_ver, jti, imp? }`; `scope_ver` bumps invalidate cached permissions instantly on a role change                                         |
+| Refresh token        | Opaque 256-bit, hashed at rest, TTL 30 d, **rotated on every use**, family-tracked; reuse of a rotated token revokes the whole family and alerts the user (`TOKEN_REUSED`)                             |
+| Web transport        | Refresh in an httpOnly `Secure` `SameSite=Lax` cookie; access token kept in memory only — never `localStorage`                                                                                         |
+| MFA                  | TOTP + single-use recovery codes; enforceable per org policy; **mandatory** for platform staff                                                                                                         |
+| Brute force          | Per-IP and per-account throttling with progressive delay, then temporary lockout + notification; generic error messages (no "user not found")                                                          |
+| Sessions             | Listed per device with IP/UA/last-seen, individually and bulk revocable (`FR-IAM-2`)                                                                                                                   |
+| Invitations / resets | Single-use, hashed tokens, 72 h / 1 h expiry, invalidated on use and on password change                                                                                                                |
+| Machine auth         | API key = `pk_live_<id>.<secret>`; only the hash stored, prefix shown; optional HMAC request signing with a 5-minute timestamp window for replay resistance; scopes + IP allowlist + expiry + rotation |
+| Public ingestion     | Org public key identifies the tenant; HMAC secret authenticates server-to-server; browser origin restricted by allowlist; a public key alone never grants read access                                  |
 
 ---
 
@@ -64,7 +64,7 @@ rather than a breach.
 **Layer 4 — Row Level Security (Phase 12).** Tenant traffic on a non-owner role with
 `FORCE ROW LEVEL SECURITY`; policies compare `organization_id` with
 `current_setting('app.current_org', true)`, set by `SET LOCAL` inside the request transaction
-(safe under PgBouncer transaction pooling). Deliberately *not* the only control, and validated under
+(safe under PgBouncer transaction pooling). Deliberately _not_ the only control, and validated under
 load before enabling.
 
 **Adjacent leak paths, explicitly closed:** cache keys are built by a helper that requires an org id;
@@ -189,8 +189,13 @@ impersonation start/end and every action performed while impersonating, workflow
 and every `withPlatformScope()` use.
 
 Record: actor (type + id), organization, action, resource type/id, `before`/`after` (PII-redacted per
-field policy), IP, user agent, request id, timestamp. Append-only: the application role has no
-`UPDATE`/`DELETE` grant on `audit_logs`, and no UI exposes mutation (`FR-AUD-2`). Tenant admins see
+field policy), IP, user agent, request id, timestamp. Append-only is enforced **in the database by a
+trigger**, not only by grants: UPDATE is always rejected, and DELETE succeeds only inside a
+transaction that explicitly sets `app.audit_purge='on'` — which only the retention/DSR purge path
+(`withAuditPurge()`) does, and which is itself audited. The organization foreign key is `RESTRICT`,
+so deleting an organization cannot cascade the trail away. No UI exposes mutation (`FR-AUD-2`).
+This resolves the tension with erasure rights (`FR-PRV-3`): history cannot be rewritten, but it can
+be purged by a deliberate, reviewable operation. Tenant admins see
 their org's log (read + filter + export); platform staff see the platform log. Retention is
 policy-driven and outlives business-data retention.
 

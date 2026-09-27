@@ -167,23 +167,23 @@ decryption is confined to `ProviderRegistry` and is audit-logged with the callin
 
 ## 6. Inbound integration catalogue
 
-| Integration | Direction | Mechanism | Phase |
-|---|---|---|---|
-| Website forms (ours) | in | Direct API call from the generated site | 7 |
-| Public lead API | in | `POST /api/public/v1/leads/{publicKey}` + HMAC + idempotency | 4 |
-| Generic inbound webhook | in | Per-connection URL + a stored **field-mapping template** (JSONPath → lead field) so a new lead vendor is configuration, not code | 4 |
-| Meta Lead Ads | in | Webhook `leadgen` → fetch by `leadgen_id` → normalize → capture pipeline | 4 |
-| Google Ads lead forms | in | Webhook + shared secret → capture pipeline | 4 |
-| WhatsApp inbound | in/out | Cloud API webhooks + Graph sends | 5 |
-| Meta Ads insights | in | Scheduled pull (campaigns, ad sets, ads, daily spend) | 9 |
-| Google Ads insights | in | Scheduled pull | 9 |
-| Google Analytics 4 / Search Console | in | Scheduled pull (read-only) | 9 |
-| Payment provider | in/out | Payment links + webhooks (`payment.completed`) | 3/9 |
-| Telephony | in/out | Click-to-call + call webhooks (abstraction in 3) | later |
-| Email (transactional) | out | Provider adapter; bounce/complaint webhooks → suppressions | 3 |
-| Outbound webhooks | out | Signed, retried, logged (`api-architecture.md` §8) | 4 |
-| CSV/Excel import | in | Import wizard through the same capture pipeline | 2 |
-| Zapier/Make | in/out | Falls out of the public API + outbound webhooks; no bespoke work | 4 |
+| Integration                         | Direction | Mechanism                                                                                                                        | Phase |
+| ----------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------- | ----- |
+| Website forms (ours)                | in        | Direct API call from the generated site                                                                                          | 7     |
+| Public lead API                     | in        | `POST /api/public/v1/leads/{publicKey}` + HMAC + idempotency                                                                     | 4     |
+| Generic inbound webhook             | in        | Per-connection URL + a stored **field-mapping template** (JSONPath → lead field) so a new lead vendor is configuration, not code | 4     |
+| Meta Lead Ads                       | in        | Webhook `leadgen` → fetch by `leadgen_id` → normalize → capture pipeline                                                         | 4     |
+| Google Ads lead forms               | in        | Webhook + shared secret → capture pipeline                                                                                       | 4     |
+| WhatsApp inbound                    | in/out    | Cloud API webhooks + Graph sends                                                                                                 | 5     |
+| Meta Ads insights                   | in        | Scheduled pull (campaigns, ad sets, ads, daily spend)                                                                            | 9     |
+| Google Ads insights                 | in        | Scheduled pull                                                                                                                   | 9     |
+| Google Analytics 4 / Search Console | in        | Scheduled pull (read-only)                                                                                                       | 9     |
+| Payment provider                    | in/out    | Payment links + webhooks (`payment.completed`)                                                                                   | 3/9   |
+| Telephony                           | in/out    | Click-to-call + call webhooks (abstraction in 3)                                                                                 | later |
+| Email (transactional)               | out       | Provider adapter; bounce/complaint webhooks → suppressions                                                                       | 3     |
+| Outbound webhooks                   | out       | Signed, retried, logged (`api-architecture.md` §8)                                                                               | 4     |
+| CSV/Excel import                    | in        | Import wizard through the same capture pipeline                                                                                  | 2     |
+| Zapier/Make                         | in/out    | Falls out of the public API + outbound webhooks; no bespoke work                                                                 | 4     |
 
 **The generic mapping template is the strategic piece**: `{"phone": "$.contact.mobile", "cf.budget": "$.answers[?(@.q=='budget')].value"}`.
 Most "integrate with lead platform X" requests become a saved mapping plus a webhook URL — no
@@ -195,17 +195,17 @@ deploy, no code (Rule 1, Rule 4).
 
 Mandatory wrapper for all provider calls (`NFR-REL-3`):
 
-| Control | Setting |
-|---|---|
-| Timeout | connect 3 s, total 10 s (media: 30 s) |
-| Retries | 3 in-process for idempotent GETs; writes are retried by the **queue**, never in-process (avoids duplicate sends) |
-| Backoff | exponential + full jitter; `Retry-After` honoured |
-| Circuit breaker | per `(provider, organizationId)`: open after 5 consecutive failures for 60 s, half-open probe; open circuit → jobs delayed, not failed |
-| Bulkhead | per-provider concurrency caps so one provider's slowness cannot exhaust the worker pool |
-| Rate limits | per-provider token buckets in Redis, aligned to documented quotas (WhatsApp per number tier, Meta/Google per app) |
-| Observability | every call emits a span + metric (`provider`, `operation`, `status`, `duration`) and a redacted debug log behind a per-connection "debug mode" flag |
-| Error mapping | provider code → canonical `IntegrationError` with `retryable` and a `userMessage` written for a small-business owner, not a developer |
-| Degradation | UI shows the degraded feature with the reason; core CRM unaffected |
+| Control         | Setting                                                                                                                                             |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Timeout         | connect 3 s, total 10 s (media: 30 s)                                                                                                               |
+| Retries         | 3 in-process for idempotent GETs; writes are retried by the **queue**, never in-process (avoids duplicate sends)                                    |
+| Backoff         | exponential + full jitter; `Retry-After` honoured                                                                                                   |
+| Circuit breaker | per `(provider, organizationId)`: open after 5 consecutive failures for 60 s, half-open probe; open circuit → jobs delayed, not failed              |
+| Bulkhead        | per-provider concurrency caps so one provider's slowness cannot exhaust the worker pool                                                             |
+| Rate limits     | per-provider token buckets in Redis, aligned to documented quotas (WhatsApp per number tier, Meta/Google per app)                                   |
+| Observability   | every call emits a span + metric (`provider`, `operation`, `status`, `duration`) and a redacted debug log behind a per-connection "debug mode" flag |
+| Error mapping   | provider code → canonical `IntegrationError` with `retryable` and a `userMessage` written for a small-business owner, not a developer               |
+| Degradation     | UI shows the degraded feature with the reason; core CRM unaffected                                                                                  |
 
 ---
 

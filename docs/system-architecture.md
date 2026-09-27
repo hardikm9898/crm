@@ -10,7 +10,7 @@
 domain modules, plus a worker process that imports the same domain modules and consumes queues.
 No microservices in v1 (ADR-0002).
 
-Rationale: the whole product's value is in the *joins* — a lead's WhatsApp messages, tasks, website
+Rationale: the whole product's value is in the _joins_ — a lead's WhatsApp messages, tasks, website
 events and campaign data must be queried and transacted together. Splitting these into services at
 100 orgs buys distributed-transaction pain and buys nothing. But module boundaries are enforced
 now (import rules, no cross-module table access, communication by events and public service
@@ -73,13 +73,13 @@ interfaces), so any module can be extracted later without a rewrite.
 
 **Processes (all stateless, all horizontally scalable):**
 
-| Process | Responsibility | Scaling signal |
-|---|---|---|
-| `web` | Next.js SSR/RSC, no direct DB/Redis access to tenant data — calls the API | Request rate |
-| `api` | Authenticated REST, Socket.IO gateway, OpenAPI | Request rate, p95 latency |
-| `collector` | Beacons + provider webhooks. Validate signature → persist raw → enqueue → 200. Deployed from the same image with a different role; can be scaled independently because it is the "never lose a lead" tier | Inbound event rate |
-| `worker` | Queue consumers, one deployment per queue group so a WhatsApp backlog cannot starve analytics | Queue depth, job age |
-| `scheduler` | Registers BullMQ repeatable jobs; a single logical owner via Redis lock, but crash-safe and replaceable | n/a (1–2 replicas) |
+| Process     | Responsibility                                                                                                                                                                                            | Scaling signal            |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| `web`       | Next.js SSR/RSC, no direct DB/Redis access to tenant data — calls the API                                                                                                                                 | Request rate              |
+| `api`       | Authenticated REST, Socket.IO gateway, OpenAPI                                                                                                                                                            | Request rate, p95 latency |
+| `collector` | Beacons + provider webhooks. Validate signature → persist raw → enqueue → 200. Deployed from the same image with a different role; can be scaled independently because it is the "never lose a lead" tier | Inbound event rate        |
+| `worker`    | Queue consumers, one deployment per queue group so a WhatsApp backlog cannot starve analytics                                                                                                             | Queue depth, job age      |
+| `scheduler` | Registers BullMQ repeatable jobs; a single logical owner via Redis lock, but crash-safe and replaceable                                                                                                   | n/a (1–2 replicas)        |
 
 Splitting `collector` from `api` is deliberate: ingestion must stay up and fast even when the
 dashboard is being hammered (`NFR-REL-1`, `NFR-PERF-5`).
@@ -88,26 +88,32 @@ dashboard is being hammered (`NFR-REL-1`, `NFR-PERF-5`).
 
 ## 3. Technology decisions
 
-| Concern | Choice | Why (short) |
-|---|---|---|
-| Language | TypeScript 5.x, strict | One language across web/api/workers; shared contracts |
-| Runtime | Node.js 22 LTS | Available in env; stable, well-supported |
-| API framework | **NestJS 11** (Fastify adapter) | DI, module system that matches domain boundaries, guards/interceptors for tenant+RBAC, first-class OpenAPI, queue integration (ADR-0003) |
-| Frontend | **Next.js 15 App Router** + React 19 + TS | SSR shells, route-level code splitting, fast mobile TTI |
-| Styling/UI | Tailwind CSS + shadcn/ui (Radix) + lucide | Accessible primitives we own, no heavy design-system lock-in |
-| Client data | TanStack Query + Zustand (UI-only state) | Server state cached properly; no Redux ceremony |
-| Forms | React Hook Form + Zod (shared schemas) | Same validation shape as the API |
-| DB | **PostgreSQL 16** | JSONB for custom fields, partitioning, strong constraints, RLS available, `pg_trgm` search |
-| ORM | **Prisma 6** + a tenant-scoping client extension; raw SQL via Kysely-style typed queries for analytics | Migrations + type safety; escape hatch for reporting (ADR-0004) |
-| Cache/queue | Redis 7 + **BullMQ** | Delays, repeatables, rate-limited queues, DLQ semantics |
-| Object storage | S3-compatible (MinIO in dev) | Media, exports, imports, documents |
-| Realtime | Socket.IO + Redis adapter | Shared inbox, notifications, multi-node fanout |
-| Email | Provider adapter (SES/Postmark) | Swappable |
-| Search | Postgres (`pg_trgm`, GIN, `tsvector`) in v1; adapter allows OpenSearch later | Avoid premature infra (ADR-0007) |
-| Observability | pino → JSON logs, OpenTelemetry traces, Prometheus metrics, Sentry errors | Standard, vendor-portable |
-| Repo | pnpm workspaces + Turborepo | Fast CI, shared packages |
-| Containers | Docker, multi-stage; compose for dev | Parity, simple ops |
-| CI/CD | GitHub Actions | Required by brief |
+> **Revised in Phase 1 — see [ADR-0011](./decisions/ADR-0011-esm-and-toolchain-pins.md).** These pins
+> are what is actually installed after building against the registry, not what Phase 0 assumed.
+> NestJS 12 is ESM-only, so the entire workspace is ESM; Prisma 7 takes its connection string from
+> `prisma.config.ts` and requires a driver adapter; TypeScript is held at 6.0.x because
+> `typescript-eslint` peer-caps below 6.1.
+
+| Concern        | Choice                                                                                                                    | Why (short)                                                                                                                              |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Language       | TypeScript 6.0.x, strict, **ESM** (`nodenext`)                                                                            | One language across web/api/workers; TS 7 is blocked on typescript-eslint support (ADR-0011)                                             |
+| Runtime        | Node.js 22 LTS                                                                                                            | Available in env; stable, well-supported                                                                                                 |
+| API framework  | **NestJS 12** (Fastify 5), ESM-only                                                                                       | DI, module system that matches domain boundaries, guards/interceptors for tenant+RBAC, first-class OpenAPI, queue integration (ADR-0003) |
+| Frontend       | **Next.js 16 App Router** + React 19 + TS                                                                                 | SSR shells, route-level code splitting, fast mobile TTI                                                                                  |
+| Styling/UI     | Tailwind CSS + shadcn/ui (Radix) + lucide                                                                                 | Accessible primitives we own, no heavy design-system lock-in                                                                             |
+| Client data    | TanStack Query + Zustand (UI-only state)                                                                                  | Server state cached properly; no Redux ceremony                                                                                          |
+| Forms          | React Hook Form + Zod (shared schemas)                                                                                    | Same validation shape as the API                                                                                                         |
+| DB             | **PostgreSQL 16**                                                                                                         | JSONB for custom fields, partitioning, strong constraints, RLS available, `pg_trgm` search                                               |
+| ORM            | **Prisma 7** (`prisma-client` generator + `@prisma/adapter-pg`) + a tenant-scoping extension; typed raw SQL for analytics | Migrations + type safety; escape hatch for reporting (ADR-0004)                                                                          |
+| Cache/queue    | Redis 7 + **BullMQ**                                                                                                      | Delays, repeatables, rate-limited queues, DLQ semantics                                                                                  |
+| Object storage | S3-compatible (MinIO in dev)                                                                                              | Media, exports, imports, documents                                                                                                       |
+| Realtime       | Socket.IO + Redis adapter                                                                                                 | Shared inbox, notifications, multi-node fanout                                                                                           |
+| Email          | Provider adapter (SES/Postmark)                                                                                           | Swappable                                                                                                                                |
+| Search         | Postgres (`pg_trgm`, GIN, `tsvector`) in v1; adapter allows OpenSearch later                                              | Avoid premature infra (ADR-0007)                                                                                                         |
+| Observability  | pino → JSON logs, OpenTelemetry traces, Prometheus metrics, Sentry errors                                                 | Standard, vendor-portable                                                                                                                |
+| Repo           | pnpm workspaces + Turborepo                                                                                               | Fast CI, shared packages                                                                                                                 |
+| Containers     | Docker, multi-stage; compose for dev                                                                                      | Parity, simple ops                                                                                                                       |
+| CI/CD          | GitHub Actions                                                                                                            | Required by brief                                                                                                                        |
 
 ---
 
@@ -120,11 +126,10 @@ dashboard is being hammered (`NFR-REL-1`, `NFR-PERF-5`).
 │   │   └── src/
 │   │       ├── main.ts            bootstrap (role: api | collector)
 │   │       ├── app.module.ts
-│   │       ├── common/            guards, interceptors, filters, pipes,
-│   │       │                      pagination, envelope, filter-DSL parser
-│   │       ├── infra/             prisma, redis, queues, storage, mailer,
-│   │       │                      crypto/vault, outbox, tenant-context (ALS),
-│   │       │                      telemetry, feature-flags/entitlements
+│   │       ├── infra/             config, db (scoped client), http (request context,
+│   │       │                      envelope, exception filter), observability; later:
+│   │       │                      redis, queues, storage, mailer, crypto/vault, outbox,
+│   │       │                      telemetry, entitlements
 │   │       └── modules/           ← domain modules, section 5
 │   ├── worker/                    # imports api modules; queue processors only
 │   ├── web/                       # Next.js app (see frontend-architecture.md)
@@ -133,7 +138,8 @@ dashboard is being hammered (`NFR-REL-1`, `NFR-PERF-5`).
 │   ├── db/                        # prisma schema (split), migrations, seeds
 │   ├── contracts/                 # Zod schemas + generated TS types shared api↔web
 │   ├── shared/                    # pure utils: phone (E.164), money, dates/tz,
-│   │                              #   ids (UUIDv7), result types, constants
+│   │                              #   ids (UUIDv7), result types, RBAC catalogue,
+│   │                              #   tenant-context (ALS)
 │   ├── domain-events/             # event names + payload schemas + versioning
 │   ├── ui/                        # shared React components/design tokens
 │   └── config/                    # eslint, tsconfig, tailwind, prettier presets
@@ -165,44 +171,44 @@ modules/leads/
 
 ### Module map (owner → tables → key events)
 
-| Module | Owns | Publishes |
-|---|---|---|
-| `platform` | plans, plan_features, platform settings, feature flags, industry & website templates, impersonation | `plan.changed` |
-| `auth` | sessions, refresh tokens, password resets, MFA secrets, invitations | `user.logged_in`, `invitation.accepted` |
-| `organizations` | organizations, branches, teams, memberships, onboarding state, org settings, working hours, holidays | `organization.created`, `organization.suspended`, `onboarding.completed` |
-| `users` | users, profiles, availability/leave, notification preferences | `user.created`, `user.availability_changed` |
-| `iam` | roles, permissions, role_permissions, user_roles, scopes | `role.changed` |
-| `custom-fields` | field definitions, field sections, option lists | `custom_field.created` |
-| `leads` | leads, lead_tags, lead_touchpoints, lead_status_history, lead_stage_history, duplicates, merges, recycle bin | `lead.created|updated|assigned|stage_changed|status_changed|scored|converted|merged|deleted` |
-| `customers` | customers, customer_merges | `customer.created|merged` |
-| `pipelines` | pipelines, pipeline_stages | `pipeline.stage_changed` (config) |
-| `assignment` | assignment_rules, assignment_rule_conditions, round_robin_state, lead_assignments | `lead.assigned` |
-| `scoring` | scoring_rules, lead_score_events | `lead.scored` |
-| `tasks` | tasks, task_types, reschedule_reasons, task_reminders | `task.created|completed|rescheduled|overdue` |
-| `sla` | sla_policies, sla_clocks, escalations | `sla.breached|near_breach` |
-| `activities` | activities (timeline), notes, mentions, documents | `activity.recorded` |
-| `deals` | deals, deal_items, quotations, quotation_items, payments | `deal.won|lost`, `payment.completed` |
-| `conversations` | conversations, participants, assignment, tags, canned replies | `conversation.created|assigned|closed` |
-| `messages` | messages, message_media, message_status_events | `message.received|sent|failed` |
-| `whatsapp` | whatsapp_accounts, whatsapp_numbers, whatsapp_templates, provider webhooks/cursors | `whatsapp.template_status_changed`, `whatsapp.connection_failed` |
-| `calls` | calls, call_outcomes, telephony provider config | `call.logged` |
-| `forms` | forms, form_fields, form_submissions | `form.submitted` |
-| `ingestion` | inbound_payloads, ingestion_errors, ingestion source registry | `lead_capture.received`, `lead_capture.failed` |
-| `integrations` | integration_connections (encrypted creds), sync_cursors, integration_health, provider registry | `integration.connected|failed` |
-| `automation` | workflows, workflow_versions, steps, edges, runs, run_steps, enrollments, guardrail counters | `automation.run_started|completed|failed` |
-| `websites` | websites, website_pages, website_versions, domains, templates | `website.published` |
-| `analytics` | website_events (partitioned), sessions, visitors, identities, daily rollups | `analytics.purchase`, `analytics.checkout_started` |
-| `marketing` | campaigns, ad_accounts, ad_entities, campaign_daily_metrics, attribution config, segments, seo_keywords | `campaign.synced` |
-| `subscriptions` | subscriptions, subscription_items, usage_counters, entitlement overrides, trials | `trial.expiring|expired`, `subscription.past_due` |
-| `billing` | invoices, payments, payment_methods, dunning, service_packages, service_subscriptions | `invoice.paid|failed` |
-| `notifications` | notifications, deliveries, templates, preferences | `notification.created` |
-| `webhooks` | webhook_endpoints, subscriptions, deliveries, attempts | `webhook.delivery_failed` |
-| `api-platform` | api_keys, api_logs, rate-limit policies | `api_key.created|revoked` |
-| `audit` | audit_logs (append-only), impersonation_logs | — |
-| `privacy` | consents, suppressions, dsr_requests, retention_policies | `consent.revoked` |
-| `imports`/`exports` | import_jobs, import_rows, export_jobs | `import.completed`, `export.ready` |
-| `ai` | ai_requests, ai_outputs, ai_usage, per-org settings | `ai.output_created` |
-| `admin` | Super Admin read models, tenant health scores, system health, support tickets | — |
+| Module              | Owns                                                                                                         | Publishes                                                                |
+| ------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------ |
+| `platform`          | plans, plan_features, platform settings, feature flags, industry & website templates, impersonation          | `plan.changed`                                                           |
+| `auth`              | sessions, refresh tokens, password resets, MFA secrets, invitations                                          | `user.logged_in`, `invitation.accepted`                                  |
+| `organizations`     | organizations, branches, teams, memberships, onboarding state, org settings, working hours, holidays         | `organization.created`, `organization.suspended`, `onboarding.completed` |
+| `users`             | users, profiles, availability/leave, notification preferences                                                | `user.created`, `user.availability_changed`                              |
+| `iam`               | roles, permissions, role_permissions, user_roles, scopes                                                     | `role.changed`                                                           |
+| `custom-fields`     | field definitions, field sections, option lists                                                              | `custom_field.created`                                                   |
+| `leads`             | leads, lead_tags, lead_touchpoints, lead_status_history, lead_stage_history, duplicates, merges, recycle bin | `lead.created                                                            | updated                           | assigned    | stage_changed | status_changed | scored | converted | merged | deleted` |
+| `customers`         | customers, customer_merges                                                                                   | `customer.created                                                        | merged`                           |
+| `pipelines`         | pipelines, pipeline_stages                                                                                   | `pipeline.stage_changed` (config)                                        |
+| `assignment`        | assignment_rules, assignment_rule_conditions, round_robin_state, lead_assignments                            | `lead.assigned`                                                          |
+| `scoring`           | scoring_rules, lead_score_events                                                                             | `lead.scored`                                                            |
+| `tasks`             | tasks, task_types, reschedule_reasons, task_reminders                                                        | `task.created                                                            | completed                         | rescheduled | overdue`      |
+| `sla`               | sla_policies, sla_clocks, escalations                                                                        | `sla.breached                                                            | near_breach`                      |
+| `activities`        | activities (timeline), notes, mentions, documents                                                            | `activity.recorded`                                                      |
+| `deals`             | deals, deal_items, quotations, quotation_items, payments                                                     | `deal.won                                                                | lost`, `payment.completed`        |
+| `conversations`     | conversations, participants, assignment, tags, canned replies                                                | `conversation.created                                                    | assigned                          | closed`     |
+| `messages`          | messages, message_media, message_status_events                                                               | `message.received                                                        | sent                              | failed`     |
+| `whatsapp`          | whatsapp_accounts, whatsapp_numbers, whatsapp_templates, provider webhooks/cursors                           | `whatsapp.template_status_changed`, `whatsapp.connection_failed`         |
+| `calls`             | calls, call_outcomes, telephony provider config                                                              | `call.logged`                                                            |
+| `forms`             | forms, form_fields, form_submissions                                                                         | `form.submitted`                                                         |
+| `ingestion`         | inbound_payloads, ingestion_errors, ingestion source registry                                                | `lead_capture.received`, `lead_capture.failed`                           |
+| `integrations`      | integration_connections (encrypted creds), sync_cursors, integration_health, provider registry               | `integration.connected                                                   | failed`                           |
+| `automation`        | workflows, workflow_versions, steps, edges, runs, run_steps, enrollments, guardrail counters                 | `automation.run_started                                                  | completed                         | failed`     |
+| `websites`          | websites, website_pages, website_versions, domains, templates                                                | `website.published`                                                      |
+| `analytics`         | website_events (partitioned), sessions, visitors, identities, daily rollups                                  | `analytics.purchase`, `analytics.checkout_started`                       |
+| `marketing`         | campaigns, ad_accounts, ad_entities, campaign_daily_metrics, attribution config, segments, seo_keywords      | `campaign.synced`                                                        |
+| `subscriptions`     | subscriptions, subscription_items, usage_counters, entitlement overrides, trials                             | `trial.expiring                                                          | expired`, `subscription.past_due` |
+| `billing`           | invoices, payments, payment_methods, dunning, service_packages, service_subscriptions                        | `invoice.paid                                                            | failed`                           |
+| `notifications`     | notifications, deliveries, templates, preferences                                                            | `notification.created`                                                   |
+| `webhooks`          | webhook_endpoints, subscriptions, deliveries, attempts                                                       | `webhook.delivery_failed`                                                |
+| `api-platform`      | api_keys, api_logs, rate-limit policies                                                                      | `api_key.created                                                         | revoked`                          |
+| `audit`             | audit_logs (append-only), impersonation_logs                                                                 | —                                                                        |
+| `privacy`           | consents, suppressions, dsr_requests, retention_policies                                                     | `consent.revoked`                                                        |
+| `imports`/`exports` | import_jobs, import_rows, export_jobs                                                                        | `import.completed`, `export.ready`                                       |
+| `ai`                | ai_requests, ai_outputs, ai_usage, per-org settings                                                          | `ai.output_created`                                                      |
+| `admin`             | Super Admin read models, tenant health scores, system health, support tickets                                | —                                                                        |
 
 Dependency direction: `platform/auth/iam/organizations` ← everything. `leads` is imported by many,
 imports few. `analytics`, `marketing`, `automation`, `websites` are leaves that **react to events**
@@ -218,7 +224,7 @@ database-per-tenant (unaffordable at 10k, breaks platform analytics).
 
 Isolation is **four independent layers**; any one failing must not leak data:
 
-**Layer 1 — Request context.** An `AsyncLocalStorage` (`TenantContext`) is populated by a guard from
+**Layer 1 — Request context.** An `AsyncLocalStorage` (`tenantContext`, in `@leados/shared`) is populated by a guard from
 the authenticated principal (JWT `org_id`, API key's org, public key's org, or webhook-resolved org).
 It holds `{ organizationId, userId, roleIds, permissions, dataScope, branchIds, teamIds, requestId, impersonation }`.
 Jobs restore the same context from the job payload — **no job may run without a tenant context**
@@ -239,13 +245,13 @@ ALTER TABLE tasks
   FOREIGN KEY (organization_id, lead_id) REFERENCES leads (organization_id, id) ON DELETE CASCADE;
 ```
 
-A task therefore *cannot* point at another tenant's lead even if application code is buggy. This is
+A task therefore _cannot_ point at another tenant's lead even if application code is buggy. This is
 the layer that turns a logic bug into a 500 instead of a data breach.
 
 **Layer 4 — Row Level Security (defence in depth, Phase 12).** Tenant traffic uses a non-owner DB
 role with `FORCE ROW LEVEL SECURITY`; policies compare `organization_id` to
 `current_setting('app.current_org', true)`, set via `SET LOCAL` inside the request transaction
-(pooler-safe in transaction mode). Deferred to Phase 12 because it must not be the *only* control
+(pooler-safe in transaction mode). Deferred to Phase 12 because it must not be the _only_ control
 and needs load validation, but the schema is built for it from day one.
 
 **Verification.** A generated test suite enumerates every route from the OpenAPI document and, for
@@ -342,26 +348,26 @@ tracker.js ─▶ collector /t/e (batched, sendBeacon) ─▶ validate + bot fil
 
 ## 9. Caching strategy
 
-| Layer | Content | Invalidation |
-|---|---|---|
+| Layer               | Content                                                                                      | Invalidation                                                                     |
+| ------------------- | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
 | Redis: config cache | org settings, custom-field definitions, pipelines, statuses, roles/permissions, entitlements | Versioned key `org:{id}:cfg:v{n}`; bump `n` on any config write (never TTL-only) |
-| Redis: read-through | dashboard cards, rollup aggregates | TTL 60–300 s + explicit bust on relevant rollup completion |
-| Redis: counters | rate limits, usage meters, round-robin cursors, online presence | TTL / periodic flush to DB |
-| HTTP | `ETag`/`If-None-Match` on detail reads; `Cache-Control: private` | Content hash |
-| CDN | published websites, tracker.js, static assets | Path/versioned URLs on publish |
+| Redis: read-through | dashboard cards, rollup aggregates                                                           | TTL 60–300 s + explicit bust on relevant rollup completion                       |
+| Redis: counters     | rate limits, usage meters, round-robin cursors, online presence                              | TTL / periodic flush to DB                                                       |
+| HTTP                | `ETag`/`If-None-Match` on detail reads; `Cache-Control: private`                             | Content hash                                                                     |
+| CDN                 | published websites, tracker.js, static assets                                                | Path/versioned URLs on publish                                                   |
 
 Never cached: anything whose key does not include `organization_id`. Cache keys are constructed by a
-single helper that *requires* an org id, so a cache cannot become a cross-tenant leak.
+single helper that _requires_ an org id, so a cache cannot become a cross-tenant leak.
 
 ---
 
 ## 10. Scaling plan
 
-| Stage | Load | Actions |
-|---|---|---|
-| **A: 100 orgs** | ~50 k leads/mo, ~500 k msgs/mo | Single Postgres (managed, 4 vCPU), 1 Redis, 2 api + 1 collector + 2 worker replicas. Indexes and partitions already in place. |
-| **B: 1,000 orgs** | ~1 M leads/mo, ~10 M msgs/mo, ~200 M events/mo | Read replica for reports/exports; split worker deployments per queue group; PgBouncer; partition maintenance automated; hot config in Redis; S3 lifecycle rules; rollups at 5-min cadence. |
-| **C: 10,000+ orgs** | ~10× B | Move `website_events` + `messages` analytics to ClickHouse behind the existing analytics adapter; consider extracting `collector` + `analytics` + `whatsapp` into separate services (module boundaries already permit); shard Postgres by `organization_id` range if needed (org id is in every key and every index prefix, so sharding is mechanical); per-tenant queue fairness weights. |
+| Stage               | Load                                           | Actions                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **A: 100 orgs**     | ~50 k leads/mo, ~500 k msgs/mo                 | Single Postgres (managed, 4 vCPU), 1 Redis, 2 api + 1 collector + 2 worker replicas. Indexes and partitions already in place.                                                                                                                                                                                                                                                              |
+| **B: 1,000 orgs**   | ~1 M leads/mo, ~10 M msgs/mo, ~200 M events/mo | Read replica for reports/exports; split worker deployments per queue group; PgBouncer; partition maintenance automated; hot config in Redis; S3 lifecycle rules; rollups at 5-min cadence.                                                                                                                                                                                                 |
+| **C: 10,000+ orgs** | ~10× B                                         | Move `website_events` + `messages` analytics to ClickHouse behind the existing analytics adapter; consider extracting `collector` + `analytics` + `whatsapp` into separate services (module boundaries already permit); shard Postgres by `organization_id` range if needed (org id is in every key and every index prefix, so sharding is mechanical); per-tenant queue fairness weights. |
 
 Design choices that make the above mechanical rather than a rewrite: `organization_id` leads every
 composite index; no cross-tenant joins exist; all writes flow through use-cases + outbox; all
@@ -372,15 +378,15 @@ in controllers.
 
 ## 11. Failure isolation
 
-| Failure | Behaviour | Guarantee |
-|---|---|---|
-| Meta API down | Outbound sends retry with backoff; queue drains when restored; UI shows integration degraded | No message loss, no lead loss |
-| Meta webhook storm | Collector acks fast; queue absorbs; per-org concurrency caps prevent one tenant starving others | Fair processing |
-| Postgres primary failover | API returns 503 with retry-after; collector persists to Redis-backed buffer queue for the outage window | Bounded ingest durability |
-| Redis down | API degrades: cache misses hit DB, rate limits fail **closed** for public endpoints and **open** for authenticated reads; jobs pause, nothing is dropped (outbox retains undispatched events) | No event loss |
-| Worker crash mid-job | BullMQ re-delivers; processors are idempotent on natural keys | Exactly-once effects |
-| Bad automation | Guardrails: caps, loop detection, kill switch, per-org concurrency | Blast radius contained |
-| Tenant floods API | Per-org + per-key token buckets, queue weight limits | Noisy-neighbour contained |
+| Failure                   | Behaviour                                                                                                                                                                                     | Guarantee                     |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| Meta API down             | Outbound sends retry with backoff; queue drains when restored; UI shows integration degraded                                                                                                  | No message loss, no lead loss |
+| Meta webhook storm        | Collector acks fast; queue absorbs; per-org concurrency caps prevent one tenant starving others                                                                                               | Fair processing               |
+| Postgres primary failover | API returns 503 with retry-after; collector persists to Redis-backed buffer queue for the outage window                                                                                       | Bounded ingest durability     |
+| Redis down                | API degrades: cache misses hit DB, rate limits fail **closed** for public endpoints and **open** for authenticated reads; jobs pause, nothing is dropped (outbox retains undispatched events) | No event loss                 |
+| Worker crash mid-job      | BullMQ re-delivers; processors are idempotent on natural keys                                                                                                                                 | Exactly-once effects          |
+| Bad automation            | Guardrails: caps, loop detection, kill switch, per-org concurrency                                                                                                                            | Blast radius contained        |
+| Tenant floods API         | Per-org + per-key token buckets, queue weight limits                                                                                                                                          | Noisy-neighbour contained     |
 
 ---
 

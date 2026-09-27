@@ -27,7 +27,7 @@ as the state change:
 
 ```ts
 await prisma.$transaction(async (tx) => {
-  const lead = await leadRepo.create(tx, input);                  // domain write
+  const lead = await leadRepo.create(tx, input); // domain write
   await touchpointRepo.append(tx, lead.id, touchpointFromCapture(input));
   await activityRepo.record(tx, { leadId: lead.id, type: 'lead.created', sourceEventId: eventId });
   await outbox.emit(tx, [
@@ -46,16 +46,16 @@ Event envelope (`packages/domain-events`, versioned):
 
 ```ts
 type DomainEvent<T> = {
-  eventId: string;         // UUIDv7 — the idempotency key for every consumer
-  name: string;            // 'lead.created'
-  version: number;         // payload schema version; consumers handle N and N-1
+  eventId: string; // UUIDv7 — the idempotency key for every consumer
+  name: string; // 'lead.created'
+  version: number; // payload schema version; consumers handle N and N-1
   occurredAt: string;
-  organizationId: string | null;   // null only for platform events
-  actor: { type: 'user'|'system'|'automation'|'api_key'|'platform'; id?: string };
+  organizationId: string | null; // null only for platform events
+  actor: { type: 'user' | 'system' | 'automation' | 'api_key' | 'platform'; id?: string };
   aggregate: { type: string; id: string };
-  correlationId: string;   // request id or parent event id — full causal chain in logs
+  correlationId: string; // request id or parent event id — full causal chain in logs
   causationId?: string;
-  payload: T;              // Zod-validated on publish AND on consume
+  payload: T; // Zod-validated on publish AND on consume
 };
 ```
 
@@ -70,25 +70,25 @@ needs. Breaking a payload = new `version`; consumers support the previous versio
 Separate queues (not one firehose) so a WhatsApp backlog cannot delay analytics and a slow tenant
 cannot starve others. Each is deployed as its own worker group and scaled independently.
 
-| Queue | Jobs | Concurrency | Attempts / backoff | Notes |
-|---|---|---|---|---|
-| `ingestion` | `capture.lead`, `capture.replay`, `import.row` | 20 | 5 / exp 2 s→5 m | Highest priority; per-org rate cap prevents one tenant's import blocking others |
-| `assignment` | `lead.assign`, `lead.reassign-bulk` | 10 | 5 / exp | Round-robin cursor under a Redis lock (`lock:rr:{ruleId}`, 5 s TTL) |
-| `scoring` | `lead.score`, `score.decay-sweep` | 10 | 3 / exp | Idempotent per `(leadId, eventId)` |
-| `whatsapp-in` | `wa.process-event`, `wa.download-media` | 30 | 5 / exp | Ordered per conversation via a FIFO group key |
-| `whatsapp-out` | `wa.send-message`, `wa.send-template`, `wa.campaign-batch` | per-number limiter | 5 / exp + `Retry-After` honoured | Rate-limited per phone number to the provider tier; 429/5xx backoff; permanent 4xx (invalid number, policy) fails fast to the DLQ with a user-visible reason |
-| `automation` | `wf.trigger`, `wf.execute-step`, `wf.resume`, `wf.reconcile-waiting` | 20 | 5 / exp | Per-org concurrency cap; guardrail counters checked before each action |
-| `notifications` | `notify.in-app`, `notify.email`, `notify.whatsapp`, `notify.digest` | 30 | 5 / exp | Preference + quiet-hours + suppression checked **at send time** |
-| `webhooks-out` | `webhook.deliver` | 50 | 7 / 10 s→24 h jittered | Per-endpoint circuit breaker; auto-disable after 15 consecutive failures |
-| `analytics` | `analytics.ingest-batch`, `analytics.session-close`, `analytics.identity-stitch` | 30 | 3 / exp | Dedupe on `(orgId, siteId, eventId)` |
-| `rollups` | `rollup.website-daily`, `rollup.funnel-daily`, `rollup.source-daily`, `rollup.campaign-daily`, `rollup.user-daily`, `rollup.org-daily`, `rollup.platform-daily`, `rollup.backfill` | 5 | 3 / exp | Idempotent upserts; recompute a whole day rather than incrementing |
-| `integrations` | `ads.sync-campaigns`, `ads.sync-metrics`, `wa.sync-templates`, `gsc.sync`, `integration.health-check` | 10 | 5 / exp | Cursor-based; partial failure resumes, never restarts |
-| `imports-exports` | `import.process`, `export.generate` | 5 | 3 | Chunked with progress; result file to S3 with an expiring signed URL |
-| `documents` | `doc.scan`, `doc.thumbnail`, `pdf.quotation` | 10 | 3 | Upload quarantine until `scan_status = clean` |
-| `billing` | `billing.charge`, `billing.dunning`, `usage.aggregate`, `trial.check` | 5 | 5 / long backoff | Money jobs: strict idempotency keys, never auto-retried past the provider's window |
-| `maintenance` | `partition.maintain`, `retention.purge`, `sla.sweep`, `task.overdue-sweep`, `health.probe`, `outbox.reap` | 5 | 3 | Platform-scoped; explicitly allowed to run without a tenant context |
-| `ai` | `ai.summarize-lead`, `ai.summarize-conversation`, `ai.suggest-reply`, `ai.next-best-action` | 5 | 2 | Budget-capped per org; failure degrades silently (feature disappears, core unaffected) |
-| `dlq:*` | one per queue | — | manual | Mirrored into `job_failures` for the Super Admin UI (`FR-SA-4`) |
+| Queue             | Jobs                                                                                                                                                                               | Concurrency        | Attempts / backoff               | Notes                                                                                                                                                        |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ingestion`       | `capture.lead`, `capture.replay`, `import.row`                                                                                                                                     | 20                 | 5 / exp 2 s→5 m                  | Highest priority; per-org rate cap prevents one tenant's import blocking others                                                                              |
+| `assignment`      | `lead.assign`, `lead.reassign-bulk`                                                                                                                                                | 10                 | 5 / exp                          | Round-robin cursor under a Redis lock (`lock:rr:{ruleId}`, 5 s TTL)                                                                                          |
+| `scoring`         | `lead.score`, `score.decay-sweep`                                                                                                                                                  | 10                 | 3 / exp                          | Idempotent per `(leadId, eventId)`                                                                                                                           |
+| `whatsapp-in`     | `wa.process-event`, `wa.download-media`                                                                                                                                            | 30                 | 5 / exp                          | Ordered per conversation via a FIFO group key                                                                                                                |
+| `whatsapp-out`    | `wa.send-message`, `wa.send-template`, `wa.campaign-batch`                                                                                                                         | per-number limiter | 5 / exp + `Retry-After` honoured | Rate-limited per phone number to the provider tier; 429/5xx backoff; permanent 4xx (invalid number, policy) fails fast to the DLQ with a user-visible reason |
+| `automation`      | `wf.trigger`, `wf.execute-step`, `wf.resume`, `wf.reconcile-waiting`                                                                                                               | 20                 | 5 / exp                          | Per-org concurrency cap; guardrail counters checked before each action                                                                                       |
+| `notifications`   | `notify.in-app`, `notify.email`, `notify.whatsapp`, `notify.digest`                                                                                                                | 30                 | 5 / exp                          | Preference + quiet-hours + suppression checked **at send time**                                                                                              |
+| `webhooks-out`    | `webhook.deliver`                                                                                                                                                                  | 50                 | 7 / 10 s→24 h jittered           | Per-endpoint circuit breaker; auto-disable after 15 consecutive failures                                                                                     |
+| `analytics`       | `analytics.ingest-batch`, `analytics.session-close`, `analytics.identity-stitch`                                                                                                   | 30                 | 3 / exp                          | Dedupe on `(orgId, siteId, eventId)`                                                                                                                         |
+| `rollups`         | `rollup.website-daily`, `rollup.funnel-daily`, `rollup.source-daily`, `rollup.campaign-daily`, `rollup.user-daily`, `rollup.org-daily`, `rollup.platform-daily`, `rollup.backfill` | 5                  | 3 / exp                          | Idempotent upserts; recompute a whole day rather than incrementing                                                                                           |
+| `integrations`    | `ads.sync-campaigns`, `ads.sync-metrics`, `wa.sync-templates`, `gsc.sync`, `integration.health-check`                                                                              | 10                 | 5 / exp                          | Cursor-based; partial failure resumes, never restarts                                                                                                        |
+| `imports-exports` | `import.process`, `export.generate`                                                                                                                                                | 5                  | 3                                | Chunked with progress; result file to S3 with an expiring signed URL                                                                                         |
+| `documents`       | `doc.scan`, `doc.thumbnail`, `pdf.quotation`                                                                                                                                       | 10                 | 3                                | Upload quarantine until `scan_status = clean`                                                                                                                |
+| `billing`         | `billing.charge`, `billing.dunning`, `usage.aggregate`, `trial.check`                                                                                                              | 5                  | 5 / long backoff                 | Money jobs: strict idempotency keys, never auto-retried past the provider's window                                                                           |
+| `maintenance`     | `partition.maintain`, `retention.purge`, `sla.sweep`, `task.overdue-sweep`, `health.probe`, `outbox.reap`                                                                          | 5                  | 3                                | Platform-scoped; explicitly allowed to run without a tenant context                                                                                          |
+| `ai`              | `ai.summarize-lead`, `ai.summarize-conversation`, `ai.suggest-reply`, `ai.next-best-action`                                                                                        | 5                  | 2                                | Budget-capped per org; failure degrades silently (feature disappears, core unaffected)                                                                       |
+| `dlq:*`           | one per queue                                                                                                                                                                      | —                  | manual                           | Mirrored into `job_failures` for the Super Admin UI (`FR-SA-4`)                                                                                              |
 
 **Job payloads carry `organizationId`, `correlationId` and `eventId`.** A processor's first act is to
 restore the tenant context; a job without one throws before touching data (`FR-TEN-3`).
@@ -104,16 +104,16 @@ in one tenant cannot delay another tenant's live leads (noisy-neighbour control,
 
 ## 4. Idempotency patterns (Rule 12/13)
 
-| Concern | Mechanism |
-|---|---|
-| Provider webhook replay | `provider_events UNIQUE (org, provider, external_event_id)` — insert first, process only if inserted |
-| Duplicate WhatsApp message | `messages UNIQUE (provider, provider_message_id)` |
-| Duplicate timeline entry | `activities UNIQUE (org, source_event_id)` |
-| Duplicate lead from client retry | `inbound_payloads UNIQUE (org, channel, idempotency_key)` + `idempotency_keys` response replay |
-| Re-run of a workflow step | `automation_run_steps` unique on `(run_id, step_key, attempt)` + effect-level keys (e.g. the WhatsApp send uses `wf:{runId}:{stepKey}` as its idempotency key) |
-| Rollup re-run | Upsert on `(org, …, date)`, whole-day recompute |
-| Outbound webhook retry | Consumer dedupes on `X-LeadOS-Event-Id`; we retry safely because we say so in the docs |
-| Bulk actions | Per-item natural key; already-applied items are skipped, not failed |
+| Concern                          | Mechanism                                                                                                                                                      |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Provider webhook replay          | `provider_events UNIQUE (org, provider, external_event_id)` — insert first, process only if inserted                                                           |
+| Duplicate WhatsApp message       | `messages UNIQUE (provider, provider_message_id)`                                                                                                              |
+| Duplicate timeline entry         | `activities UNIQUE (org, source_event_id)`                                                                                                                     |
+| Duplicate lead from client retry | `inbound_payloads UNIQUE (org, channel, idempotency_key)` + `idempotency_keys` response replay                                                                 |
+| Re-run of a workflow step        | `automation_run_steps` unique on `(run_id, step_key, attempt)` + effect-level keys (e.g. the WhatsApp send uses `wf:{runId}:{stepKey}` as its idempotency key) |
+| Rollup re-run                    | Upsert on `(org, …, date)`, whole-day recompute                                                                                                                |
+| Outbound webhook retry           | Consumer dedupes on `X-LeadOS-Event-Id`; we retry safely because we say so in the docs                                                                         |
+| Bulk actions                     | Per-item natural key; already-applied items are skipped, not failed                                                                                            |
 
 Rule of thumb: **derive an idempotency key from the event, not from the attempt.** Two retries of the
 same event produce one effect.
@@ -126,27 +126,27 @@ Registered as BullMQ repeatable jobs by the `scheduler` process (a single logica
 lock, crash-safe and replaceable). Cron expressions are stored, not hardcoded, so the platform admin
 can retune cadence.
 
-| Schedule | Job | Purpose |
-|---|---|---|
-| every minute | `task.reminder-dispatch` | Due reminders → notifications |
-| every minute | `wf.reconcile-waiting` | Resume workflow runs whose `resume_at` passed (safety net for lost delayed jobs) |
-| every 5 min | `sla.sweep` | At-risk → warn, breached → escalate (`FR-TSK-8`) |
-| every 5 min | `rollup.*-daily` (today's partial) | Near-real-time dashboards |
-| every 10 min | `integration.health-check` | Per-connection probes → `integration_health_checks` |
-| every 15 min | `analytics.session-close` | Close sessions idle > 30 min |
-| hourly | `ads.sync-metrics` | Spend/impressions/clicks |
-| hourly | `webhook.reap-exhausted` | Disable dead endpoints, alert admins |
-| every 30 min (org-hour aware) | `task.overdue-sweep` | Mark overdue, notify owner + manager |
-| daily 00:15 org-tz | `rollup.backfill` (yesterday, full recompute) | Late events corrected |
-| daily 01:00 | `score.decay-sweep` | Inactivity decay (`FR-SCR-1`) |
-| daily 02:00 | `retention.purge` | Retention + DSR purges (`FR-PRV-3`) |
-| daily 02:30 | `partition.maintain` | Pre-create/detach/drop partitions |
-| daily 03:00 | `lead.recycle-sweep` | Stale/unworked leads back to the pool (`FR-ASG-7`) |
-| daily 07:00 org-tz | `notify.digest` | "Your day" digest for opted-in users |
-| daily 08:00 | `trial.check` | Expiring/expired trials → notify + transition (`FR-BIL-3`) |
-| daily 09:00 | `billing.dunning` | Failed-payment retries |
-| daily 04:00 | `tenant.health-score` | Churn signals (`FR-SA-6`) |
-| weekly | `usage.reconcile`, `search.vector-rebuild`, `db.vacuum-analyze-hints` | Hygiene |
+| Schedule                      | Job                                                                   | Purpose                                                                          |
+| ----------------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| every minute                  | `task.reminder-dispatch`                                              | Due reminders → notifications                                                    |
+| every minute                  | `wf.reconcile-waiting`                                                | Resume workflow runs whose `resume_at` passed (safety net for lost delayed jobs) |
+| every 5 min                   | `sla.sweep`                                                           | At-risk → warn, breached → escalate (`FR-TSK-8`)                                 |
+| every 5 min                   | `rollup.*-daily` (today's partial)                                    | Near-real-time dashboards                                                        |
+| every 10 min                  | `integration.health-check`                                            | Per-connection probes → `integration_health_checks`                              |
+| every 15 min                  | `analytics.session-close`                                             | Close sessions idle > 30 min                                                     |
+| hourly                        | `ads.sync-metrics`                                                    | Spend/impressions/clicks                                                         |
+| hourly                        | `webhook.reap-exhausted`                                              | Disable dead endpoints, alert admins                                             |
+| every 30 min (org-hour aware) | `task.overdue-sweep`                                                  | Mark overdue, notify owner + manager                                             |
+| daily 00:15 org-tz            | `rollup.backfill` (yesterday, full recompute)                         | Late events corrected                                                            |
+| daily 01:00                   | `score.decay-sweep`                                                   | Inactivity decay (`FR-SCR-1`)                                                    |
+| daily 02:00                   | `retention.purge`                                                     | Retention + DSR purges (`FR-PRV-3`)                                              |
+| daily 02:30                   | `partition.maintain`                                                  | Pre-create/detach/drop partitions                                                |
+| daily 03:00                   | `lead.recycle-sweep`                                                  | Stale/unworked leads back to the pool (`FR-ASG-7`)                               |
+| daily 07:00 org-tz            | `notify.digest`                                                       | "Your day" digest for opted-in users                                             |
+| daily 08:00                   | `trial.check`                                                         | Expiring/expired trials → notify + transition (`FR-BIL-3`)                       |
+| daily 09:00                   | `billing.dunning`                                                     | Failed-payment retries                                                           |
+| daily 04:00                   | `tenant.health-score`                                                 | Churn signals (`FR-SA-6`)                                                        |
+| weekly                        | `usage.reconcile`, `search.vector-rebuild`, `db.vacuum-analyze-hints` | Hygiene                                                                          |
 
 All schedules are working-hours/timezone aware where they touch humans — a follow-up reminder at
 3 a.m. is a defect, not a feature.
@@ -157,11 +157,11 @@ All schedules are working-hours/timezone aware where they touch humans — a fol
 
 Policy: exponential backoff with full jitter, per-queue attempt caps (§3). Errors are classified:
 
-| Class | Examples | Behaviour |
-|---|---|---|
-| **Transient** | timeouts, 429, 5xx, deadlock, connection reset | Retry with backoff |
+| Class         | Examples                                                                               | Behaviour                                                                   |
+| ------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| **Transient** | timeouts, 429, 5xx, deadlock, connection reset                                         | Retry with backoff                                                          |
 | **Permanent** | 400 invalid payload, unknown template, revoked token, invalid number, policy violation | Fail immediately to the DLQ with a human-readable reason surfaced in the UI |
-| **Poison** | payload that crashes the processor | Quarantine after 2 attempts; alert; never block the queue |
+| **Poison**    | payload that crashes the processor                                                     | Quarantine after 2 attempts; alert; never block the queue                   |
 
 On exhaustion: the job moves to `dlq:<queue>` **and** a row is written to `job_failures` (queue, name,
 redacted payload, error, attempts). The Super Admin console lists, inspects and retries these
@@ -183,14 +183,15 @@ scripting host: steps are registry types with JSON-Schema-validated config, whic
 
 ```ts
 interface ActionHandler<C, O> {
-  type: string;                                  // 'action.send_whatsapp_template'
-  configSchema: ZodType<C>;                      // drives backend validation AND the UI form
-  requiredEntitlement?: string;                  // e.g. 'whatsapp'
+  type: string; // 'action.send_whatsapp_template'
+  configSchema: ZodType<C>; // drives backend validation AND the UI form
+  requiredEntitlement?: string; // e.g. 'whatsapp'
   requiredPermission?: string;
-  execute(ctx: StepContext, config: C): Promise<StepResult<O>>;   // MUST be idempotent on ctx.idempotencyKey
-  describe(config: C): string;                   // human summary for logs and the UI
+  execute(ctx: StepContext, config: C): Promise<StepResult<O>>; // MUST be idempotent on ctx.idempotencyKey
+  describe(config: C): string; // human summary for logs and the UI
 }
 ```
+
 Symmetric interfaces exist for `TriggerDefinition` (event name + filter schema + sample payload) and
 `ConditionEvaluator` (reuses the §4 filter DSL of `api-architecture.md`, so a saved view, a segment
 and an automation condition are the same expression language).
@@ -237,7 +238,7 @@ banned — this is the highest-consequence subsystem in the product.
 
 Every run is inspectable per lead (`GET /leads/{id}/automation-runs`) and per workflow, with each
 step's input, output, decision and error; `automation.action_executed` / `skipped` / `failed` are also
-written to the lead timeline with the *reason* (`FR-TL-1`, `FR-AUT-7`), so "why did this customer get
+written to the lead timeline with the _reason_ (`FR-TL-1`, `FR-AUT-7`), so "why did this customer get
 this message?" and "why didn't they?" are both answerable without a developer. Failed runs are
 retryable from the failed step, not from the beginning (side effects already applied are not
 repeated, thanks to step idempotency keys).
@@ -246,22 +247,22 @@ repeated, thanks to step idempotency keys).
 
 ## 8. Event subscription map (extract)
 
-| Event | Subscribers |
-|---|---|
-| `lead.created` | assignment · scoring · first-follow-up creation · SLA clock start · notifications · automation trigger · outbound webhook · analytics identity stitch · usage meter · timeline |
-| `lead.assigned` | notify assignee (+ previous owner) · SLA reassessment · automation · webhook · timeline · daily user rollup |
-| `lead.stage_changed` | stage-entry automation hooks · deal sync · rollups · webhook · timeline |
-| `lead.converted` | customer creation/link · revenue attribution recompute · campaign metrics · webhook · timeline |
-| `message.received` | conversation upkeep (unread, window, reopen) · first-response SLA satisfy · scoring (+engagement) · automation (`WhatsApp reply` trigger) · agent notification · realtime push · timeline |
-| `message.sent` / `failed` | status tracking · WhatsApp usage meter · failure notification + integration health · timeline |
-| `task.completed` | next-follow-up prompt data · user metrics · automation · timeline |
-| `task.overdue` | assignee + manager notification · escalation · user metrics · timeline |
-| `sla.breached` | escalation chain · manager dashboard · timeline |
-| `analytics.checkout_started` | scoring (+30) · abandoned-checkout automation · funnel rollup · timeline |
-| `payment.completed` | deal/revenue update · attribution recompute · stop marketing automations for that entity · receipt notification · webhook · timeline |
-| `consent.revoked` | suppression list insert · cancel pending marketing sends · exit marketing workflows · timeline |
-| `trial.expiring` / `subscription.past_due` | tenant + platform notifications · entitlement recompute · admin alert |
-| `integration.failed` | tenant admin notification · integration health · platform alert |
+| Event                                      | Subscribers                                                                                                                                                                               |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lead.created`                             | assignment · scoring · first-follow-up creation · SLA clock start · notifications · automation trigger · outbound webhook · analytics identity stitch · usage meter · timeline            |
+| `lead.assigned`                            | notify assignee (+ previous owner) · SLA reassessment · automation · webhook · timeline · daily user rollup                                                                               |
+| `lead.stage_changed`                       | stage-entry automation hooks · deal sync · rollups · webhook · timeline                                                                                                                   |
+| `lead.converted`                           | customer creation/link · revenue attribution recompute · campaign metrics · webhook · timeline                                                                                            |
+| `message.received`                         | conversation upkeep (unread, window, reopen) · first-response SLA satisfy · scoring (+engagement) · automation (`WhatsApp reply` trigger) · agent notification · realtime push · timeline |
+| `message.sent` / `failed`                  | status tracking · WhatsApp usage meter · failure notification + integration health · timeline                                                                                             |
+| `task.completed`                           | next-follow-up prompt data · user metrics · automation · timeline                                                                                                                         |
+| `task.overdue`                             | assignee + manager notification · escalation · user metrics · timeline                                                                                                                    |
+| `sla.breached`                             | escalation chain · manager dashboard · timeline                                                                                                                                           |
+| `analytics.checkout_started`               | scoring (+30) · abandoned-checkout automation · funnel rollup · timeline                                                                                                                  |
+| `payment.completed`                        | deal/revenue update · attribution recompute · stop marketing automations for that entity · receipt notification · webhook · timeline                                                      |
+| `consent.revoked`                          | suppression list insert · cancel pending marketing sends · exit marketing workflows · timeline                                                                                            |
+| `trial.expiring` / `subscription.past_due` | tenant + platform notifications · entitlement recompute · admin alert                                                                                                                     |
+| `integration.failed`                       | tenant admin notification · integration health · platform alert                                                                                                                           |
 
 Note how many rows end in "timeline": that is the product principle made operational. A new feature
 that does not appear on the lead timeline has not been finished.
