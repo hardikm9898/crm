@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { newToken } from '@leados/shared';
+import { newId, newToken } from '@leados/shared';
 import { RouteAuditService } from '../src/infra/authz/route-audit.service.js';
 import { bootTestApp, call, cleanupUsers, type EnvelopeBody, type TestApp } from './app-harness.js';
 
@@ -34,6 +34,7 @@ interface Tenant {
   teamId: string;
   branchId: string;
   invitationId: string;
+  notificationId: string;
 }
 
 let orgA: Tenant;
@@ -78,6 +79,19 @@ async function createTenant(label: string): Promise<Tenant> {
     token,
   });
 
+  // A notification of this tenant's own gives the sweep a real :id to aim at. It is written
+  // directly rather than through the outbox: what is being tested is whether another tenant can
+  // reach the row, not how the row comes to exist.
+  const notification = await ctx.db.notification.create({
+    data: {
+      id: newId(),
+      organizationId,
+      userId,
+      type: 'sweep.fixture',
+      title: `Route sweep fixture ${label}`,
+    },
+  });
+
   return {
     token,
     organizationId,
@@ -87,6 +101,7 @@ async function createTenant(label: string): Promise<Tenant> {
     teamId: team.id,
     branchId: branch.id,
     invitationId: invitation.body.data.invitationId,
+    notificationId: notification.id,
   };
 }
 
@@ -125,19 +140,42 @@ describe('every route declares its authorization', () => {
     }
   });
 
+  /**
+   * Writes outside `/auth` that legitimately need no permission because they only touch the
+   * caller's own record — marking your own notifications read. A permission here would have to be
+   * one every role holds, which is a permission that decides nothing.
+   *
+   * The list is asserted below, so adding an exempt write fails this suite until someone has looked
+   * at it. That is the point: this set must never grow silently.
+   */
+  const SELF_SCOPED_WRITES = ['POST /notifications/:id/read', 'POST /notifications/read-all'];
+
   it('gates every write outside /auth behind a permission', () => {
     // Authentication endpoints are necessarily public or self-scoped; everything else that
-    // changes state must name the permission it needs.
+    // changes state must name the permission it needs, or appear in the reviewed set above.
     const unguardedWrites = audit
       .collect()
       .filter(
         (route) =>
           ['POST', 'PUT', 'PATCH', 'DELETE'].includes(route.httpMethod) &&
           !route.path.startsWith('/auth') &&
-          route.declaration !== 'permission',
+          route.declaration !== 'permission' &&
+          !SELF_SCOPED_WRITES.includes(`${route.httpMethod} ${route.path}`),
       )
       .map((route) => `${route.httpMethod} ${route.path}`);
     expect(unguardedWrites).toEqual([]);
+  });
+
+  it('keeps the self-scoped write exemptions honest', () => {
+    const routes = audit.collect();
+    for (const key of SELF_SCOPED_WRITES) {
+      const route = routes.find((candidate) => `${candidate.httpMethod} ${candidate.path}` === key);
+      expect(route, `${key} is listed as self-scoped but no longer exists`).toBeDefined();
+      // It must be an explicit exemption with a stated reason — not merely undeclared, and not
+      // public: an unauthenticated caller has no "own" record to act on.
+      expect(route?.declaration, key).toBe('exempt');
+      expect(route?.exemptReason, key).toBeTruthy();
+    }
   });
 
   it('names a permission that exists in the catalogue', async () => {
@@ -157,15 +195,27 @@ describe('every route declares its authorization', () => {
 describe('cross-tenant sweep: no route answers another organization’s caller', () => {
   /** Substitutes org A's real identifiers into parameterised paths. */
   function resolvePath(path: string): string | null {
-    const substitutions: Record<string, string> = {
-      ':id': '',
-    };
     if (!path.includes(':')) return path;
-    if (path === '/auth/sessions/:id') return `/auth/sessions/${orgA.sessionId}`;
-    if (path === '/users/invitations/:id') return `/users/invitations/${orgA.invitationId}`;
+
+    // Which of org A's identifiers each parameterised path takes. Substituting the wrong kind of id
+    // would make the route fail validation rather than authorization, and the sweep would record a
+    // refusal it never actually earned.
+    const byPath: Record<string, string> = {
+      '/auth/sessions/:id': `/auth/sessions/${orgA.sessionId}`,
+      '/users/invitations/:id': `/users/invitations/${orgA.invitationId}`,
+      '/users/:id': `/users/${orgA.userId}`,
+      '/users/:id/roles': `/users/${orgA.userId}/roles`,
+      '/branches/:id': `/branches/${orgA.branchId}`,
+      '/teams/:id': `/teams/${orgA.teamId}`,
+      '/teams/:id/members': `/teams/${orgA.teamId}/members`,
+      '/teams/:id/members/:userId': `/teams/${orgA.teamId}/members/${orgA.userId}`,
+      '/roles/:id': `/roles/${orgA.roleId}`,
+      '/roles/:id/permissions': `/roles/${orgA.roleId}/permissions`,
+      '/notifications/:id/read': `/notifications/${orgA.notificationId}/read`,
+    };
+
     // An unmapped parameter would test nothing meaningful, so it is reported instead.
-    void substitutions;
-    return null;
+    return byPath[path] ?? null;
   }
 
   it('maps every parameterised route to a real org A resource', () => {
@@ -329,6 +379,31 @@ function bodyFor(
   switch (path) {
     case '/users/invitations':
       return { email: `sweep.${EMAIL_MARKER}@test.local`, roleId: target.roleId };
+    case '/organization':
+      return { name: `Swept ${SUFFIX}` };
+    case '/organization/onboarding':
+      return { step: 'business_info' };
+    case '/branches':
+    case '/branches/:id':
+      return { name: `Swept branch ${SUFFIX}` };
+    case '/teams':
+    case '/teams/:id':
+      return { name: `Swept team ${SUFFIX}` };
+    case '/teams/:id/members':
+      return { userId: target.userId };
+    case '/roles':
+      return { code: `swept_${SUFFIX}`, name: `Swept role ${SUFFIX}` };
+    case '/roles/:id':
+      return { name: `Swept role ${SUFFIX}` };
+    case '/roles/:id/permissions':
+      return { grants: [{ permission: 'lead:read', scope: 'own' }] };
+    case '/users/:id':
+      return { status: 'suspended' };
+    case '/users/:id/roles':
+      return { roleIds: [target.roleId] };
+    case '/notifications/:id/read':
+    case '/notifications/read-all':
+      return {};
     case '/auth/switch-org':
       return { organizationId: target.organizationId };
     case '/auth/mfa/confirm':

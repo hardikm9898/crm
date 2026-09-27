@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
 import { config as loadDotenv } from 'dotenv';
+import { Algorithm, hash } from '@node-rs/argon2';
 import { SYSTEM_ROLE_TEMPLATES, newId, newToken, normalizePhone } from '@leados/shared';
 import { createUnscopedDbClient } from '../src/client.js';
 import { seedPlatformCatalogue } from '../src/seeding/platform-catalogue.js';
@@ -26,6 +27,29 @@ interface OrgSpec {
 
 /** The same customer phone, present in both tenants — the cross-tenant canary. */
 const SHARED_CUSTOMER_PHONE = '+919876543210';
+
+/**
+ * The password every seeded account shares, hashed once per run.
+ *
+ * Argon2id with the same algorithm the API uses — parameters are encoded in the hash, so a seeded
+ * account verifies against `PasswordService` without the two having to agree on cost settings. The
+ * plaintext is printed at the end of the run, because a seed whose credentials you have to read the
+ * source to discover wastes everybody's afternoon.
+ *
+ * `SEED_PASSWORD` overrides it. This is development data by construction: `pnpm db:seed` is never
+ * run against production, and the API refuses to boot in production with a development mailer
+ * anyway.
+ */
+const SEED_PASSWORD = process.env['SEED_PASSWORD'] ?? 'LeadOsDevPassword2026';
+
+async function hashSeedPassword(): Promise<string> {
+  return hash(SEED_PASSWORD, {
+    algorithm: Algorithm.Argon2id,
+    memoryCost: 65_536,
+    timeCost: 3,
+    parallelism: 1,
+  });
+}
 
 const ORGS: OrgSpec[] = [
   {
@@ -56,6 +80,7 @@ async function seedOrganization(
   db: PrismaClient,
   spec: OrgSpec,
   planIds: Map<string, string>,
+  passwordHash: string,
 ): Promise<void> {
   const existing = await db.organization.findUnique({ where: { slug: spec.slug } });
   if (existing) {
@@ -133,7 +158,7 @@ async function seedOrganization(
           id: newId(),
           email: person.email,
           name: person.name,
-          passwordHash: DEV_PASSWORD_PLACEHOLDER,
+          passwordHash,
           status: 'active',
           timezone: 'Asia/Kolkata',
           emailVerifiedAt: now,
@@ -223,13 +248,14 @@ async function main(): Promise<void> {
   try {
     console.warn('seeding platform catalogue (permissions, features, plans)…');
     const planIds = await seedPlatformCatalogue(db);
+    const passwordHash = await hashSeedPassword();
 
     await db.platformUser.upsert({
       where: { email: 'platform@leados.local' },
       create: {
         id: newId(),
         email: 'platform@leados.local',
-        passwordHash: DEV_PASSWORD_PLACEHOLDER,
+        passwordHash,
         name: 'Platform Super Admin',
         isSuperAdmin: true,
       },
@@ -237,13 +263,14 @@ async function main(): Promise<void> {
     });
 
     console.warn('seeding demo organizations…');
-    for (const spec of ORGS) await seedOrganization(db, spec, planIds);
+    for (const spec of ORGS) await seedOrganization(db, spec, planIds, passwordHash);
 
     // Sanity check: the canary phone must be identical in both tenants, so that any
     // query forgetting its organization filter returns two rows instead of one.
     console.warn(
       `shared canary phone across tenants: ${normalizePhone(SHARED_CUSTOMER_PHONE).e164}`,
     );
+    console.warn(`every seeded account signs in with: ${SEED_PASSWORD}`);
     console.warn('seed complete.');
   } finally {
     await db.$disconnect();

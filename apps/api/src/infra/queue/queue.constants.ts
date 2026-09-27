@@ -27,6 +27,9 @@ export const JOBS = {
   MAIL_PASSWORD_RESET: 'mail.password-reset',
   MAIL_SECURITY_NOTICE: 'mail.security-notice',
 
+  NOTIFY_MEMBER_JOINED: 'notify.member-joined',
+  NOTIFY_TRIAL_EXPIRED: 'notify.trial-expired',
+
   SESSION_PRUNE: 'maintenance.session-prune',
   INVITATION_EXPIRE: 'maintenance.invitation-expire',
   TRIAL_CHECK: 'maintenance.trial-check',

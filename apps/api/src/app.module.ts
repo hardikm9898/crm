@@ -18,6 +18,8 @@ import { EntitlementGuard } from './infra/entitlements/entitlement.guard.js';
 import { SubscriptionGuard } from './infra/entitlements/subscription.guard.js';
 import { AuthModule } from './modules/auth/auth.module.js';
 import { UsersModule } from './modules/users/users.module.js';
+import { IamModule } from './modules/iam/iam.module.js';
+import { NotificationsModule } from './modules/notifications/notifications.module.js';
 import { AuthGuard } from './modules/auth/guards/auth.guard.js';
 import { OrganizationsModule } from './modules/organizations/organizations.module.js';
 import { HealthModule } from './modules/health/health.module.js';
@@ -43,6 +45,8 @@ import { HealthModule } from './modules/health/health.module.js';
     AuthModule,
     OrganizationsModule,
     UsersModule,
+    IamModule,
+    NotificationsModule,
     MaintenanceModule,
     HealthModule,
   ],

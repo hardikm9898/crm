@@ -1,12 +1,16 @@
 import { Module } from '@nestjs/common';
+import { AuthModule } from '../auth/auth.module.js';
 import { OrganizationProvisioningService } from './organization-provisioning.service.js';
+import { OrganizationsController } from './organizations.controller.js';
+import { OrganizationsService } from './organizations.service.js';
 
 /**
- * Only provisioning today, because that is what registration needs. The full
- * organization/branch/team/user surface arrives in Phase 1 step 5.
+ * The organization's own settings, branches and teams, plus the provisioning used at signup.
  */
 @Module({
-  providers: [OrganizationProvisioningService],
-  exports: [OrganizationProvisioningService],
+  imports: [AuthModule],
+  controllers: [OrganizationsController],
+  providers: [OrganizationProvisioningService, OrganizationsService],
+  exports: [OrganizationProvisioningService, OrganizationsService],
 })
 export class OrganizationsModule {}

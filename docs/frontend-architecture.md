@@ -1,8 +1,11 @@
 # Frontend Architecture — Lead OS
 
-**Stack:** Next.js 15 (App Router) · React 19 · TypeScript strict · Tailwind CSS · shadcn/ui (Radix) ·
-TanStack Query · React Hook Form + Zod · Socket.IO client ·
+**Stack:** Next.js 16 (App Router) · React 19 · TypeScript strict · Tailwind CSS 4 ·
+React Hook Form + Zod · Socket.IO client ·
 Traces to: `NFR-UX-*`, `FR-VIEW-*`, `FR-TSK-7`, `FR-WA-7/8`, `FR-LEAD-3..6`
+
+> **§10 records what was actually built in Phase 1** and where it departs from this plan. Where the
+> two disagree, §10 is the code's contract and this document is the intent.
 
 ---
 
@@ -78,15 +81,15 @@ user's token forwarded; there is exactly one authorization implementation, in th
 
 ## 3. Data & state layers
 
-| Concern      | Tool                                                                 | Rules                                                                                                                                                                                                              |
-| ------------ | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Server state | **TanStack Query v5**                                                | Query keys are always `[entity, orgId, params]` — org id in every key, so an org switch cannot show stale cross-org data. `staleTime` 30 s for lists, 5 min for config, `Infinity` for immutable (timeline pages). |
-| Mutations    | TanStack `useMutation`                                               | Optimistic updates for status/stage/assignment/read-state with rollback on error; `Idempotency-Key` on creates/sends; invalidate by entity tag.                                                                    |
-| UI state     | **Zustand** slices                                                   | Sidebar, modals, selection, filter drafts, composer drafts (persisted to `localStorage` per conversation so a refresh never loses typing). No server data in Zustand.                                              |
-| Forms        | RHF + Zod resolver                                                   | Schemas imported from `packages/contracts`; server field errors mapped back onto inputs via `error.details[].field`.                                                                                               |
-| URL as state | `nuqs`-style search params                                           | Filters, view id, tab, cursor and sort live in the URL so views are shareable and the back button works.                                                                                                           |
-| Realtime     | Socket.IO client                                                     | On event: patch the cache or invalidate the key; never render straight from socket payloads. Reconnect triggers a `since` catch-up fetch.                                                                          |
-| Auth tokens  | httpOnly, `SameSite=Lax` refresh cookie; access token in memory only | No token in `localStorage` (`NFR-SEC-2`); silent refresh on 401 with a single-flight queue.                                                                                                                        |
+| Concern      | Tool                                                                       | Rules                                                                                                                                                                                                              |
+| ------------ | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Server state | **TanStack Query v5**                                                      | Query keys are always `[entity, orgId, params]` — org id in every key, so an org switch cannot show stale cross-org data. `staleTime` 30 s for lists, 5 min for config, `Infinity` for immutable (timeline pages). |
+| Mutations    | TanStack `useMutation`                                                     | Optimistic updates for status/stage/assignment/read-state with rollback on error; `Idempotency-Key` on creates/sends; invalidate by entity tag.                                                                    |
+| UI state     | **Zustand** slices                                                         | Sidebar, modals, selection, filter drafts, composer drafts (persisted to `localStorage` per conversation so a refresh never loses typing). No server data in Zustand.                                              |
+| Forms        | RHF + Zod resolver                                                         | Schemas imported from `packages/contracts`; server field errors mapped back onto inputs via `error.details[].field`.                                                                                               |
+| URL as state | `nuqs`-style search params                                                 | Filters, view id, tab, cursor and sort live in the URL so views are shareable and the back button works.                                                                                                           |
+| Realtime     | Socket.IO client                                                           | On event: patch the cache or invalidate the key; never render straight from socket payloads. Reconnect triggers a `since` catch-up fetch.                                                                          |
+| Auth tokens  | httpOnly, `SameSite=Lax` cookies for **both** the access and refresh token | No token in `localStorage` **or in JavaScript at all** (`NFR-SEC-2`) — see §10.3. Silent renewal happens in the Next proxy, not in a client fetch interceptor.                                                     |
 
 **Org switching** clears the query cache, re-reads `/auth/me`, and re-resolves navigation — no
 cross-tenant residue in memory (`FR-IAM-6`).
@@ -280,3 +283,99 @@ mutation queue is the seam where it would be added.
 | E2E       | Playwright                            | Critical journeys: register → onboarding → create lead → assign → complete follow-up with reschedule reason → send WhatsApp template → convert; plus an executive mobile-viewport run and a permission run (executive cannot open settings) |
 | Visual    | Playwright screenshots on key screens | Catch layout regressions in Today / lead detail / inbox                                                                                                                                                                                     |
 | A11y      | `axe-core` in E2E                     | Zero critical violations on the top 10 screens                                                                                                                                                                                              |
+
+---
+
+## 10. As built — Phase 1, step 5
+
+What shipped, and where it departs from the plan above. Recorded here rather than quietly diverging:
+a plan that is contradicted by the code is worse than no plan.
+
+### 10.1 Departures, with reasons
+
+| Planned                                      | Built                                                                                   | Why                                                                                                                                                                                                                                                                                                      |
+| -------------------------------------------- | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Next.js 15                                   | **Next.js 16**                                                                          | 16 was current when the app was created. Its `middleware.ts` is deprecated in favour of `proxy.ts`, which is what `src/proxy.ts` uses.                                                                                                                                                                   |
+| shadcn/ui (Radix)                            | **no component library**                                                                | Phase 1 needs eight components (card, stat, table, badge, button, field, empty state, error notice). A library earns its weight when there are dialogs, comboboxes and date pickers to get right — that is the CRM screens, and it can be adopted then without rewriting these pages.                    |
+| TanStack Query for all server state          | **server components; TanStack Query kept as a dependency for later**                    | Every Phase 1 screen is a read that must be correct at first paint and is re-read after a mutation. A client cache adds a loading state, a second source of truth and a hydration boundary, and buys nothing until there is polling, infinite scroll and optimistic status changes — i.e. the lead list. |
+| Zustand for UI state                         | **not yet introduced**                                                                  | Nothing in Phase 1 has UI state that outlives a component.                                                                                                                                                                                                                                               |
+| Mutations via `useMutation`                  | **server actions**                                                                      | The access token is in an httpOnly cookie, so only the server can attach it. See §10.3.                                                                                                                                                                                                                  |
+| Types from a generated OpenAPI client        | **hand-written client (`lib/api.ts`) speaking the documented envelope**                 | The spec is published in Phase 4. A generated client for a spec that does not exist would be fiction; the hand-written one is deliberately thin so it can be deleted.                                                                                                                                    |
+| Shared Zod schemas from `packages/contracts` | **route-handler schemas local to the web app**                                          | `packages/contracts` does not exist yet. The API validates authoritatively; the web app validates only what its own route handlers accept.                                                                                                                                                               |
+| Tokens in `packages/ui`                      | **`apps/web/src/app/globals.css`**                                                      | They move to `packages/ui` when a second app needs them (the tenant website renderer, Phase 7).                                                                                                                                                                                                          |
+| `(public)` and `(onboarding)` route groups   | **`login/`, `accept-invitation/` at the root; onboarding is a card inside `/settings`** | There is no marketing site in this repo yet, and a four-step checklist did not justify a route group with its own layout. The wizard is resumable and server-stored as planned.                                                                                                                          |
+
+### 10.2 Routes that exist
+
+```
+/                          resolves by session → /dashboard or /login
+/login                     sign-in (two-factor completion not built — the form says so)
+/accept-invitation         the page invitation emails link to
+(app)/dashboard            what exists in phase 1, honestly — no invented charts
+(app)/notifications        the caller's own inbox
+(app)/settings             organization profile, plan, ingestion key, onboarding wizard
+(app)/settings/members     people, seat usage, invite, revoke, role and status changes
+(app)/settings/roles       roles and a read-only permission × role matrix with scopes
+(app)/settings/security    own sessions, end one or all, account security summary
+api/session/*              sign-in, sign-out, org switch, invitation accept (cookie handling)
+```
+
+Navigation lists Phase 2–9 destinations as inert rows labelled with their phase, rather than omitting
+them. An honest "arrives in phase 5" beats a link that 404s and beats a menu that hides the product's
+shape from someone evaluating it.
+
+### 10.3 The authentication model, as built
+
+This is the part that differs most from the plan, and it is a deliberate tightening of `NFR-SEC-2`:
+
+- **Neither token is ever readable by JavaScript.** Sign-in posts to the web app's own
+  `/api/session`, which exchanges the credentials with the API and sets the access token as an
+  httpOnly cookie. Server components read it with `cookies()`. The plan had the access token in
+  memory, which survives XSS only until the attacker reads the variable.
+- **No `/api/proxy/*` catch-all.** A route that forwards an arbitrary path with the caller's token
+  attached is a confused deputy. Mutations go through named server actions instead.
+- **The API's refresh cookie is re-scoped when relayed.** The API sets `Path=/api/v1/auth`, which no
+  route of the web app serves; relayed unchanged, the browser would hold a cookie it could never
+  send and every session would end after fifteen minutes. `lib/refresh-cookie.ts` rewrites the path
+  and nothing else.
+- **Renewal happens in `proxy.ts`,** only when the access cookie is absent and a refresh cookie is
+  present, and the new token is injected into the same render — so the renewal is invisible rather
+  than a redirect through sign-in. A failed renewal drops the refresh cookie so the next navigation
+  does not repeat the round-trip.
+- **Signing out revokes at the API as well as clearing the cookie.** Dropping the cookie alone would
+  leave a session that a stolen refresh token could still renew.
+
+### 10.4 Permission handling, as built
+
+`lib/nav.ts` filters navigation by the permissions `/auth/me` reports. That is presentation only.
+Two rules make it more than decoration:
+
+1. **Every route is enforced by the API,** and the browser checks assert it: typing `/settings/roles`
+   as a sales executive renders the API's refusal, not the page.
+2. **Scopes decide whether a request is worth making, never what the caller may do.** Seat usage
+   requires an organization-scoped `user:read`, so the members page reads `user.scopes['user:read']`
+   before asking — a branch-scoped grant would earn a 403, and a card that always 403s is a defect,
+   not a security control.
+
+One tightening beyond the API: the ingestion `publicKey` is returned to anyone with
+`organization:read` (which every role holds, because everyone needs the timezone and currency), but
+the settings page shows it only to someone with `organization:manage`.
+
+### 10.5 Verification
+
+`pnpm --filter @leados/web test` covers the pure logic — navigation filtering, onboarding progress,
+cookie relaying, error copy. Everything that only exists in a browser was verified by driving the
+**built** app with Playwright against a real API and a real worker: sign-in and cookie flags, the
+permission-filtered shell, organization save and reload, the onboarding wizard, invite and revoke,
+the roles matrix, session listing, the notification badge clearing, accepting an invitation, a spent
+token being refused, switching between two tenants, silent renewal after the access cookie is
+dropped, and a signed-out visitor being redirected. Four narrower-scoped and cross-tenant personas
+were driven through the same screens.
+
+Four suites, **62 checks**, all green against the built app — plus an invitation-acceptance suite that
+runs once per minted token. Two of the defects fixed in this step were found only here: the dev seed
+had been failing since an earlier refactor, and `WEB_ORIGIN/accept-invitation` was a page that did not
+exist.
+
+Those checks are development scripts, not committed tests: they need a booted API, a worker and seed
+data. Turning them into a CI job is Phase 12 work (`docs/implementation-roadmap.md`).

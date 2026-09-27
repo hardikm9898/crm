@@ -6,7 +6,9 @@
   "main": "dist/main.js",
   "scripts": {
     "build": "swc src -d dist --strip-leading-paths",
-    "dev": "node --watch -r @swc-node/register src/main.ts",
+    "dev": "node --watch --import @swc-node/register/esm-register src/main.ts",
+    "dev:worker": "ROLE=worker LOG_LEVEL=debug node --watch --import @swc-node/register/esm-register src/main.ts",
+    "dev:scheduler": "ROLE=scheduler node --watch --import @swc-node/register/esm-register src/main.ts",
     "start": "node dist/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src test",

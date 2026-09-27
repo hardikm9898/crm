@@ -11,6 +11,10 @@ import {
   SessionPruneProcessor,
   TrialCheckProcessor,
 } from '../../modules/maintenance/maintenance.processors.js';
+import {
+  MemberJoinedNotificationProcessor,
+  TrialExpiredNotificationProcessor,
+} from '../../modules/notifications/notifications.processor.js';
 import type { JobProcessor } from './job-processor.js';
 
 /**
@@ -31,6 +35,8 @@ export const PROCESSOR_TYPES: readonly Type<JobProcessor>[] = [
   EmailVerificationMailProcessor,
   PasswordResetMailProcessor,
   SecurityNoticeMailProcessor,
+  MemberJoinedNotificationProcessor,
+  TrialExpiredNotificationProcessor,
   // maintenance
   SessionPruneProcessor,
   InvitationExpiryProcessor,

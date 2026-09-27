@@ -107,7 +107,7 @@ export interface JsonResponse<T = Record<string, unknown>> {
 export async function call<T = Record<string, unknown>>(
   app: NestFastifyApplication,
   options: {
-    method: 'GET' | 'POST' | 'DELETE' | 'PATCH';
+    method: 'GET' | 'POST' | 'DELETE' | 'PATCH' | 'PUT';
     url: string;
     payload?: unknown;
     token?: string;

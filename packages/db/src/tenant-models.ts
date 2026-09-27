@@ -27,6 +27,8 @@ export const TENANT_MODELS = [
   'UsageCounter',
   'AuditLog',
   'OutboxEvent',
+  'Notification',
+  'NotificationPreference',
 ] as const;
 
 export type TenantModel = (typeof TENANT_MODELS)[number];

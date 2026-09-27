@@ -8,6 +8,7 @@ import {
   withPlatformScope,
 } from '@leados/shared';
 import { DbService } from '../../infra/db/db.service.js';
+import { fullPage } from '../organizations/organizations.service.js';
 import { AuditService } from '../../infra/audit/audit.service.js';
 import { OutboxService } from '../../infra/outbox/outbox.service.js';
 import { EntitlementService } from '../../infra/entitlements/entitlement.service.js';
@@ -281,31 +282,21 @@ export class MembersService {
     return { invitationId, expiresAt };
   }
 
-  async listInvitations(): Promise<{
-    items: {
-      id: string;
-      email: string;
-      roleId: string;
-      status: string;
-      expiresAt: Date;
-      createdAt: Date;
-    }[];
-  }> {
+  async listInvitations() {
     const invitations = await this.db.client.invitation.findMany({
       where: { status: 'pending', revokedAt: null },
       orderBy: { createdAt: 'desc' },
       take: 100,
     });
-    return {
-      items: invitations.map((invitation) => ({
-        id: invitation.id,
-        email: invitation.email,
-        roleId: invitation.roleId,
-        status: invitation.status,
-        expiresAt: invitation.expiresAt,
-        createdAt: invitation.createdAt,
-      })),
-    };
+    const items = invitations.map((invitation) => ({
+      id: invitation.id,
+      email: invitation.email,
+      roleId: invitation.roleId,
+      status: invitation.status,
+      expiresAt: invitation.expiresAt,
+      createdAt: invitation.createdAt,
+    }));
+    return { items, pagination: fullPage(items.length) };
   }
 
   async revokeInvitation(invitationId: string): Promise<void> {

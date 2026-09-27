@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { OrganizationsModule } from '../organizations/organizations.module.js';
+import { OrganizationProvisioningModule } from '../organizations/provisioning.module.js';
 import { AuthController } from './api/auth.controller.js';
 import { AuthService } from './application/auth.service.js';
 import { CredentialRecoveryService } from './application/credential-recovery.service.js';
@@ -20,7 +20,7 @@ import {
  * guard can be registered once in the composition root instead of per controller.
  */
 @Module({
-  imports: [OrganizationsModule],
+  imports: [OrganizationProvisioningModule],
   controllers: [AuthController],
   providers: [
     AuthService,

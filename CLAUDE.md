@@ -8,7 +8,9 @@ same change. Start at [docs/README.md](./docs/README.md); decisions live in `doc
 
 ```bash
 pnpm bootstrap      # .env + install + docker deps + migrate + seed (idempotent)
-pnpm dev            # all processes in watch mode
+pnpm dev            # API + web in watch mode
+pnpm dev:worker     # outbox dispatcher + queue workers (nothing sends mail without this)
+pnpm dev:scheduler  # trial lifecycle, invitation expiry, pruning
 pnpm lint | typecheck | test | test:int | build
 pnpm db:migrate | db:generate | db:seed | db:deploy
 ```
@@ -64,6 +66,32 @@ change, or typecheck will fail confusingly.
 - **Prisma 7 names generated row types `<Model>Model`** (`SessionModel`, not `Session`).
 - **Integration tests need their own Postgres _and_ Redis database** (`DATABASE_URL_TEST`,
   `REDIS_URL_TEST`): rate-limit counters have 15-minute windows and outlive a test run.
+- **Next injects a global, always-empty `<div role="alert" id="__next-route-announcer__">`.** An
+  unscoped `[role="alert"]` locator in a browser check is ambiguous and may read the empty one, which
+  looks exactly like an error notice that failed to render. Scope it (`main [role="alert"]`).
+- **The dev loop needs SWC's ESM loader, not a require hook and not tsx.** NestJS DI reads
+  `design:paramtypes`, which only exists with `emitDecoratorMetadata`. SWC emits it (see `.swcrc`);
+  **esbuild, and therefore tsx, does not** — under tsx every constructor-injected dependency arrives
+  `undefined` and the app dies with `Nest can't resolve dependencies of …`. And `-r @swc-node/register`
+  is a CJS require hook that never applies to this ESM workspace at all. The working form is
+  `node --watch --import @swc-node/register/esm-register src/main.ts`.
+- **`apps/web` resolves imports like a bundler, not like Node ESM.** Relative imports there must
+  have **no** `.js` extension — the exact opposite of every other package. `next build` fails with
+  `Can't resolve './session.js'`; `tsc --noEmit` does not, so typecheck alone will not catch it.
+- **A client component may not transitively import `next/headers`.** Server-action helpers and the
+  `ActionState` type therefore live in two files: `lib/server-action.ts` (server) and
+  `lib/action-state.ts` (client-safe). Importing the wrong one fails the build, not the typecheck.
+- **The API's refresh cookie is scoped `Path=/api/v1/auth`.** Relayed through the web app unchanged,
+  the browser stores a cookie it can never send back and every session dies after fifteen minutes,
+  silently. `apps/web/src/lib/refresh-cookie.ts` rewrites the path; nothing else about it is touched.
+- **The dev mailer logs at `debug`.** Boot the worker with `LOG_LEVEL=debug` or the invitation,
+  verification and reset links are simply not in the log — and the flow looks broken when it worked.
+- **Mail is only sent by a `ROLE=worker` process.** The outbox dispatcher lives with the workers, so
+  an API-only process queues nothing: a manual test of any email flow needs the worker running too.
+- **`pkill -f <pattern>` matches its own shell.** It kills the command chain it is part of (exit
+  144), so anything after it in the same invocation never runs. Match on the child's own name
+  (`pgrep -a next-server | … | xargs kill`) instead.
+
 - **The platform catalogue is reference data, not fixtures.** Without `permissions` and a plan,
   creating an organization fails on a foreign key. `seedPlatformCatalogue()` is called by both
   the dev seed and the test harness.

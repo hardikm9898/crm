@@ -24,8 +24,12 @@ export const EVENT_SUBSCRIPTIONS: Readonly<Record<string, readonly EventSubscrip
   'user.password_changed': [{ queue: QUEUES.NOTIFICATIONS, jobName: JOBS.MAIL_SECURITY_NOTICE }],
   // Recorded but not yet consumed. Listed explicitly so the set of known events is visible, and
   // so a typo in an event name shows up as "unsubscribed" rather than silently doing nothing.
+  'invitation.accepted': [{ queue: QUEUES.NOTIFICATIONS, jobName: JOBS.NOTIFY_MEMBER_JOINED }],
+  'trial.expired': [{ queue: QUEUES.NOTIFICATIONS, jobName: JOBS.NOTIFY_TRIAL_EXPIRED }],
+  // Recorded but not yet consumed. Listed explicitly so the set of known events is visible, and so
+  // a typo in an event name shows up as "unsubscribed" rather than silently doing nothing.
   'organization.created': [],
-  'invitation.accepted': [],
+  'onboarding.completed': [],
 };
 
 export function subscribersFor(eventName: string): readonly EventSubscription[] {

@@ -10,7 +10,7 @@
     },
     "build": {
       "dependsOn": ["^build", "@leados/db#generate"],
-      "outputs": ["dist/**"]
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
     },
     "typecheck": {
       "dependsOn": ["^build", "@leados/db#generate"],

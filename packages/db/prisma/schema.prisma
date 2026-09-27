@@ -106,6 +106,15 @@ enum ActorType {
   @@map("actor_type")
 }
 
+enum NotificationChannel {
+  in_app
+  email
+  whatsapp
+  push
+
+  @@map("notification_channel")
+}
+
 enum AvailabilityState {
   available
   busy
@@ -381,6 +390,8 @@ model Organization {
   invitations         Invitation[]
   auditLogs           AuditLog[]
   outboxEvents        OutboxEvent[]
+  notifications       Notification[]
+  notificationPreferences NotificationPreference[]
   subscription        Subscription?
   usageCounters       UsageCounter[]
   entitlementOverrides EntitlementOverride[]
@@ -480,6 +491,8 @@ model Membership {
   defaultBranch   Branch?          @relation(fields: [organizationId, defaultBranchId], references: [organizationId, id], onDelete: Restrict, map: "memberships_branch_same_org_fk")
   teamMemberships TeamMember[]
   roles           UserRole[]
+  notifications   Notification[]
+  notificationPreferences NotificationPreference[]
   availability    UserAvailability[]
   workingHours    WorkingHours[]
 
@@ -693,6 +706,57 @@ model UsageCounter {
   @@unique([organizationId, metricKey, periodStart])
   @@index([organizationId, periodEnd])
   @@map("usage_counters")
+}
+
+// ── Notifications ────────────────────────────────────────────────────────────
+
+/// An in-app notification for one user.
+///
+/// `type` is a string rather than an enum: new notification types arrive with every phase, and a
+/// migration per type would be friction for no benefit. The UI renders by type through a registry,
+/// exactly as the lead timeline does.
+model Notification {
+  id             String       @id @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  userId         String       @map("user_id") @db.Uuid
+  type           String
+  title          String
+  body           String?
+  /// Where clicking it should go, e.g. `/leads/{id}`.
+  link           String?
+  data           Json         @default("{}") @db.JsonB
+  readAt         DateTime?    @map("read_at") @db.Timestamptz(6)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  membership     Membership   @relation(fields: [organizationId, userId], references: [organizationId, userId], onDelete: Cascade, map: "notifications_membership_same_org_fk")
+
+  /// The unread badge query, and the list query, in one index.
+  @@index([organizationId, userId, readAt, createdAt(sort: Desc)])
+  @@index([organizationId, type])
+  @@map("notifications")
+}
+
+/// Per-user, per-type channel preferences (FR-NOT-3).
+///
+/// Absence of a row means "the default for that type", so a new notification type does not require
+/// backfilling a row for every user.
+model NotificationPreference {
+  id             String       @id @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  userId         String       @map("user_id") @db.Uuid
+  type           String
+  channels       Json         @default("[]") @db.JsonB
+  /// Local time window during which non-urgent notifications are held.
+  quietHours     Json?        @map("quiet_hours") @db.JsonB
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  membership     Membership   @relation(fields: [organizationId, userId], references: [organizationId, userId], onDelete: Cascade, map: "notification_preferences_membership_same_org_fk")
+
+  @@unique([organizationId, userId, type])
+  @@map("notification_preferences")
 }
 
 // ── Audit & outbox: infrastructure every later module depends on ─────────────
