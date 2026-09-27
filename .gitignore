@@ -38,3 +38,7 @@ tmp/
 
 # generated code (produced by `pnpm db:generate`)
 packages/db/generated/
+
+# local service snapshots (redis persistence, etc.)
+*.rdb
+appendonlydir/

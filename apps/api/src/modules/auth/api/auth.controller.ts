@@ -13,6 +13,7 @@ import { MfaService } from '../application/mfa.service.js';
 import { PasswordService } from '../application/password.service.js';
 import { SessionService } from '../application/session.service.js';
 import { Public } from '../guards/public.decorator.js';
+import { NoPermissionRequired } from '../../../infra/authz/permission.decorator.js';
 import {
   CurrentSession,
   CurrentUser,
@@ -137,6 +138,7 @@ export class AuthController {
     return withMessage({ signedOut: true }, 'Signed out');
   }
 
+  @NoPermissionRequired('own session')
   @Post('logout-all')
   @HttpCode(200)
   async logoutEverywhere(
@@ -150,11 +152,13 @@ export class AuthController {
 
   // ── Session and identity ──────────────────────────────────────────────────
 
+  @NoPermissionRequired('describes the caller')
   @Get('me')
   async me() {
     return this.auth.describeCurrentUser();
   }
 
+  @NoPermissionRequired('own sessions')
   @Get('sessions')
   async listSessions(@CurrentSession() current: { userId: string; sessionId: string }) {
     const sessions = await this.sessions.listForUser(current.userId);
@@ -177,6 +181,7 @@ export class AuthController {
     };
   }
 
+  @NoPermissionRequired('own sessions')
   @Delete('sessions/:id')
   @HttpCode(200)
   async revokeSession(@Param('id') id: string, @CurrentSession() current: { userId: string }) {
@@ -191,6 +196,7 @@ export class AuthController {
     return withMessage({ revoked: true }, 'Session ended');
   }
 
+  @NoPermissionRequired('own session; membership is verified in the service')
   @Post('switch-org')
   @HttpCode(200)
   async switchOrganization(
@@ -274,6 +280,7 @@ export class AuthController {
 
   // ── Multi-factor authentication ───────────────────────────────────────────
 
+  @NoPermissionRequired('own credentials')
   @Post('mfa/setup')
   @HttpCode(200)
   async setupMfa(@CurrentSession() current: { userId: string }) {
@@ -287,6 +294,7 @@ export class AuthController {
     );
   }
 
+  @NoPermissionRequired('own credentials')
   @Post('mfa/confirm')
   @HttpCode(200)
   async confirmMfa(
@@ -304,6 +312,7 @@ export class AuthController {
     );
   }
 
+  @NoPermissionRequired('own credentials')
   @Post('mfa/disable')
   @HttpCode(200)
   async disableMfa(
@@ -323,6 +332,7 @@ export class AuthController {
     return withMessage({ enabled: false }, 'Two-factor authentication is off');
   }
 
+  @NoPermissionRequired('own credentials')
   @Get('mfa/recovery-codes/count')
   async countRecoveryCodes(@CurrentSession() current: { userId: string }) {
     return { remaining: await this.mfa.countUnusedRecoveryCodes(current.userId) };

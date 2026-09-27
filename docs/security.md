@@ -99,8 +99,28 @@ export of PII requires `export:pii`. Mutation of another user's task/conversatio
 explicit `*:manage_others` permission. Platform permissions live in a separate namespace
 (`platform:*`) and are unreachable from a tenant token.
 
-Every mutation route declares a permission — a route without one fails a startup assertion, not just
-review (Rule 11).
+Every route declares its authorization, and **a route that declares nothing fails startup**
+(`RouteAuditService`) rather than quietly becoming reachable by any authenticated user of any
+tenant (Rule 11). The three declarations are `@Public()`, `@RequirePermission(permission, { minimumScope })`
+and `@NoPermissionRequired(reason)`; the reason on the last one makes each exemption reviewable.
+A route may additionally declare `@RequireFeature(key)` for a plan feature.
+
+Scope resolution lives in `DataScopeService`, which returns a query predicate rather than a
+boolean, so "a manager sees their branch" is enforced in SQL. Two behaviours are deliberate: an
+unsatisfiable scope (branch-scoped user with no branch) **narrows** to own rather than widening,
+and `own` scope on an entity with no ownership column returns an empty result rather than
+everything — silent widening is the failure mode that matters.
+
+Grants are resolved per request from a version-keyed cache, not embedded in the token, so
+revoking a role applies on the next request. Any code changing roles, grants, team membership or
+branch assignment must bump that version.
+
+A **generated suite** reads the live routing table and asserts, for every route: that it is
+declared; that writes outside `/auth` are permission-gated; that the named permission exists in
+the catalogue; and that a validly-authenticated caller from another organization is refused and
+sees none of the other tenant's identifiers. Routes excluded from the cross-tenant sweep because
+they act only on the caller must appear in a reviewed allowlist, so the exclusion set cannot grow
+silently.
 
 ---
 

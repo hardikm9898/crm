@@ -17,7 +17,7 @@ pnpm db:migrate | db:generate | db:seed | db:deploy
 the tenant-isolation suite. Regenerate the Prisma client (`pnpm db:generate`) after any schema
 change, or typecheck will fail confusingly.
 
-## The five rules that matter most here
+## The six rules that matter most here
 
 1. **Never write an unscoped query on a tenant table.** Use the injected `DbService`; it is
    already tenant-scoped. Cross-tenant work opts in explicitly with
@@ -25,11 +25,16 @@ change, or typecheck will fail confusingly.
 2. **New tenant-scoped model ⇒ follow the checklist in `packages/db/README.md`** — composite
    unique, composite FKs including `organization_id`, person-references via `Membership`, and
    register it in `TENANT_MODELS`. CI fails if the registry drifts.
-3. **Nothing about a tenant is hardcoded.** Statuses, sources, pipelines, task types, roles,
+3. **Every route declares its authorization** — `@Public()`, `@RequirePermission(...)` or
+   `@NoPermissionRequired(reason)`. Anything else fails at boot, by design. Add
+   `@RequireFeature(key)` when a plan feature is needed, and use `DataScopeService` rather than
+   filtering by hand. After changing roles, grants, teams or branches, call
+   `PrincipalService.invalidateOrganization()` or the old grants stay cached for five minutes.
+4. **Nothing about a tenant is hardcoded.** Statuses, sources, pipelines, task types, roles,
    plans and limits are rows, not enums or constants. Code checks _permissions_, never role names.
-4. **Events leave through the outbox, inside the same transaction as the write.** Handlers never
+5. **Events leave through the outbox, inside the same transaction as the write.** Handlers never
    call an external API; consumers are idempotent on `eventId`.
-5. **Anything a business owner would want to see on a lead must be written to the timeline.**
+6. **Anything a business owner would want to see on a lead must be written to the timeline.**
    A feature that skips it is unfinished.
 
 ## Traps already paid for (don't rediscover these)

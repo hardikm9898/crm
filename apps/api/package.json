@@ -11,7 +11,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src test",
     "test": "vitest run --exclude '**/*.int-spec.ts' --exclude '**/*.e2e-spec.ts'",
-    "test:int": "vitest run e2e-spec"
+    "test:int": "vitest run int-spec e2e-spec"
   },
   "dependencies": {
     "@leados/db": "workspace:*",
