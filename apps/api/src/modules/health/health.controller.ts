@@ -1,5 +1,7 @@
-import { Controller, Get, HttpCode, ServiceUnavailableException } from '@nestjs/common';
+import { Controller, Get, HttpCode } from '@nestjs/common';
+import { AppError } from '@leados/shared';
 import { raw } from '../../infra/http/envelope.interceptor.js';
+import { Public } from '../auth/guards/public.decorator.js';
 import { HealthService } from './health.service.js';
 
 /**
@@ -10,6 +12,7 @@ import { HealthService } from './health.service.js';
  * step 2, at which point it moves behind platform authentication — it exposes
  * operational internals, not tenant data.
  */
+@Public()
 @Controller('health')
 export class HealthController {
   constructor(private readonly health: HealthService) {}
@@ -24,7 +27,11 @@ export class HealthController {
   async ready() {
     const report = await this.health.readiness();
     if (report.status === 'down') {
-      throw new ServiceUnavailableException({ message: 'Dependencies unavailable', ...report });
+      // The details travel in the error envelope so the response itself says which
+      // dependency failed and why.
+      throw new AppError('INTEGRATION_UNAVAILABLE', 'Dependencies unavailable', 503, {
+        components: report.components,
+      });
     }
     return raw(report);
   }

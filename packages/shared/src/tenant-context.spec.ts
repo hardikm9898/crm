@@ -118,3 +118,60 @@ describe('systemPrincipal', () => {
     });
   });
 });
+
+describe('runEmpty + setPrincipal (the HTTP request pattern)', () => {
+  it('lets a later step populate a context opened earlier', async () => {
+    // Middleware opens the scope; the auth guard fills it in; the handler reads it.
+    await tenantContext.runEmpty(async () => {
+      expect(tenantContext.get()).toBeNull();
+
+      tenantContext.setPrincipal(principal('org-a'));
+      expect(tenantContext.organizationId('t')).toBe('org-a');
+
+      // Visible across further async boundaries, as a handler awaiting the database is.
+      await Promise.resolve();
+      await new Promise((tick) => setImmediate(tick));
+      expect(tenantContext.organizationId('t')).toBe('org-a');
+    });
+  });
+
+  it('is visible to a nested async callee — which is why the guard can set it', async () => {
+    await tenantContext.runEmpty(async () => {
+      const guard = async (): Promise<void> => {
+        await Promise.resolve();
+        tenantContext.setPrincipal(principal('org-a'));
+      };
+      await guard();
+      // The critical assertion: the caller sees what the awaited callee set. `enterWith`
+      // inside `guard` would NOT be visible here.
+      expect(tenantContext.organizationId('t')).toBe('org-a');
+    });
+  });
+
+  it('refuses to set a principal with no context open', () => {
+    expect(() => tenantContext.setPrincipal(principal('org-a'))).toThrow(
+      /requires an open tenant context/,
+    );
+  });
+
+  it('keeps concurrent requests isolated', async () => {
+    const handle = (org: string, delay: number) =>
+      tenantContext.runEmpty(async () => {
+        tenantContext.setPrincipal(principal(org));
+        await new Promise((tick) => setTimeout(tick, delay));
+        return tenantContext.organizationId('t');
+      });
+
+    const [a, b, c] = await Promise.all([
+      handle('org-a', 15),
+      handle('org-b', 3),
+      handle('org-c', 8),
+    ]);
+    expect([a, b, c]).toEqual(['org-a', 'org-b', 'org-c']);
+  });
+
+  it('does not leak once the request ends', async () => {
+    await tenantContext.runEmpty(async () => tenantContext.setPrincipal(principal('org-a')));
+    expect(tenantContext.get()).toBeNull();
+  });
+});

@@ -18,6 +18,16 @@ export type UnscopedDbClient = PrismaClient;
 export type DbClient = ReturnType<typeof createDbClient>;
 
 /**
+ * The client as seen inside `$transaction(async (tx) => …)`: the extended client minus the
+ * operations that cannot be nested. Services accept this so they can be composed into a
+ * caller's transaction — which the outbox pattern requires (ADR-0006).
+ */
+export type DbTransactionClient = Omit<
+  DbClient,
+  '$connect' | '$disconnect' | '$on' | '$transaction' | '$extends'
+>;
+
+/**
  * The tenant-scoped client. This is what application code gets.
  * Every tenant model is filtered by the active tenant context; see src/tenant-scope.ts.
  */

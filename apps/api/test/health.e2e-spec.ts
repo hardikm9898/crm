@@ -51,17 +51,18 @@ describe('GET /health/live', () => {
 });
 
 describe('GET /health/ready', () => {
-  it('reports the database as reachable', async () => {
+  it('reports every dependency it needs to serve traffic', async () => {
     const response = await inject({ method: 'GET', url: '/health/ready' });
-    expect(response.statusCode).toBe(200);
-
     const body = response.json<{
       status: string;
-      components: Record<string, { status: string; latencyMs: number }>;
+      components: Record<string, { status: string; latencyMs?: number; detail?: string }>;
     }>();
+
+    // Name the failing dependency on assertion failure: a bare "expected 503" is not debuggable.
+    expect(response.statusCode, `body: ${JSON.stringify(body)}`).toBe(200);
     expect(body.status).toBe('up');
     expect(body.components.database?.status).toBe('up');
-    expect(body.components.database?.latencyMs).toBeTypeOf('number');
+    expect(body.components.cache?.status).toBe('up');
   });
 });
 

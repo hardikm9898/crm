@@ -48,6 +48,9 @@ export const PLATFORM_MODELS = [
   'Permission',
   'User',
   'Session',
+  'PasswordReset',
+  'EmailVerification',
+  'MfaRecoveryCode',
 ] as const;
 
 export function isTenantModel(model: string | undefined): model is TenantModel {

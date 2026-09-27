@@ -1,6 +1,6 @@
 import { Injectable, type NestMiddleware } from '@nestjs/common';
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { newId } from '@leados/shared';
+import { newId, tenantContext } from '@leados/shared';
 import { requestStore } from './request-store.js';
 
 /**
@@ -13,7 +13,7 @@ export class RequestContextMiddleware implements NestMiddleware {
   use(
     request: FastifyRequest['raw'] & { originalUrl?: string },
     response: FastifyReply['raw'],
-    next: () => void,
+    next: (error?: unknown) => void,
   ): void {
     const incoming = request.headers['x-request-id'];
     const requestId =
@@ -24,22 +24,33 @@ export class RequestContextMiddleware implements NestMiddleware {
     response.setHeader('x-request-id', requestId);
 
     const forwardedFor = request.headers['x-forwarded-for'];
-    void requestStore.run(
-      {
-        requestId,
-        method: request.method ?? 'GET',
-        // Middleware is mounted on a wildcard, which rewrites `url` to the path
-        // relative to the mount point; `originalUrl` keeps the real request target.
-        path: request.originalUrl ?? request.url ?? '/',
-        ip:
-          (typeof forwardedFor === 'string' ? forwardedFor.split(',')[0]?.trim() : undefined) ??
-          request.socket.remoteAddress,
-        userAgent: request.headers['user-agent'],
-        startedAt: Date.now(),
-      },
-      async () => {
-        next();
-      },
-    );
+    // The promise is deliberately not awaited — `next()` hands control onward — but a
+    // rejection must still surface. Swallowing it would leave the request hanging with no
+    // response instead of failing with a 500.
+    void requestStore
+      .run(
+        {
+          requestId,
+          method: request.method ?? 'GET',
+          // Middleware is mounted on a wildcard, which rewrites `url` to the path
+          // relative to the mount point; `originalUrl` keeps the real request target.
+          path: request.originalUrl ?? request.url ?? '/',
+          ip:
+            (typeof forwardedFor === 'string' ? forwardedFor.split(',')[0]?.trim() : undefined) ??
+            request.socket.remoteAddress,
+          userAgent: request.headers['user-agent'],
+          startedAt: Date.now(),
+        },
+        async () => {
+          // The tenant scope must exist before the authentication guard runs, because the
+          // guard fills it in rather than creating it — see tenantContext.setPrincipal.
+          await tenantContext.runEmpty(async () => {
+            next();
+          });
+        },
+      )
+      .catch((error: unknown) => {
+        next(error);
+      });
   }
 }

@@ -34,6 +34,11 @@ change, or typecheck will fail confusingly.
 
 ## Traps already paid for (don't rediscover these)
 
+- **`AsyncLocalStorage.enterWith` does not propagate out of an awaited callee.** A Nest guard
+  is awaited by the framework, so a principal set with `enterWith` inside it is invisible to the
+  route handler — silently. The request middleware opens an empty scope with
+  `tenantContext.runEmpty()` and the guard fills it via `setPrincipal()`; the store object is
+  shared by reference, which is what makes it visible.
 - **Prisma promises are lazy.** `tenantContext.run(ctx, () => db.x.find())` loses the context —
   the callback must be `async`. Covered by a test in `@leados/shared`.
 - **`import type` breaks NestJS DI.** Injected classes must be runtime imports;
@@ -42,6 +47,12 @@ change, or typecheck will fail confusingly.
 - **Nest hides boot errors** behind `process.abort()`; tests pass `abortOnError: false`.
 - **ESM:** relative imports need `.js` extensions; use `import.meta.dirname`, not `__dirname`.
 - **`prisma@latest` is currently an 8.0 RC** — Prisma is pinned to 7.10 deliberately.
+- **Prisma 7 names generated row types `<Model>Model`** (`SessionModel`, not `Session`).
+- **Integration tests need their own Postgres _and_ Redis database** (`DATABASE_URL_TEST`,
+  `REDIS_URL_TEST`): rate-limit counters have 15-minute windows and outlive a test run.
+- **The platform catalogue is reference data, not fixtures.** Without `permissions` and a plan,
+  creating an organization fails on a foreign key. `seedPlatformCatalogue()` is called by both
+  the dev seed and the test harness.
 
 ## Reporting work
 

@@ -27,6 +27,10 @@ async function bootstrap(): Promise<void> {
     { bufferLogs: true },
   );
 
+  // /api/v1/* for the product API; /health/* stays unversioned so orchestrator and load
+  // balancer probes never move (docs/api-architecture.md §1).
+  app.setGlobalPrefix('api/v1', { exclude: ['health/live', 'health/ready', 'health/deep'] });
+
   const config = app.get<AppConfig>(APP_CONFIG);
   const logger = app.get<Logger>(LOGGER);
 

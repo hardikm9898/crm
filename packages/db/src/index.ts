@@ -1,5 +1,5 @@
 export { createDbClient, createUnscopedDbClient } from './client.js';
-export type { DbClient, DbClientOptions, UnscopedDbClient } from './client.js';
+export type { DbClient, DbClientOptions, DbTransactionClient, UnscopedDbClient } from './client.js';
 export {
   CrossTenantAccessError,
   tenantScopeExtension,
@@ -11,6 +11,12 @@ export {
 export { PLATFORM_MODELS, TENANT_MODELS, tenantColumnFor } from './tenant-models.js';
 export { assertTenantRegistryComplete } from './registry-check.js';
 export { withAuditPurge } from './audit-purge.js';
+export {
+  DEFAULT_PLAN_SETTING_KEY,
+  FEATURE_SEEDS,
+  PLAN_SEEDS,
+  seedPlatformCatalogue,
+} from './seeding/platform-catalogue.js';
 
 // Model types and enums, so application modules never import @prisma/client directly.
 export * from '../generated/prisma/models.js';

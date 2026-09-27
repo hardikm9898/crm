@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { withPlatformScope } from '@leados/shared';
 import { DbService } from '../../infra/db/db.service.js';
+import { RedisService } from '../../infra/redis/redis.service.js';
 import { APP_CONFIG } from '../../infra/config/config.module.js';
 import type { AppConfig } from '../../infra/config/config.schema.js';
 
@@ -45,6 +46,7 @@ export interface DeepHealthReport extends ReadinessReport {
 export class HealthService {
   constructor(
     private readonly db: DbService,
+    private readonly redis: RedisService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
@@ -57,8 +59,11 @@ export class HealthService {
   }
 
   async readiness(): Promise<ReadinessReport> {
-    const database = await this.check(() => this.db.ping());
-    const components = { database };
+    const [database, cache] = await Promise.all([
+      this.check(() => this.db.ping()),
+      this.check(() => this.redis.ping()),
+    ]);
+    const components = { database, cache };
     const status: ComponentStatus = Object.values(components).some((c) => c.status === 'down')
       ? 'down'
       : Object.values(components).some((c) => c.status === 'degraded')

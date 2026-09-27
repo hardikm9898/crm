@@ -217,15 +217,20 @@ model User {
   timezone     String?
   locale       String?   @default("en")
   mfaEnabled   Boolean   @default(false) @map("mfa_enabled")
-  mfaSecret    String?   @map("mfa_secret")
+  /// AES-256-GCM ciphertext, never the raw TOTP secret (docs/security.md §9).
+  mfaSecretEncrypted String? @map("mfa_secret_encrypted")
+  mfaEnrolledAt      DateTime? @map("mfa_enrolled_at") @db.Timestamptz(6)
   emailVerifiedAt DateTime? @map("email_verified_at") @db.Timestamptz(6)
   lastLoginAt  DateTime? @map("last_login_at") @db.Timestamptz(6)
   createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(6)
 
-  memberships  Membership[]
-  sessions     Session[]
+  memberships        Membership[]
+  sessions           Session[]
+  passwordResets     PasswordReset[]
+  emailVerifications EmailVerification[]
+  mfaRecoveryCodes   MfaRecoveryCode[]
 
   @@index([status])
   @@map("users")
@@ -253,6 +258,54 @@ model Session {
   @@index([familyId])
   @@index([expiresAt])
   @@map("sessions")
+}
+
+/// Single-use, hashed password-reset tokens. The plaintext token exists only in the
+/// email we send; only its hash is stored, so a database read cannot reset anyone's
+/// password (docs/security.md §2).
+model PasswordReset {
+  id          String    @id @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  tokenHash   String    @unique @map("token_hash")
+  requestedIp String?   @map("requested_ip")
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz(6)
+  usedAt      DateTime? @map("used_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, usedAt])
+  @@index([expiresAt])
+  @@map("password_resets")
+}
+
+/// Email ownership proof. Carries the address being verified, so changing an email
+/// cannot be confirmed by a token issued for the previous one.
+model EmailVerification {
+  id         String    @id @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  email      String
+  tokenHash  String    @unique @map("token_hash")
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(6)
+  verifiedAt DateTime? @map("verified_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, verifiedAt])
+  @@map("email_verifications")
+}
+
+/// One-time codes that let a user back in when they lose their authenticator.
+/// Hashed like passwords, and consumed on use.
+model MfaRecoveryCode {
+  id        String    @id @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  codeHash  String    @unique @map("code_hash")
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, usedAt])
+  @@map("mfa_recovery_codes")
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -394,7 +447,7 @@ model Membership {
   workingHours    WorkingHours[]
 
   @@unique([organizationId, id], name: "membership_tenant_key")
-  @@unique([organizationId, userId], name: "membership_org_user_key")
+  @@unique([organizationId, userId])
   @@index([organizationId, status, deletedAt])
   @@index([userId])
   @@map("memberships")

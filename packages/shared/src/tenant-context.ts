@@ -66,6 +66,41 @@ export const tenantContext = {
     return storage.run({ principal, platformScope: false }, fn);
   },
 
+  /**
+   * Opens an empty context for a unit of work whose principal is not known yet — a request
+   * that has not been authenticated at the point the scope must begin.
+   *
+   * Used by the HTTP middleware, which runs before the authentication guard. The guard then
+   * fills it in with `setPrincipal`.
+   */
+  runEmpty<T>(fn: () => Promise<T>): Promise<T> {
+    return storage.run({ principal: null, platformScope: false }, fn);
+  },
+
+  /**
+   * Populates the context opened by `runEmpty`.
+   *
+   * Why this exists instead of the more obvious `enterWith`: a Nest guard is *awaited* by
+   * the framework, and `AsyncLocalStorage.enterWith` only affects the async resource it is
+   * called on. The continuation that runs the route handler belongs to the caller's
+   * resource, so a principal set with `enterWith` inside a guard is invisible to the
+   * handler — silently, which is the worst possible failure mode for tenant scoping.
+   *
+   * Mutating the store object that `runEmpty` put in place works because every async
+   * resource in the request shares that one object by reference.
+   *
+   * @throws when no context is open — better to fail the request than to run unscoped.
+   */
+  setPrincipal(principal: TenantPrincipal): void {
+    const store = storage.getStore();
+    if (!store) {
+      throw new Error(
+        'setPrincipal requires an open tenant context. Wrap the request in tenantContext.runEmpty().',
+      );
+    }
+    store.principal = principal;
+  },
+
   /** Current principal, or null outside any context. */
   get(): TenantPrincipal | null {
     return storage.getStore()?.principal ?? null;

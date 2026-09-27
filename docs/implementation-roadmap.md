@@ -45,7 +45,7 @@ config/adapter model, the TypeScript 6 ceiling) and
 
 ### Remaining steps
 
-- **Step 2 — auth:** Argon2id hashing, register/login/refresh with rotation + reuse detection, logout, email verification, password reset, TOTP MFA, session listing/revocation, invitations.
+- **Step 2 — auth ✅ _(landed 2026-09-27)_:** Argon2id hashing with transparent rehash and a real password policy; registration that provisions a complete organization; login with timing-equalised failures; refresh rotation with reuse detection (family revocation); logout and sign-out-everywhere; email verification; password reset that revokes all sessions; TOTP MFA with two-step enrolment, encrypted secrets and single-use recovery codes; session listing and revocation; organization switching; invitation acceptance including multi-org membership; per-account and per-IP sign-in throttling. Supporting infrastructure: Redis, AES-256-GCM encryption service, audit writer, outbox writer, mailer port, Zod request validation, global deny-by-default `AuthGuard`. Readiness now probes Redis as well as PostgreSQL. **185 tests green** (100 unit, 85 integration). New decision recorded as [ADR-0013](./decisions/ADR-0013-hs256-access-tokens.md).
 - **Step 3 — guards:** tenant guard (organization status), permission guard, data-scope resolution, entitlement/usage guard, and the generated cross-tenant route suite that runs against every route.
 - **Step 4 — outbox runtime:** dispatcher worker, BullMQ wiring, scheduler, DLQ mirror, audit-log writer service.
 - **Step 5 — surface:** organizations/branches/teams/users/roles endpoints, onboarding state, notification skeleton, web app shell + login + org switcher.
