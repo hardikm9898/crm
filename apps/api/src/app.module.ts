@@ -25,6 +25,8 @@ import { AuthGuard } from './modules/auth/guards/auth.guard.js';
 import { OrganizationsModule } from './modules/organizations/organizations.module.js';
 import { CustomFieldsModule } from './modules/custom-fields/custom-fields.module.js';
 import { CrmConfigModule } from './modules/crm-config/crm-config.module.js';
+import { DuplicatesModule } from './modules/duplicates/duplicates.module.js';
+import { AssignmentModule } from './modules/assignment/assignment.module.js';
 import { LeadsModule } from './modules/leads/leads.module.js';
 import { HealthModule } from './modules/health/health.module.js';
 
@@ -55,6 +57,8 @@ import { HealthModule } from './modules/health/health.module.js';
     // Phase 2 — CRM core
     CustomFieldsModule,
     CrmConfigModule,
+    DuplicatesModule,
+    AssignmentModule,
     LeadsModule,
     MaintenanceModule,
     HealthModule,

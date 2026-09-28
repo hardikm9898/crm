@@ -61,6 +61,14 @@ export const SCHEDULES: readonly ScheduleDefinition[] = [
     cron: '41 2 * * *',
     description: 'Pre-create upcoming activity partitions and report rows in the default one',
   },
+  {
+    queue: QUEUES.MAINTENANCE,
+    jobName: JOBS.LEAD_RECYCLE,
+    // Early morning, before the working day: a lead returned to the pool at 6am is one somebody
+    // can pick up at 9, which is the whole point.
+    cron: '53 5 * * *',
+    description: 'Return leads nobody has touched in N days to the unassigned pool',
+  },
 ];
 
 const HEARTBEAT_INTERVAL_MS = 30_000;

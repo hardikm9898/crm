@@ -46,6 +46,14 @@ export const TENANT_MODELS = [
   'LeadStatusHistory',
   'LeadStageHistory',
   'Activity',
+  // Phase 2, step 2 — duplicates and assignment
+  'DuplicateRule',
+  'LeadDuplicate',
+  'LeadMerge',
+  'AssignmentRule',
+  'AssignmentRuleCondition',
+  'AssignmentPoolMember',
+  'RoundRobinState',
 ] as const;
 
 export type TenantModel = (typeof TENANT_MODELS)[number];

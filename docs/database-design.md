@@ -532,6 +532,16 @@ nightly job that respects `retention_policies` and legal holds.
 3. `UNIQUE (provider, provider_message_id)` on `messages`; `UNIQUE (organization_id, provider, external_event_id)` on `provider_events` — duplicate webhooks are impossible, not merely unlikely.
 4. `UNIQUE (organization_id, source_event_id, occurred_at)` on `activities` — duplicate timeline entries impossible under retry. _Deviation, forced by PostgreSQL:_ a unique constraint on a partitioned table must contain the partition key, so `occurred_at` is part of it and the primary key is `(id, occurred_at)`. The guarantee holds because `occurred_at` comes from the event, never from `now()` — see [ADR-0009](./decisions/ADR-0009-append-only-timeline.md#amendment-2026-09-27-implementation).
 5. `UNIQUE (organization_id, channel, idempotency_key)` on `inbound_payloads` and `idempotency_keys` — duplicate lead creation impossible under client retry.
+
+> **Every guarantee on this page that Prisma cannot express is deleted by the next generated
+> migration unless somebody stops it.** `prisma migrate diff` compares the database to
+> `schema.prisma`; a partitioned table, a three-column foreign key, an expression or GIN index, a
+> partial unique index, a trigger and a check constraint are all invisible to the schema, so the
+> diff proposes dropping them. That is not hypothetical — it happened between Phase 2 step 1 and
+> step 2 and was applied. Two rules follow: read every generated migration before applying it and
+> delete the spurious `DROP`s, and keep `packages/db/src/schema-objects.int-spec.ts` current, since
+> it is the only thing that turns such a deletion into a test failure rather than a silent loss.
+
 6. `EXCLUDE`/partial unique on `sla_clocks` so one subject has at most one active clock per policy.
 7. `CHECK (amount_minor >= 0)` on money; `CHECK (currency ~ '^[A-Z]{3}$')`.
 8. `audit_logs` is append-only by trigger (UPDATE always rejected; DELETE only under the explicit `app.audit_purge` flag used by the retention/DSR path), **and** production connects as a role without UPDATE/DELETE on it (`FR-AUD-2`).
@@ -547,6 +557,8 @@ default branch + team; roles (Owner/Admin/Manager/Executive) with permission gra
 lost reasons; task types; reschedule reasons; call outcomes; one default pipeline with stages; lead
 sources (website, facebook, google, whatsapp, referral, walk-in, manual, api); industry custom
 fields; saved views (Today's Follow-ups, Overdue, New Leads, Hot Leads, No Next Action); one
-duplicate rule (phone, 365-day lookback, attach-to-existing); one assignment rule (round-robin over
+duplicate rule (phone, 365-day lookback, attach-to-existing — the rule names `phoneE164` and the
+field registry makes that match a WhatsApp number carrying the same digits, on either side, so the
+seeded `match_on` is one set rather than two); one assignment rule (round-robin over
 the default team); a default SLA policy (first response 60 working minutes); starter automation
 (welcome WhatsApp draft + day-1 call task) left **inactive** until WhatsApp is connected.

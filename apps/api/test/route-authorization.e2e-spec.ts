@@ -45,6 +45,12 @@ interface Tenant {
   stageId: string;
   customFieldId: string;
   customFieldSectionId: string;
+  // Phase 2 — duplicates and assignment. A dismissal and an undo need a pair and a merge that
+  // really exist, or the sweep would be aiming at a 404 it earned by validation, not by tenancy.
+  duplicateId: string;
+  mergeId: string;
+  duplicateRuleId: string;
+  assignmentRuleId: string;
 }
 
 let orgA: Tenant;
@@ -139,6 +145,61 @@ async function createTenant(label: string): Promise<Tenant> {
     token,
   });
 
+  // A duplicate pair, made the way the product makes them: the same number captured twice. The
+  // seeded rule *attaches* the second capture, which resolves the pair rather than queueing it —
+  // only `create_and_link` leaves a `lead_duplicates` row there is anything to dismiss. So the
+  // seeded rule is flipped for the two captures and flipped back, rather than adding a competing
+  // rule: rules tie-break by creation order, so a new one at the same priority would never fire.
+  const seededDuplicateRule = await ctx.db.duplicateRule.findFirstOrThrow({
+    where: { organizationId },
+  });
+  const setAction = (action: string) =>
+    call(ctx.app, {
+      method: 'PATCH',
+      url: `/api/v1/duplicates/rules/${seededDuplicateRule.id}`,
+      payload: { action },
+      token,
+    });
+  await setAction('create_and_link');
+  const repeatPhone = `+9198${String(Math.floor(Math.random() * 90_000_000) + 10_000_000)}`;
+  for (const suffix of ['Pair', 'Repeat']) {
+    await call(ctx.app, {
+      method: 'POST',
+      url: '/api/v1/leads',
+      payload: { firstName: 'Sweep', lastName: suffix, phone: repeatPhone },
+      token,
+    });
+  }
+  await setAction('attach_to_existing');
+  const pair = await ctx.db.leadDuplicate.findFirstOrThrow({ where: { organizationId } });
+
+  // A merge, so `merges/:id/undo` has something undoable. Two throwaway leads: merging the sweep
+  // fixture lead would soft-delete a record other routes in this suite aim at.
+  const [absorbed, survivor] = await Promise.all(
+    ['Absorbed', 'Survivor'].map((name) =>
+      call<EnvelopeBody<{ id: string }>>(ctx.app, {
+        method: 'POST',
+        url: '/api/v1/leads',
+        payload: { firstName: 'Sweep', lastName: `${name} ${label}` },
+        token,
+      }),
+    ),
+  );
+  const merged = await call<EnvelopeBody<{ mergeId: string }>>(ctx.app, {
+    method: 'POST',
+    url: '/api/v1/duplicates/merge',
+    payload: {
+      survivingLeadId: survivor!.body.data.id,
+      mergedLeadId: absorbed!.body.data.id,
+    },
+    token,
+  });
+
+  const [duplicateRule, assignmentRule] = await Promise.all([
+    ctx.db.duplicateRule.findFirstOrThrow({ where: { organizationId, isActive: true } }),
+    ctx.db.assignmentRule.findFirstOrThrow({ where: { organizationId } }),
+  ]);
+
   return {
     token,
     organizationId,
@@ -158,6 +219,10 @@ async function createTenant(label: string): Promise<Tenant> {
     stageId: stage.id,
     customFieldId: customField.body.data.id,
     customFieldSectionId: section.body.data.id,
+    duplicateId: pair.id,
+    mergeId: merged.body.data.mergeId,
+    duplicateRuleId: duplicateRule.id,
+    assignmentRuleId: assignmentRule.id,
   };
 }
 
@@ -286,6 +351,13 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       '/leads/:id/tags': `/leads/${orgA.leadId}/tags`,
       '/leads/:id/touchpoints': `/leads/${orgA.leadId}/touchpoints`,
       '/leads/:id/timeline': `/leads/${orgA.leadId}/timeline`,
+      // Phase 2 — duplicates and assignment
+      '/duplicates/:id/dismiss': `/duplicates/${orgA.duplicateId}/dismiss`,
+      '/duplicates/merges/:id/undo': `/duplicates/merges/${orgA.mergeId}/undo`,
+      '/duplicates/rules/:id': `/duplicates/rules/${orgA.duplicateRuleId}`,
+      '/assignment/rules/:id': `/assignment/rules/${orgA.assignmentRuleId}`,
+      '/assignment/rules/:id/conditions': `/assignment/rules/${orgA.assignmentRuleId}/conditions`,
+      '/assignment/rules/:id/pool': `/assignment/rules/${orgA.assignmentRuleId}/pool`,
     };
 
     // An unmapped parameter would test nothing meaningful, so it is reported instead.
@@ -533,6 +605,36 @@ function bodyFor(
       return { channel: 'manual' };
     case '/leads/:id/restore':
       return {};
+    // Phase 2 — duplicates and assignment
+    case '/duplicates/:id/dismiss':
+    case '/duplicates/merges/:id/undo':
+      return {};
+    case '/duplicates/rules':
+      return { name: `Swept rule ${SUFFIX}`, matchOn: [['phoneE164']] };
+    case '/duplicates/rules/:id':
+      return { name: `Swept rule ${SUFFIX}` };
+    case '/duplicates/merge':
+      return { survivingLeadId: target.leadId, mergedLeadId: target.leadId };
+    case '/duplicates/test':
+      return { lead: { phoneE164: '+919800000000' } };
+    case '/assignment/rules':
+      return {
+        name: `Swept assignment ${SUFFIX}`,
+        strategy: 'specific_user',
+        target: { userId: target.userId },
+      };
+    case '/assignment/rules/:id':
+      return { name: `Swept assignment ${SUFFIX}` };
+    case '/assignment/rules/:id/conditions':
+      return { conditions: [] };
+    case '/assignment/rules/:id/pool':
+      return { pool: [{ userId: target.userId }] };
+    case '/assignment/test':
+      return { lead: { city: 'Swept' } };
+    case '/assignment/evaluate':
+      return { leadIds: [target.leadId] };
+    case '/assignment/reassign':
+      return { leadIds: [target.leadId], assignedUserId: target.userId };
     case '/auth/switch-org':
       return { organizationId: target.organizationId };
     case '/auth/mfa/confirm':

@@ -57,6 +57,13 @@ pnpm --filter @leados/db test:int  # isolation suite (needs DATABASE_URL_TEST)
 6. Add the model name to `TENANT_MODELS` in `src/tenant-models.ts`.
    _Forgetting this is caught by `registry-check` in CI, not by review._
 7. `pnpm db:migrate && pnpm db:generate`, then extend the isolation suite.
+8. **Read the generated SQL before applying it.** `prisma migrate diff` proposes dropping every
+   object it cannot see in `schema.prisma` — partitioning, three-column foreign keys, GIN and
+   expression indexes, partial unique indexes, triggers, checks. Delete those drops.
+9. **List any hand-written object you add in `src/schema-objects.int-spec.ts`.** That suite asserts
+   each one exists against a real database, and it is the only thing that stops step 8 being
+   forgotten once. An object missing from it will be removed by some later migration with every
+   test still green.
 
 ## Gotcha: Prisma promises are lazy
 

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import {
   InvitationExpiryProcessor,
   ActivityPartitionProcessor,
+  LeadRecycleProcessor,
   OutboxReapProcessor,
   SessionPruneProcessor,
   TrialCheckProcessor,
@@ -18,6 +19,7 @@ import {
     TrialCheckProcessor,
     OutboxReapProcessor,
     ActivityPartitionProcessor,
+    LeadRecycleProcessor,
   ],
   exports: [
     SessionPruneProcessor,
@@ -25,6 +27,7 @@ import {
     TrialCheckProcessor,
     OutboxReapProcessor,
     ActivityPartitionProcessor,
+    LeadRecycleProcessor,
   ],
 })
 export class MaintenanceModule {}

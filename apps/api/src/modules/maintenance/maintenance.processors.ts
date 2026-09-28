@@ -254,3 +254,127 @@ export class ActivityPartitionProcessor implements JobProcessor {
     });
   }
 }
+
+/**
+ * Lead recycling (`FR-ASG-7`).
+ *
+ * A lead assigned to somebody who then did nothing with it for weeks is worse than an unassigned
+ * one: it looks handled. This returns such leads to the pool so they show up in the "nobody is
+ * working this" view a manager actually checks.
+ *
+ * Two deliberate restraints:
+ *
+ *  * **Only open leads, and only assigned ones.** A won or lost lead is finished; an unassigned one
+ *    is already in the pool.
+ *  * **It unassigns, it does not reassign.** Handing a stale lead straight to somebody else would
+ *    start the same clock again without anybody deciding to. The pool plus a manager notification is
+ *    the honest outcome; re-running the assignment rules is then one explicit call away.
+ *
+ * The threshold lives in the organization's settings (`settings.leadRecycleDays`) rather than in
+ * code, because how long is "too long" differs between selling flats and selling tuition. Absent or
+ * zero means the tenant has not asked for recycling, and nothing happens.
+ */
+const RECYCLE_BATCH = 200;
+
+@Injectable()
+export class LeadRecycleProcessor implements JobProcessor {
+  readonly queue = QUEUES.MAINTENANCE;
+  readonly jobName = JOBS.LEAD_RECYCLE;
+
+  constructor(
+    private readonly db: DbService,
+    @Inject(LOGGER) private readonly logger: Logger,
+  ) {}
+
+  async process(_payload: JobPayload, _job: Job): Promise<void> {
+    await withPlatformScope('maintenance: recycle stale leads', async () => {
+      const organizations = await this.db.client.organization.findMany({
+        where: { deletedAt: null, status: { in: ['active', 'trialing'] } },
+        select: { id: true, settings: true },
+      });
+
+      for (const organization of organizations) {
+        const settings = (organization.settings ?? {}) as Record<string, unknown>;
+        const days = Number(settings['leadRecycleDays'] ?? 0);
+        // Not configured is not a default of "30 days": silently unassigning a tenant's leads
+        // because they never opted in would be a support call, not a feature.
+        if (!Number.isFinite(days) || days < 1) continue;
+
+        const cutoff = new Date(Date.now() - days * 86_400_000);
+        const stale = await this.db.client.lead.findMany({
+          where: {
+            organizationId: organization.id,
+            deletedAt: null,
+            mergedIntoId: null,
+            assignedUserId: { not: null },
+            status: { category: 'open' },
+            OR: [
+              { lastActivityAt: { lt: cutoff } },
+              { lastActivityAt: null, createdAt: { lt: cutoff } },
+            ],
+          },
+          select: { id: true, assignedUserId: true, fullName: true, lastActivityAt: true },
+          take: RECYCLE_BATCH,
+        });
+        if (stale.length === 0) continue;
+
+        for (const lead of stale) {
+          await this.db.client.$transaction(async (tx) => {
+            await tx.lead.update({
+              where: { id: lead.id },
+              data: { assignedUserId: null, lastActivityAt: new Date() },
+            });
+            await tx.leadAssignment.create({
+              data: {
+                id: newId(),
+                organizationId: organization.id,
+                leadId: lead.id,
+                fromUserId: lead.assignedUserId,
+                toUserId: null,
+                reason: `recycled after ${days} days without activity`,
+              },
+            });
+            await tx.activity.create({
+              data: {
+                id: newId(),
+                organizationId: organization.id,
+                leadId: lead.id,
+                type: 'lead.recycled',
+                actorType: 'system',
+                actorLabel: 'lead recycling',
+                occurredAt: new Date(),
+                payload: {
+                  fromUserId: lead.assignedUserId,
+                  idleDays: days,
+                  lastActivityAt: lead.lastActivityAt?.toISOString() ?? null,
+                } as never,
+              },
+            });
+            await tx.outboxEvent.create({
+              data: {
+                id: newId(),
+                organizationId: organization.id,
+                eventId: newId(),
+                eventName: 'lead.unassigned_pool',
+                aggregateType: 'lead',
+                aggregateId: lead.id,
+                actorType: 'system',
+                payload: {
+                  leadId: lead.id,
+                  fullName: lead.fullName,
+                  ruleName: null,
+                  explanation: `Recycled after ${days} days without activity.`,
+                } as never,
+              },
+            });
+          });
+        }
+
+        this.logger.info(
+          { organizationId: organization.id, recycled: stale.length, idleDays: days },
+          'recycled stale leads back to the unassigned pool',
+        );
+      }
+    });
+  }
+}

@@ -124,6 +124,40 @@ enum AvailabilityState {
   @@map("availability_state")
 }
 
+/// What a duplicate rule does when it matches (`FR-DUP-2`).
+enum DuplicateAction {
+  /// The default, and the one that preserves attribution: no new lead, a touchpoint on the existing.
+  attach_to_existing
+  /// Create the lead but link it, so a human decides.
+  create_and_link
+  /// Refuse the capture outright. For rules a business is certain about.
+  reject
+  /// Matched, but deliberately allowed through.
+  create_new
+
+  @@map("duplicate_action")
+}
+
+enum DuplicateStatus {
+  open
+  merged
+  dismissed
+
+  @@map("duplicate_status")
+}
+
+/// How an assignment rule picks someone (`FR-ASG-3`).
+enum AssignmentStrategy {
+  specific_user
+  team
+  round_robin
+  weighted_round_robin
+  least_open_leads
+  top_performer
+
+  @@map("assignment_strategy")
+}
+
 enum LeadStatusCategory {
   open
   won
@@ -501,22 +535,29 @@ model Organization {
   availability            UserAvailability[]
 
   // Phase 2 — CRM core
-  customFieldSections    CustomFieldSection[]
-  customFieldDefinitions CustomFieldDefinition[]
-  customFieldOptions     CustomFieldOption[]
-  leadStatuses           LeadStatus[]
-  leadSources            LeadSource[]
-  lostReasons            LostReason[]
-  tags                   Tag[]
-  leadTags               LeadTag[]
-  pipelines              Pipeline[]
-  pipelineStages         PipelineStage[]
-  leads                  Lead[]
-  leadTouchpoints        LeadTouchpoint[]
-  leadAssignments        LeadAssignment[]
-  leadStatusHistory      LeadStatusHistory[]
-  leadStageHistory       LeadStageHistory[]
-  activities             Activity[]
+  customFieldSections      CustomFieldSection[]
+  customFieldDefinitions   CustomFieldDefinition[]
+  customFieldOptions       CustomFieldOption[]
+  leadStatuses             LeadStatus[]
+  leadSources              LeadSource[]
+  lostReasons              LostReason[]
+  tags                     Tag[]
+  leadTags                 LeadTag[]
+  pipelines                Pipeline[]
+  pipelineStages           PipelineStage[]
+  leads                    Lead[]
+  leadTouchpoints          LeadTouchpoint[]
+  leadAssignments          LeadAssignment[]
+  leadStatusHistory        LeadStatusHistory[]
+  leadStageHistory         LeadStageHistory[]
+  activities               Activity[]
+  duplicateRules           DuplicateRule[]
+  leadDuplicates           LeadDuplicate[]
+  leadMerges               LeadMerge[]
+  assignmentRules          AssignmentRule[]
+  assignmentRuleConditions AssignmentRuleCondition[]
+  assignmentPoolMembers    AssignmentPoolMember[]
+  roundRobinStates         RoundRobinState[]
 
   @@index([status])
   @@index([createdAt])
@@ -617,6 +658,7 @@ model Membership {
   availability            UserAvailability[]
   workingHours            WorkingHours[]
   assignedLeads           Lead[]                   @relation("lead_assignee")
+  assignmentPools         AssignmentPoolMember[]
 
   @@unique([organizationId, id], name: "membership_tenant_key")
   @@unique([organizationId, userId])
@@ -1285,6 +1327,12 @@ model Lead {
   consentEmail    Boolean @default(false) @map("consent_email")
   consentCalls    Boolean @default(false) @map("consent_calls")
 
+  /// Set when this lead was created despite matching an existing one (`create_and_link`).
+  isDuplicateOfId String? @map("is_duplicate_of_id") @db.Uuid
+  /// Set when this lead was absorbed by a merge. A merged lead is soft-deleted, not destroyed,
+  /// which is what makes the merge reversible.
+  mergedIntoId    String? @map("merged_into_id") @db.Uuid
+
   createdById String?   @map("created_by_id") @db.Uuid
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -1302,11 +1350,20 @@ model Lead {
   source       LeadSource?   @relation(fields: [organizationId, leadSourceId], references: [organizationId, id], onDelete: Restrict, map: "leads_source_same_org_fk")
   lostReason   LostReason?   @relation(fields: [organizationId, lostReasonId], references: [organizationId, id], onDelete: Restrict, map: "leads_lost_reason_same_org_fk")
 
-  tags          LeadTag[]
-  touchpoints   LeadTouchpoint[]
-  assignments   LeadAssignment[]
-  statusHistory LeadStatusHistory[]
-  stageHistory  LeadStageHistory[]
+  isDuplicateOf    Lead?  @relation("lead_duplicate_pointer", fields: [organizationId, isDuplicateOfId], references: [organizationId, id], onDelete: Restrict, map: "leads_duplicate_of_same_org_fk")
+  duplicatesOfThis Lead[] @relation("lead_duplicate_pointer")
+  mergedInto       Lead?  @relation("lead_merge_pointer", fields: [organizationId, mergedIntoId], references: [organizationId, id], onDelete: Restrict, map: "leads_merged_into_same_org_fk")
+  mergedFromThis   Lead[] @relation("lead_merge_pointer")
+
+  tags                 LeadTag[]
+  touchpoints          LeadTouchpoint[]
+  assignments          LeadAssignment[]
+  statusHistory        LeadStatusHistory[]
+  stageHistory         LeadStageHistory[]
+  duplicateOf          LeadDuplicate[]     @relation("duplicate_of")
+  duplicateCandidateOf LeadDuplicate[]     @relation("duplicate_candidate")
+  mergesAsSurvivor     LeadMerge[]         @relation("merge_survivor")
+  mergesAsAbsorbed     LeadMerge[]         @relation("merge_absorbed")
 
   @@unique([organizationId, id], name: "lead_tenant_key")
   /// The default list.
@@ -1469,4 +1526,200 @@ model Activity {
   @@index([organizationId, type, occurredAt(sort: Desc)])
   @@index([organizationId, actorId, occurredAt(sort: Desc)])
   @@map("activities")
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// PHASE 2, STEP 2 — DUPLICATES AND ASSIGNMENT
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// How this organization decides two captures are the same person (`FR-DUP-1`).
+///
+/// `matchOn` is a list of field sets: `[["phoneE164"], ["email", "lastName"]]` means "same phone, OR
+/// same email and surname". A list of sets rather than a single expression because that is how a
+/// business describes it — "the phone, or the email plus the name" — and because each set can then be
+/// indexed independently.
+model DuplicateRule {
+  id             String          @id @db.Uuid
+  organizationId String          @map("organization_id") @db.Uuid
+  name           String
+  /// Array of arrays of field names. Validated against the known matchable fields on write.
+  matchOn        Json            @map("match_on") @db.JsonB
+  /// How far back to look. A phone reused after three years is usually a different enquiry.
+  lookbackDays   Int             @default(365) @map("lookback_days")
+  action         DuplicateAction @default(attach_to_existing)
+  /// Lower runs first. The first rule that matches decides.
+  priority       Int             @default(0)
+  isActive       Boolean         @default(true) @map("is_active")
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt      DateTime?       @map("deleted_at") @db.Timestamptz(6)
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  detections   LeadDuplicate[]
+
+  @@unique([organizationId, id], name: "duplicate_rule_tenant_key")
+  @@unique([organizationId, name])
+  @@index([organizationId, isActive, priority])
+  @@map("duplicate_rules")
+}
+
+/// A detected pair, awaiting a human decision.
+///
+/// `leadId` is the **existing** lead and `duplicateLeadId` the newer one, so "show me this lead's
+/// suspected duplicates" is one indexed lookup from either side.
+model LeadDuplicate {
+  id              String          @id @db.Uuid
+  organizationId  String          @map("organization_id") @db.Uuid
+  leadId          String          @map("lead_id") @db.Uuid
+  duplicateLeadId String          @map("duplicate_lead_id") @db.Uuid
+  ruleId          String?         @map("rule_id") @db.Uuid
+  /// Which fields actually matched, and with what values — so a person can see *why*.
+  matchFields     Json            @default("{}") @map("match_fields") @db.JsonB
+  /// 0–100. Derived from how many and which fields matched, not from a model.
+  confidence      Int             @default(100)
+  status          DuplicateStatus @default(open)
+  resolvedById    String?         @map("resolved_by_id") @db.Uuid
+  resolvedAt      DateTime?       @map("resolved_at") @db.Timestamptz(6)
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization  Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lead          Lead           @relation("duplicate_of", fields: [organizationId, leadId], references: [organizationId, id], onDelete: Cascade, map: "lead_duplicates_lead_same_org_fk")
+  duplicateLead Lead           @relation("duplicate_candidate", fields: [organizationId, duplicateLeadId], references: [organizationId, id], onDelete: Cascade, map: "lead_duplicates_candidate_same_org_fk")
+  rule          DuplicateRule? @relation(fields: [organizationId, ruleId], references: [organizationId, id], onDelete: Restrict, map: "lead_duplicates_rule_same_org_fk")
+
+  @@unique([organizationId, id], name: "lead_duplicate_tenant_key")
+  /// One open pair per direction; re-detecting the same pair must not pile up rows.
+  @@unique([organizationId, leadId, duplicateLeadId])
+  @@index([organizationId, status, createdAt])
+  @@index([organizationId, duplicateLeadId])
+  @@map("lead_duplicates")
+}
+
+/// A merge, with everything needed to undo it (`FR-DUP-4`).
+///
+/// `snapshot` holds the merged lead's own column values *before* the merge, plus the ids of every
+/// child row that was moved. That is what makes reversal possible without a second copy of the data:
+/// undo puts the columns back and moves the listed children home.
+model LeadMerge {
+  id              String    @id @db.Uuid
+  organizationId  String    @map("organization_id") @db.Uuid
+  survivingLeadId String    @map("surviving_lead_id") @db.Uuid
+  mergedLeadId    String    @map("merged_lead_id") @db.Uuid
+  /// Which side won each conflicting field, as chosen by the person merging.
+  fieldChoices    Json      @default("{}") @map("field_choices") @db.JsonB
+  snapshot        Json      @default("{}") @db.JsonB
+  performedById   String?   @map("performed_by_id") @db.Uuid
+  undoneAt        DateTime? @map("undone_at") @db.Timestamptz(6)
+  undoneById      String?   @map("undone_by_id") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization  Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  survivingLead Lead         @relation("merge_survivor", fields: [organizationId, survivingLeadId], references: [organizationId, id], onDelete: Restrict, map: "lead_merges_survivor_same_org_fk")
+  mergedLead    Lead         @relation("merge_absorbed", fields: [organizationId, mergedLeadId], references: [organizationId, id], onDelete: Restrict, map: "lead_merges_absorbed_same_org_fk")
+
+  @@unique([organizationId, id], name: "lead_merge_tenant_key")
+  /// A lead can only be absorbed once while the merge stands; the partial index in the migration
+  /// allows a fresh merge after an undo.
+  @@index([organizationId, mergedLeadId])
+  @@index([organizationId, survivingLeadId, createdAt])
+  @@map("lead_merges")
+}
+
+/// An ordered rule that decides who a new lead goes to (`FR-ASG-1`).
+model AssignmentRule {
+  id                  String             @id @db.Uuid
+  organizationId      String             @map("organization_id") @db.Uuid
+  name                String
+  /// Lower runs first. The first rule whose conditions match is the one that assigns.
+  priority            Int                @default(0)
+  strategy            AssignmentStrategy
+  /// Strategy-specific target: `{ userId }`, `{ teamId }`, `{ branchId }`. The pool for the
+  /// round-robin strategies lives in `assignment_pool_members` instead, because it has per-member data.
+  target              Json               @default("{}") @db.JsonB
+  /// Skip anyone outside their working hours, on holiday, or on leave (`FR-ASG-4`).
+  respectWorkingHours Boolean            @default(true) @map("respect_working_hours")
+  /// Maximum open leads one person may hold under this rule. NULL means no cap.
+  capacityCap         Int?               @map("capacity_cap")
+  /// What happens when nobody is eligible: `{ mode: 'unassigned_pool' | 'user' | 'team', … }`.
+  /// Never silent — the service raises a manager notification either way.
+  fallback            Json               @default("{}") @db.JsonB
+  isActive            Boolean            @default(true) @map("is_active")
+  createdAt           DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt           DateTime?          @map("deleted_at") @db.Timestamptz(6)
+
+  organization    Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  conditions      AssignmentRuleCondition[]
+  poolMembers     AssignmentPoolMember[]
+  roundRobinState RoundRobinState?
+
+  @@unique([organizationId, id], name: "assignment_rule_tenant_key")
+  @@unique([organizationId, name])
+  @@index([organizationId, isActive, priority])
+  @@map("assignment_rules")
+}
+
+/// One condition on a rule. AND within a `groupIndex`, OR across groups (`FR-ASG-2`) — which is
+/// enough to express everything a business asks for without a nested expression tree.
+model AssignmentRuleCondition {
+  id             String   @id @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  ruleId         String   @map("rule_id") @db.Uuid
+  /// A lead column (`city`), a custom field (`custom.budget`) or a clock field (`time.hour`).
+  fieldPath      String   @map("field_path")
+  operator       String
+  value          Json     @default("null") @db.JsonB
+  groupIndex     Int      @default(0) @map("group_index")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  rule         AssignmentRule @relation(fields: [organizationId, ruleId], references: [organizationId, id], onDelete: Cascade, map: "assignment_rule_conditions_rule_same_org_fk")
+
+  @@unique([organizationId, id], name: "assignment_rule_condition_tenant_key")
+  @@index([organizationId, ruleId, groupIndex])
+  @@map("assignment_rule_conditions")
+}
+
+/// Who is in a round-robin pool, and how heavily they are weighted.
+model AssignmentPoolMember {
+  id             String   @id @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  ruleId         String   @map("rule_id") @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  /// Weighted round-robin: a weight of 3 takes three turns to another's one.
+  weight         Int      @default(1)
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  rule         AssignmentRule @relation(fields: [organizationId, ruleId], references: [organizationId, id], onDelete: Cascade, map: "assignment_pool_members_rule_same_org_fk")
+  membership   Membership     @relation(fields: [organizationId, userId], references: [organizationId, userId], onDelete: Cascade, map: "assignment_pool_members_membership_same_org_fk")
+
+  @@unique([organizationId, id], name: "assignment_pool_member_tenant_key")
+  @@unique([organizationId, ruleId, userId])
+  @@index([organizationId, userId])
+  @@map("assignment_pool_members")
+}
+
+/// Where a round-robin got to. **The durable truth**; Redis is only the fast path.
+///
+/// One row per rule, updated inside the assigning transaction, so two simultaneous captures cannot
+/// both take the same turn — the row lock serialises them. A Redis counter alone would drift the
+/// first time the cache was flushed, and "fairness" that resets on a deploy is not fairness.
+model RoundRobinState {
+  id                 String   @id @db.Uuid
+  organizationId     String   @map("organization_id") @db.Uuid
+  ruleId             String   @map("rule_id") @db.Uuid
+  cursorIndex        Int      @default(0) @map("cursor_index")
+  lastAssignedUserId String?  @map("last_assigned_user_id") @db.Uuid
+  /// Weighted round-robin: how many turns the current member has already taken.
+  weightConsumed     Int      @default(0) @map("weight_consumed")
+  updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  rule         AssignmentRule @relation(fields: [organizationId, ruleId], references: [organizationId, id], onDelete: Cascade, map: "round_robin_state_rule_same_org_fk")
+
+  @@unique([organizationId, id], name: "round_robin_state_tenant_key")
+  @@unique([organizationId, ruleId])
+  @@map("round_robin_state")
 }

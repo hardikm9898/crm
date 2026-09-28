@@ -184,6 +184,76 @@ tables do not exist yet (`customer_id`, `campaign_id`, `next_action_task_id`, th
 nothing can trust. The expression-index job behind `is_indexed` is not built; filterable-but-unindexed
 fields work through the GIN index today and it arrives with the filter DSL.
 
+### Step 2 — duplicates and assignment ✅ _(landed 2026-09-28)_
+
+Two decisions a business would otherwise make by hand on every lead: is this somebody we already
+know, and whose is it.
+
+- **Duplicate rules as a list of field sets.** `[["phoneE164"], ["email", "lastName"]]` reads "the
+  same phone, **or** the same email and surname" — how a business states it out loud, and each set
+  maps to one indexed lookup. `validateMatchOn` refuses a set that could not discriminate
+  (`["city"]`, `["firstName", "city"]`): such a rule passes any schema check and then quietly groups
+  strangers, which is the one duplicate failure a business cannot undo. The phone columns are
+  **aliases of each other** in the field registry, so a number that arrives as WhatsApp matches a
+  lead whose form capture put it in `phone_e164` — without which every WhatsApp conversation in
+  Phase 5 would create a second record for a person already in the database.
+- **Detection is two stages that must agree**: a narrow identifier-only candidate query (indexed
+  columns plus the lookback, capped at 50) and then exact comparison in memory through the _same
+  pure matcher the rule tester uses_. Rules run in priority order and the first match decides, not
+  the strongest — a business that puts `reject` above `attach_to_existing` meant it.
+- **Four actions, of which one cannot lose information.** `attach_to_existing` (the provisioned
+  default) appends a touchpoint, enriches blanks **without ever overwriting an answer**, widens
+  consent but never narrows it, and writes two timeline entries; `create_and_link` queues the pair
+  for a person; `reject` refuses with `409` and names the existing lead; `create_new` records the
+  detection and does nothing else.
+- **Merge is undoable, and that is a schema property.** A merge moves activities by their full
+  composite key, renumbers touchpoints onto the survivor's sequence, drops what would become
+  redundant, soft-deletes the absorbed lead and snapshots every survivor column it overwrote.
+  `lead_merges_one_standing_per_merged_lead` is a **partial** unique index (`WHERE undone_at IS
+NULL`), so a lead can be merged, restored and merged again — a plain unique index would have made
+  the second merge impossible, which nobody discovers until a user tries it.
+- **An assignment engine that shows its working.** Six strategies; conditions that are AND within a
+  group and OR across groups; eligibility with four **named** reasons (not a member, outside working
+  hours or a branch holiday, on leave or away, at the capacity cap) evaluated in the organization's
+  timezone. `decide()` returns the rule, every candidate with its reason, a verdict per rule
+  evaluated and one sentence a person can read; `POST /assignment/test` renders that decision and
+  writes nothing, with `at` overriding the clock so out-of-hours behaviour is checkable at 11am.
+- **Round-robin fairness is durable and does not punish absence.** The cursor lives in
+  `round_robin_state` and is written inside the assigning transaction, so the row lock serialises
+  two simultaneous captures. The rotation runs over the pool **as configured** rather than the
+  eligible subset, so a skipped member keeps their turn for when they come back.
+- **The 9pm lead has somewhere to go.** Every rule carries a fallback; a fallback to a named person
+  deliberately ignores working hours (one that could fall back to nobody defeats the point); ending
+  up unassigned **always** notifies, through the outbox, to whoever holds `lead:assign` — resolved by
+  permission, never by role name. `maintenance.lead-recycle` returns an untouched lead to the pool
+  rather than reassigning it, because the engine decides who gets it, and an absent
+  `settings.leadRecycleDays` means no recycling rather than a silent default.
+- **7 new tables**, 11 new composite foreign keys including two self-referential ones on `leads`,
+  and one to `memberships(organization_id, user_id)` so a pool member's _membership_, not merely
+  their user row, is the thing referenced.
+
+**584 tests green** (272 unit, 312 integration). **116 routes**, up from 95 (13 public, 13 exempt,
+90 permission-gated); the generated cross-tenant sweep covers all 21 new routes, including the six
+parameterised paths, aiming at a duplicate pair, a merge and rules that really exist. The surface was then
+exercised over HTTP against the built artifact — 122 checks across four scripts, including a
+three-person rotation splitting nine leads exactly 3/3/3 in pool order, a 3:1 weighting producing
+6-vs-2, and a stranded lead producing a real `lead.unassigned_pool` notification through the outbox.
+
+**One regression was found and fixed in the process, and it matters more than the features.**
+`prisma migrate diff` generated this step's migration with six `DROP` statements at the top of it —
+the composite FK that makes "a lead in another pipeline's stage" unrepresentable, its supporting
+unique index, and the four GIN and trigram indexes behind lead search. Prisma cannot express any of
+them in `schema.prisma`, so it sees them in the database, does not see them in the schema, and
+removes them. They were applied. Nothing failed: search still returned rows (sequentially), and the
+corruption the FK prevents simply became possible again. `schema-objects.int-spec.ts` now asserts
+every hand-written index, constraint, function and trigger exists, so the next generated migration
+that proposes one of these deletions fails a test instead of landing.
+
+**Deferred, and why:** scoring, the filter DSL and saved views, import/export, bulk actions,
+customers, deals and the lead UI remain later steps. The duplicates and assignment **screens** are
+not built — both surfaces are complete and tested over HTTP, and the UI arrives with the lead
+list and detail work, since a merge screen without a lead detail page has nowhere to live.
+
 **Exit criteria**
 
 - Creating a custom field of every supported type requires **no migration and no deploy**, and that

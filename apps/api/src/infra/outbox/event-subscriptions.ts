@@ -26,10 +26,23 @@ export const EVENT_SUBSCRIPTIONS: Readonly<Record<string, readonly EventSubscrip
   // so a typo in an event name shows up as "unsubscribed" rather than silently doing nothing.
   'invitation.accepted': [{ queue: QUEUES.NOTIFICATIONS, jobName: JOBS.NOTIFY_MEMBER_JOINED }],
   'trial.expired': [{ queue: QUEUES.NOTIFICATIONS, jobName: JOBS.NOTIFY_TRIAL_EXPIRED }],
+  // A lead nobody picked up is the most expensive silent failure in the product, so it has its own
+  // event rather than being inferred from `lead.assigned` with a null (`FR-ASG-4`).
+  'lead.unassigned_pool': [{ queue: QUEUES.NOTIFICATIONS, jobName: JOBS.NOTIFY_LEAD_UNASSIGNED }],
   // Recorded but not yet consumed. Listed explicitly so the set of known events is visible, and so
   // a typo in an event name shows up as "unsubscribed" rather than silently doing nothing.
   'organization.created': [],
   'onboarding.completed': [],
+  'lead.created': [],
+  'lead.updated': [],
+  'lead.deleted': [],
+  'lead.assigned': [],
+  'lead.status_changed': [],
+  'lead.stage_changed': [],
+  'lead.merged': [],
+  'lead.merge_undone': [],
+  'lead.touchpoint_added': [],
+  'lead.recycled': [],
 };
 
 export function subscribersFor(eventName: string): readonly EventSubscription[] {

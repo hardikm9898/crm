@@ -1,0 +1,155 @@
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createHarness, type TestHarness } from './testing/fixtures.js';
+
+/**
+ * THE HAND-WRITTEN SCHEMA OBJECTS SUITE.
+ *
+ * Everything asserted here exists in the database and **cannot be expressed in
+ * `schema.prisma`**: partitioning, composite foreign keys that span three columns, expression and
+ * GIN indexes, partial unique indexes, triggers, check constraints. Prisma therefore sees each one
+ * as something that is in the database but not in the schema, and `prisma migrate diff` proposes
+ * deleting it — which is exactly what happened when this file did not exist. The step-2 migration
+ * was generated with six DROPs at the top of it, they were applied, and the guarantee that a lead
+ * cannot sit in another pipeline's stage was gone for a day without a single test noticing.
+ *
+ * So this suite is not about behaviour. It is the answer to "did the last generated migration
+ * quietly delete a guarantee", and it must be read whenever a migration is generated.
+ */
+
+let h: TestHarness;
+
+beforeAll(async () => {
+  h = await createHarness();
+});
+
+afterAll(async () => {
+  await h?.dispose();
+});
+
+async function indexExists(name: string): Promise<boolean> {
+  const rows = await h.unscoped.$queryRaw<
+    { count: bigint }[]
+  >`SELECT count(*) AS count FROM pg_indexes WHERE indexname = ${name}`;
+  return Number(rows[0]?.count ?? 0) > 0;
+}
+
+async function constraintExists(name: string): Promise<boolean> {
+  const rows = await h.unscoped.$queryRaw<
+    { count: bigint }[]
+  >`SELECT count(*) AS count FROM pg_constraint WHERE conname = ${name}`;
+  return Number(rows[0]?.count ?? 0) > 0;
+}
+
+/** Indexes Prisma has no syntax for, and therefore proposes dropping on every diff. */
+const REQUIRED_INDEXES = [
+  // Search (docs/database-design.md §15).
+  'leads_search_vector_gin',
+  'leads_custom_values_gin',
+  'leads_phone_e164_trgm',
+  'leads_full_name_trgm',
+  'leads_email_trgm',
+  // The support index for the three-column FK below. Dropping it drops the FK with it.
+  'pipeline_stages_pipeline_scoped_key',
+  // Partial indexes: the questions managers actually ask, and the uniqueness rules that only
+  // apply to live rows.
+  'leads_no_next_action',
+  'leads_unassigned',
+  'leads_email_lower',
+  'leads_open_per_assignee',
+  'lead_statuses_one_default_per_org',
+  'pipelines_one_default_per_org_entity',
+  'lead_duplicates_open',
+  'lead_merges_undoable',
+  'lead_merges_one_standing_per_merged_lead',
+];
+
+/**
+ * Constraints that encode a guarantee no application check can give, either because they are
+ * composite across three columns or because they are checks.
+ */
+const REQUIRED_CONSTRAINTS = [
+  // "A lead in another pipeline's stage" is unrepresentable. This is the one that was lost.
+  'leads_stage_in_pipeline_fk',
+  // Value objects.
+  'leads_currency_format',
+  'leads_value_needs_currency',
+  'leads_phone_e164_format',
+  'leads_whatsapp_e164_format',
+  'leads_full_name_present',
+  'leads_score_range',
+  // Duplicates and assignment.
+  'leads_not_own_duplicate',
+  'leads_not_own_merge_target',
+  'lead_duplicates_distinct_pair',
+  'lead_duplicates_confidence_range',
+  'duplicate_rules_match_on_not_empty',
+  'duplicate_rules_lookback_positive',
+  'lead_merges_distinct_pair',
+  'assignment_pool_members_weight_positive',
+  'round_robin_state_cursor_non_negative',
+  // The self-referential composite FKs on `leads`.
+  'leads_duplicate_of_same_org_fk',
+  'leads_merged_into_same_org_fk',
+  // The composite FK that makes a pool member's membership, not merely their user row, the thing
+  // being referenced.
+  'assignment_pool_members_membership_same_org_fk',
+];
+
+describe('hand-written indexes survive every generated migration', () => {
+  it.each(REQUIRED_INDEXES)('%s exists', async (name) => {
+    expect(
+      await indexExists(name),
+      `${name} is missing. A generated migration probably dropped it — see the note at the top of ` +
+        'the newest migration.',
+    ).toBe(true);
+  });
+});
+
+describe('hand-written constraints survive every generated migration', () => {
+  it.each(REQUIRED_CONSTRAINTS)('%s exists', async (name) => {
+    expect(await constraintExists(name), `${name} is missing`).toBe(true);
+  });
+});
+
+describe('the objects Prisma cannot describe at all', () => {
+  it('keeps activities partitioned by range, with a default partition', async () => {
+    const rows = await h.unscoped.$queryRaw<
+      { partition_strategy: string | null; partitions: bigint }[]
+    >`
+      SELECT (SELECT partstrat::text FROM pg_partitioned_table WHERE partrelid = 'activities'::regclass)
+               AS partition_strategy,
+             (SELECT count(*) FROM pg_inherits WHERE inhparent = 'activities'::regclass)
+               AS partitions
+    `;
+    // 'r' is RANGE. A table that stopped being partitioned would still answer every query.
+    expect(rows[0]?.partition_strategy).toBe('r');
+    expect(Number(rows[0]?.partitions ?? 0)).toBeGreaterThan(1);
+  });
+
+  it('keeps the default partition, without which a stranded month becomes an error', async () => {
+    expect(await indexExists('activities_default_pkey')).toBe(true);
+  });
+
+  it('keeps the partition-creating function the maintenance job calls', async () => {
+    const rows = await h.unscoped.$queryRaw<
+      { count: bigint }[]
+    >`SELECT count(*) AS count FROM pg_proc WHERE proname = 'ensure_activity_partition'`;
+    expect(Number(rows[0]?.count ?? 0)).toBe(1);
+  });
+
+  it('keeps the search-vector trigger, without which search silently returns nothing', async () => {
+    const rows = await h.unscoped.$queryRaw<{ count: bigint }[]>`
+      SELECT count(*) AS count FROM pg_trigger
+      WHERE tgrelid = 'leads'::regclass AND tgname = 'leads_search_vector_trg' AND NOT tgisinternal
+    `;
+    expect(Number(rows[0]?.count ?? 0)).toBe(1);
+  });
+
+  it('keeps the audit log append-only', async () => {
+    const rows = await h.unscoped.$queryRaw<{ count: bigint }[]>`
+      SELECT count(*) AS count FROM pg_trigger
+      WHERE tgrelid = 'audit_logs'::regclass AND NOT tgisinternal
+    `;
+    expect(Number(rows[0]?.count ?? 0)).toBeGreaterThan(0);
+  });
+});

@@ -92,6 +92,7 @@ export interface CrmDefaultsResult {
   readonly pipelineId: string;
   readonly firstStageId: string;
   readonly sourceIdsByName: ReadonlyMap<string, string>;
+  readonly duplicateRuleId: string;
 }
 
 /**
@@ -183,13 +184,79 @@ export async function seedCrmDefaults(
     });
   }
 
+  // One duplicate rule, per docs/database-design.md §17: the same phone within a year is the same
+  // person, and the capture attaches to the existing lead rather than creating a second record.
+  // `attach_to_existing` is the default because it is the only action that cannot lose information:
+  // `reject` discards the new touchpoint, and `create_and_link` leaves work for a human.
+  const duplicateRuleId = newId();
+  await tx.duplicateRule.create({
+    data: {
+      id: duplicateRuleId,
+      organizationId,
+      name: 'Same phone number',
+      // One set, not two: the phone columns are aliases of each other in `MATCHABLE_FIELDS`, so
+      // this set already matches a number that arrived in either column on either side.
+      matchOn: [['phoneE164']],
+      lookbackDays: 365,
+      action: 'attach_to_existing',
+      priority: 0,
+    },
+  });
+
   const defaultStatusId = statusIds.get('New');
   const firstStageId = stageIds[0];
   /* c8 ignore next */
   if (!defaultStatusId || !firstStageId)
     throw new Error('CRM defaults are internally inconsistent');
 
-  return { defaultStatusId, pipelineId, firstStageId, sourceIdsByName };
+  return { defaultStatusId, pipelineId, firstStageId, sourceIdsByName, duplicateRuleId };
+}
+
+/**
+ * The starting assignment rule (`FR-ASG-3`, docs/database-design.md §17).
+ *
+ * Separate from `seedCrmDefaults` because it needs the team and its members, which provisioning
+ * creates in the same transaction but a bare CRM seed does not have. A round-robin over the default
+ * team, respecting working hours, falling back to the unassigned pool with a notification — which is
+ * the configuration that makes the fallback path exercised from day one rather than discovered in
+ * production at 9pm.
+ */
+export async function seedDefaultAssignmentRule(
+  tx: DbTransactionClient,
+  organizationId: string,
+  poolUserIds: readonly string[],
+): Promise<string | null> {
+  const existing = await tx.assignmentRule.findFirst({ where: { organizationId } });
+  if (existing) return null;
+  if (poolUserIds.length === 0) return null;
+
+  const ruleId = newId();
+  await tx.assignmentRule.create({
+    data: {
+      id: ruleId,
+      organizationId,
+      name: 'Round-robin to the sales team',
+      priority: 0,
+      strategy: 'round_robin',
+      target: {},
+      respectWorkingHours: true,
+      capacityCap: null,
+      fallback: { mode: 'unassigned_pool', notify: true },
+    },
+  });
+  await tx.assignmentPoolMember.createMany({
+    data: poolUserIds.map((userId) => ({
+      id: newId(),
+      organizationId,
+      ruleId,
+      userId,
+      weight: 1,
+      isActive: true,
+    })),
+  });
+  // No conditions: a rule that matches every lead is the right catch-all, and a tenant adds
+  // narrower rules at a lower priority above it.
+  return ruleId;
 }
 
 export const CRM_DEFAULT_SEEDS = {

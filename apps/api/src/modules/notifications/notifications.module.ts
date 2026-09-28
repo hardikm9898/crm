@@ -3,6 +3,7 @@ import { NotificationsController } from './notifications.controller.js';
 import {
   MemberJoinedNotificationProcessor,
   TrialExpiredNotificationProcessor,
+  UnassignedLeadNotificationProcessor,
 } from './notifications.processor.js';
 import { NotificationsService } from './notifications.service.js';
 
@@ -12,11 +13,13 @@ import { NotificationsService } from './notifications.service.js';
     NotificationsService,
     MemberJoinedNotificationProcessor,
     TrialExpiredNotificationProcessor,
+    UnassignedLeadNotificationProcessor,
   ],
   exports: [
     NotificationsService,
     MemberJoinedNotificationProcessor,
     TrialExpiredNotificationProcessor,
+    UnassignedLeadNotificationProcessor,
   ],
 })
 export class NotificationsModule {}

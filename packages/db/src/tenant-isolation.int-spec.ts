@@ -460,6 +460,236 @@ describe('layer 3 — the CRM core cannot reference across tenants either', () =
   });
 });
 
+describe('layer 3 — duplicates and assignment cannot reference across tenants either', () => {
+  /**
+   * The registry check catches an unregistered model; it cannot catch a missing composite FK. So
+   * every table added in Phase 2 step 2 gets its own attempt here, made with the UNSCOPED client,
+   * proving the database refuses what the extension would have refused anyway.
+   */
+  async function duplicateRuleFor(organizationId: string): Promise<string> {
+    const id = newId();
+    await h.unscoped.duplicateRule.create({
+      data: {
+        id,
+        organizationId,
+        name: `rule-${id.slice(0, 8)}`,
+        matchOn: [['phoneE164']] as never,
+      },
+    });
+    return id;
+  }
+
+  it('blocks a duplicate pair whose newer lead belongs to another tenant', async () => {
+    const ruleId = await duplicateRuleFor(h.orgA.organizationId);
+    await expect(
+      h.unscoped.leadDuplicate.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          leadId: h.orgA.leadId,
+          duplicateLeadId: h.orgB.leadId,
+          ruleId,
+          confidence: 90,
+        },
+      }),
+    ).rejects.toThrow(/lead_duplicates_candidate_same_org_fk|foreign key/i);
+    await h.unscoped.duplicateRule.delete({ where: { id: ruleId } });
+  });
+
+  it('blocks a duplicate pair scored by another tenant rule', async () => {
+    const ruleId = await duplicateRuleFor(h.orgB.organizationId);
+    await expect(
+      h.unscoped.leadDuplicate.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          leadId: h.orgA.leadId,
+          duplicateLeadId: h.orgA.leadId,
+          ruleId,
+          confidence: 90,
+        },
+      }),
+    ).rejects.toThrow(
+      /lead_duplicates_rule_same_org_fk|lead_duplicates_distinct_pair|foreign key/i,
+    );
+    await h.unscoped.duplicateRule.delete({ where: { id: ruleId } });
+  });
+
+  it('refuses to record a lead as a duplicate of itself', async () => {
+    // A self-pair is not a tenancy bug but it would make the triage queue nonsense, and the merge
+    // screen would offer someone the chance to merge a record into itself.
+    const ruleId = await duplicateRuleFor(h.orgA.organizationId);
+    await expect(
+      h.unscoped.leadDuplicate.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          leadId: h.orgA.leadId,
+          duplicateLeadId: h.orgA.leadId,
+          ruleId,
+          confidence: 50,
+        },
+      }),
+    ).rejects.toThrow(/lead_duplicates_distinct_pair/i);
+    await h.unscoped.duplicateRule.delete({ where: { id: ruleId } });
+  });
+
+  it('blocks a merge that absorbs another tenant lead', async () => {
+    await expect(
+      h.unscoped.leadMerge.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          survivingLeadId: h.orgA.leadId,
+          mergedLeadId: h.orgB.leadId,
+          performedById: h.orgA.userId,
+        },
+      }),
+    ).rejects.toThrow(/lead_merges_absorbed_same_org_fk|foreign key/i);
+  });
+
+  it('allows one standing merge per absorbed lead, and another only after an undo', async () => {
+    // The uniqueness is partial (`WHERE undone_at IS NULL`) so a lead that was merged, restored and
+    // merged again is representable — which a plain unique index would have made impossible.
+    const absorbedId = newId();
+    await h.unscoped.lead.create({
+      data: {
+        id: absorbedId,
+        organizationId: h.orgA.organizationId,
+        fullName: 'Absorbed twice',
+        statusId: h.orgA.statusId,
+        pipelineId: h.orgA.pipelineId,
+        stageId: h.orgA.stageId,
+      },
+    });
+    const firstMergeId = newId();
+    await h.unscoped.leadMerge.create({
+      data: {
+        id: firstMergeId,
+        organizationId: h.orgA.organizationId,
+        survivingLeadId: h.orgA.leadId,
+        mergedLeadId: absorbedId,
+        performedById: h.orgA.userId,
+      },
+    });
+
+    await expect(
+      h.unscoped.leadMerge.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          survivingLeadId: h.orgA.leadId,
+          mergedLeadId: absorbedId,
+          performedById: h.orgA.userId,
+        },
+      }),
+    ).rejects.toThrow(/lead_merges_one_standing_per_merged_lead|unique/i);
+
+    await h.unscoped.leadMerge.update({
+      where: { id: firstMergeId },
+      data: { undoneAt: new Date() },
+    });
+    const secondMergeId = newId();
+    await h.unscoped.leadMerge.create({
+      data: {
+        id: secondMergeId,
+        organizationId: h.orgA.organizationId,
+        survivingLeadId: h.orgA.leadId,
+        mergedLeadId: absorbedId,
+        performedById: h.orgA.userId,
+      },
+    });
+
+    await h.unscoped.leadMerge.deleteMany({ where: { mergedLeadId: absorbedId } });
+    await h.unscoped.lead.delete({ where: { id: absorbedId } });
+  });
+
+  it('blocks a pool member who is a member of another tenant', async () => {
+    const ruleId = newId();
+    await h.unscoped.assignmentRule.create({
+      data: {
+        id: ruleId,
+        organizationId: h.orgA.organizationId,
+        name: `pool-${ruleId.slice(0, 8)}`,
+        strategy: 'round_robin',
+      },
+    });
+    await expect(
+      h.unscoped.assignmentPoolMember.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          ruleId,
+          // The FK is to `memberships(organization_id, user_id)`, not to `users`: a person is only
+          // assignable where they are a member, which is the whole reason for that composite.
+          userId: h.orgB.userId,
+        },
+      }),
+    ).rejects.toThrow(/assignment_pool_members_membership_same_org_fk|foreign key/i);
+    await h.unscoped.assignmentRule.delete({ where: { id: ruleId } });
+  });
+
+  it('blocks a condition and a rotation cursor attached to another tenant rule', async () => {
+    const ruleId = newId();
+    await h.unscoped.assignmentRule.create({
+      data: {
+        id: ruleId,
+        organizationId: h.orgB.organizationId,
+        name: `orgb-${ruleId.slice(0, 8)}`,
+        strategy: 'round_robin',
+      },
+    });
+
+    await expect(
+      h.unscoped.assignmentRuleCondition.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          ruleId,
+          fieldPath: 'city',
+          operator: 'eq',
+          value: 'Pune' as never,
+        },
+      }),
+    ).rejects.toThrow(/assignment_rule_conditions_rule_same_org_fk|foreign key/i);
+
+    await expect(
+      h.unscoped.roundRobinState.create({
+        data: { id: newId(), organizationId: h.orgA.organizationId, ruleId },
+      }),
+    ).rejects.toThrow(/round_robin_state_rule_same_org_fk|foreign key/i);
+
+    await h.unscoped.assignmentRule.delete({ where: { id: ruleId } });
+  });
+
+  it('blocks a lead pointing at another tenant lead as its duplicate or merge target', async () => {
+    // Both are self-referential composite FKs on `leads`, which is the case easiest to get wrong:
+    // a plain FK to `leads(id)` would have allowed either.
+    await expect(
+      h.unscoped.lead.update({
+        where: { id: h.orgA.leadId },
+        data: { isDuplicateOfId: h.orgB.leadId },
+      }),
+    ).rejects.toThrow(/leads_duplicate_of_same_org_fk|foreign key/i);
+
+    await expect(
+      h.unscoped.lead.update({
+        where: { id: h.orgA.leadId },
+        data: { mergedIntoId: h.orgB.leadId },
+      }),
+    ).rejects.toThrow(/leads_merged_into_same_org_fk|foreign key/i);
+  });
+
+  it('refuses to point a lead at itself', async () => {
+    await expect(
+      h.unscoped.lead.update({
+        where: { id: h.orgA.leadId },
+        data: { mergedIntoId: h.orgA.leadId },
+      }),
+    ).rejects.toThrow(/leads_not_own_merge_target/i);
+  });
+});
+
 describe('layer 2 — the CRM models are scoped like every other tenant table', () => {
   it('shows each tenant only its own leads', async () => {
     const a = await tenantContext.run(h.orgA.principal, async () => h.db.lead.findMany({}));

@@ -20,6 +20,7 @@ export {
 export {
   CRM_DEFAULT_SEEDS,
   seedCrmDefaults,
+  seedDefaultAssignmentRule,
   type CrmDefaultsResult,
 } from './seeding/crm-defaults.js';
 

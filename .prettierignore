@@ -4,3 +4,7 @@ packages/db/prisma/migrations
 dist
 .turbo
 coverage
+
+# Next regenerates this on every build, always with double quotes, and the file itself says not to
+# edit it. Formatting it makes `prettier --check` fail after any `next build`.
+apps/web/next-env.d.ts

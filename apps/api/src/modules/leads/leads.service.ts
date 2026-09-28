@@ -14,11 +14,16 @@ import {
 import type { TouchpointChannel } from '@leados/db';
 import { DbService } from '../../infra/db/db.service.js';
 import { AuditService } from '../../infra/audit/audit.service.js';
-import { OutboxService } from '../../infra/outbox/outbox.service.js';
+import { OutboxService, type DomainEventInput } from '../../infra/outbox/outbox.service.js';
 import { TimelineService } from '../../infra/timeline/timeline.service.js';
 import { DataScopeService, applyScopeFilter } from '../../infra/authz/data-scope.service.js';
 import { EntitlementService } from '../../infra/entitlements/entitlement.service.js';
 import { FieldRegistryService } from '../custom-fields/field-registry.service.js';
+import {
+  DuplicateDetectionService,
+  type DuplicateCandidate,
+} from '../duplicates/duplicate-detection.service.js';
+import { AssignmentEngineService } from '../assignment/assignment-engine.service.js';
 import type {
   AddTouchpointInput,
   AssignLeadInput,
@@ -54,6 +59,8 @@ export class LeadsService {
     private readonly db: DbService,
     private readonly scopes: DataScopeService,
     private readonly fields: FieldRegistryService,
+    private readonly duplicates: DuplicateDetectionService,
+    private readonly assignment: AssignmentEngineService,
     private readonly entitlements: EntitlementService,
     private readonly audit: AuditService,
     private readonly outbox: OutboxService,
@@ -204,10 +211,40 @@ export class LeadsService {
     if (input.tagIds && input.tagIds.length > 0) await this.assertTagsExist(input.tagIds);
     if (input.leadSourceId) await this.assertSourceExists(input.leadSourceId);
 
+    // ── Is this somebody we already know? (`FR-DUP-1`–`FR-DUP-3`) ───────────
+    // Before the insert, because the whole point of `attach_to_existing` is that no second record
+    // is created. The action comes from the tenant's own rules, in their own priority order.
+    const matches = await this.duplicates.detect({
+      phoneE164: contact.phoneE164,
+      whatsappE164: contact.whatsappE164,
+      email: input.email ?? null,
+      firstName: input.firstName ?? null,
+      lastName: input.lastName ?? null,
+      fullName,
+      company: input.company ?? null,
+      city: input.city ?? null,
+      postalCode: input.postalCode ?? null,
+    });
+    const decidingMatch = matches[0];
+
+    if (decidingMatch?.action === 'reject') {
+      throw AppError.conflict(
+        `That looks like ${decidingMatch.fullName}, captured ${describeAge(decidingMatch.createdAt)}. ` +
+          `“${decidingMatch.ruleName}” is set to refuse repeat captures.`,
+        'CONFLICT',
+      );
+    }
+
+    if (decidingMatch?.action === 'attach_to_existing') {
+      // Attribution is preserved as an additional touchpoint, never overwritten (`FR-DUP-3`): a
+      // lead can be "Facebook-originated, later re-engaged via the website".
+      return this.attachToExisting(decidingMatch, input, contact, custom);
+    }
+
     const id = newId();
     const now = new Date();
 
-    await this.db.client.$transaction(async (tx) => {
+    const assignmentSummary = await this.db.client.$transaction(async (tx) => {
       await tx.lead.create({
         data: {
           id,
@@ -294,18 +331,68 @@ export class LeadsService {
         },
       });
 
-      if (input.assignedUserId) {
+      // ── Who gets it? (`FR-ASG-1`) ────────────────────────────────────────
+      // Inside the transaction, so there is no window where the lead belongs to nobody, and so the
+      // round-robin cursor advances under the same row lock that serialises two simultaneous
+      // captures. An explicit `assignedUserId` wins: somebody said who.
+      let assignedUserId = input.assignedUserId ?? null;
+      let assignedTeamId = input.teamId ?? null;
+      let assignmentReason = input.assignedUserId ? 'assigned on creation' : null;
+      let assignmentDecision: Awaited<ReturnType<AssignmentEngineService['decide']>> | null = null;
+
+      if (!input.assignedUserId) {
+        assignmentDecision = await this.assignment.decide({
+          lead: {
+            ...input,
+            fullName,
+            phoneE164: contact.phoneE164,
+            whatsappE164: contact.whatsappE164,
+            statusId: placement.statusId,
+            pipelineId: placement.pipelineId,
+            stageId: placement.stageId,
+            createdVia: input.createdVia ?? 'manual',
+          },
+          customValues: custom.values,
+          at: now,
+        });
+        assignedUserId = assignmentDecision.assignedUserId;
+        assignedTeamId = assignmentDecision.teamId ?? input.teamId ?? null;
+        assignmentReason = assignmentDecision.reason;
+        if (assignedUserId !== null || assignedTeamId !== null) {
+          await tx.lead.update({
+            where: { id },
+            data: { assignedUserId, teamId: assignedTeamId },
+          });
+        }
+        if (assignmentDecision.roundRobinAdvance) {
+          await this.assignment.commitRoundRobin(tx, assignmentDecision.roundRobinAdvance);
+          if (assignedUserId) {
+            await tx.roundRobinState.updateMany({
+              where: { ruleId: assignmentDecision.roundRobinAdvance.ruleId },
+              data: { lastAssignedUserId: assignedUserId },
+            });
+          }
+        }
+      }
+
+      if (assignedUserId || assignedTeamId) {
         await tx.leadAssignment.create({
           data: {
             id: newId(),
             organizationId,
             leadId: id,
-            toUserId: input.assignedUserId,
-            toTeamId: input.teamId ?? null,
+            toUserId: assignedUserId,
+            toTeamId: assignedTeamId,
             assignedById: principal.actorId ?? null,
-            reason: 'assigned on creation',
+            reason: assignmentReason ?? 'assigned on creation',
           },
         });
+      }
+
+      // ── A detected duplicate that was let through, linked for review ──────
+      if (decidingMatch?.action === 'create_and_link') {
+        await tx.lead.update({ where: { id }, data: { isDuplicateOfId: decidingMatch.leadId } });
+        await this.duplicates.recordPairs(tx, id, matches);
       }
 
       await this.timeline.recordManyInTransaction(tx, [
@@ -328,13 +415,53 @@ export class LeadsService {
             utm: input.utm ?? {},
           },
         },
-        ...(input.assignedUserId
+        ...(assignedUserId
           ? [
               {
                 type: ACTIVITY_TYPES.LEAD_ASSIGNED,
                 leadId: id,
                 occurredAt: now,
-                payload: { toUserId: input.assignedUserId, reason: 'assigned on creation' },
+                payload: {
+                  toUserId: assignedUserId,
+                  reason: assignmentReason ?? 'assigned on creation',
+                  ruleId: assignmentDecision?.rule?.id ?? null,
+                  ruleName: assignmentDecision?.rule?.name ?? null,
+                  usedFallback: assignmentDecision?.usedFallback ?? false,
+                  explanation: assignmentDecision?.explanation ?? null,
+                },
+              } as const,
+            ]
+          : []),
+        // A lead nobody picked up is the case that loses business, so it is on the timeline as its
+        // own entry rather than being inferred from the absence of an assignment.
+        ...(assignedUserId === null && assignmentDecision
+          ? [
+              {
+                type: ACTIVITY_TYPES.LEAD_UNASSIGNED,
+                leadId: id,
+                occurredAt: now,
+                payload: {
+                  reason: assignmentDecision.reason,
+                  ruleId: assignmentDecision.rule?.id ?? null,
+                  explanation: assignmentDecision.explanation,
+                },
+              } as const,
+            ]
+          : []),
+        ...(decidingMatch?.action === 'create_and_link'
+          ? [
+              {
+                type: ACTIVITY_TYPES.LEAD_DUPLICATE_DETECTED,
+                leadId: id,
+                occurredAt: now,
+                payload: {
+                  otherLeadId: decidingMatch.leadId,
+                  otherLeadName: decidingMatch.fullName,
+                  matchedFields: decidingMatch.matchedFields,
+                  confidence: decidingMatch.confidence,
+                  ruleName: decidingMatch.ruleName,
+                  decision: 'created and linked for review',
+                },
               } as const,
             ]
           : []),
@@ -347,7 +474,7 @@ export class LeadsService {
         after: { fullName, phoneE164: contact.phoneE164, email: input.email ?? null },
       });
 
-      await this.outbox.emit(tx, [
+      const events: DomainEventInput[] = [
         {
           name: 'lead.created',
           aggregateType: 'lead',
@@ -357,13 +484,254 @@ export class LeadsService {
             organizationId,
             createdVia: input.createdVia ?? 'manual',
             leadSourceId: input.leadSourceId ?? null,
-            assignedUserId: input.assignedUserId ?? null,
+            assignedUserId,
+          },
+        },
+      ];
+      if (assignedUserId === null && (assignmentDecision?.notifyManagers ?? false)) {
+        events.push({
+          name: 'lead.unassigned_pool',
+          aggregateType: 'lead',
+          aggregateId: id,
+          payload: {
+            leadId: id,
+            fullName,
+            ruleId: assignmentDecision?.rule?.id ?? null,
+            ruleName: assignmentDecision?.rule?.name ?? null,
+            explanation: assignmentDecision?.explanation ?? null,
+          },
+        });
+      }
+      await this.outbox.emit(tx, events);
+
+      // Returned so the caller can tell a person who has the lead and why — an assignment engine
+      // whose decision is only visible by re-reading the row is one nobody checks.
+      return {
+        assignedUserId,
+        teamId: assignedTeamId,
+        rule: assignmentDecision?.rule?.name ?? null,
+        usedFallback: assignmentDecision?.usedFallback ?? false,
+        explanation: assignmentDecision?.explanation ?? null,
+      };
+    });
+
+    return {
+      id,
+      fullName,
+      assignment: assignmentSummary,
+      ...(decidingMatch?.action === 'create_and_link'
+        ? {
+            duplicate: {
+              ofLeadId: decidingMatch.leadId,
+              matchedFields: decidingMatch.matchedFields,
+              confidence: decidingMatch.confidence,
+              rule: decidingMatch.ruleName,
+            },
+          }
+        : {}),
+    };
+  }
+
+  /**
+   * The `attach_to_existing` outcome (`FR-DUP-3`), and the most important behaviour in this file.
+   *
+   * A person who filled in a website form last month and now messages on WhatsApp is **one lead with
+   * two touchpoints**, not two leads. So no record is created: a touchpoint is appended, the timeline
+   * gains an entry, and any detail the existing lead was missing is filled in — but nothing it
+   * already had is overwritten. The first capture said the lead came from Facebook, and that stays
+   * true however many times they come back.
+   *
+   * The response is deliberately explicit about what happened. A caller that asked to create a lead
+   * and got back somebody else's id without being told would be a worse bug than the duplicate.
+   */
+  private async attachToExisting(
+    match: DuplicateCandidate,
+    input: CreateLeadInput,
+    contact: { phoneE164: string | null; phoneRaw: string | null; whatsappE164: string | null },
+    custom: { values: Record<string, unknown>; searchText: string },
+  ) {
+    const principal = tenantContext.require('leads.attachToExisting');
+    const existing = await this.db.client.lead.findFirstOrThrow({ where: { id: match.leadId } });
+    const now = new Date();
+
+    // Only blanks are filled. "Enrich, never overwrite" is the rule that makes repeat capture safe:
+    // a customer who mistypes their surname on a second form must not rename themselves.
+    const enrichment: Record<string, unknown> = {};
+    const filled: string[] = [];
+    const fill = (field: string, value: unknown): void => {
+      if (value === null || value === undefined || value === '') return;
+      const current = (existing as Record<string, unknown>)[field];
+      if (current !== null && current !== undefined && current !== '') return;
+      enrichment[field] = value;
+      filled.push(field);
+    };
+    fill('firstName', input.firstName);
+    fill('lastName', input.lastName);
+    fill('company', input.company);
+    fill('jobTitle', input.jobTitle);
+    fill('email', input.email);
+    fill('phoneE164', contact.phoneE164);
+    fill('phoneRaw', contact.phoneRaw);
+    fill('whatsappE164', contact.whatsappE164);
+    fill('city', input.city);
+    fill('state', input.state);
+    fill('country', input.country);
+    fill('postalCode', input.postalCode);
+    fill('landingPageUrl', input.landingPageUrl);
+
+    // Consent is only ever widened here, never narrowed: somebody ticking the WhatsApp box on a
+    // second form is granting consent; leaving it blank is not withdrawing it. Withdrawal is its own
+    // act, through the consent surface.
+    if (input.consent?.whatsapp === true && !existing.consentWhatsapp) {
+      enrichment['consentWhatsapp'] = true;
+      filled.push('consentWhatsapp');
+    }
+    if (input.consent?.email === true && !existing.consentEmail) {
+      enrichment['consentEmail'] = true;
+      filled.push('consentEmail');
+    }
+    if (input.consent?.calls === true && !existing.consentCalls) {
+      enrichment['consentCalls'] = true;
+      filled.push('consentCalls');
+    }
+
+    // Custom values follow the same rule: fill a blank, never replace an answer.
+    const existingCustom = (existing.customValues ?? {}) as Record<string, unknown>;
+    const mergedCustom = { ...existingCustom };
+    for (const [key, value] of Object.entries(custom.values)) {
+      const current = existingCustom[key];
+      if (current === null || current === undefined || current === '') {
+        mergedCustom[key] = value;
+        filled.push(`customValues.${key}`);
+      }
+    }
+
+    const definitions = await this.fields.definitionsFor('lead');
+    const nextFullName =
+      existing.fullName ||
+      buildFullName(
+        (enrichment['firstName'] as string | undefined) ?? existing.firstName,
+        (enrichment['lastName'] as string | undefined) ?? existing.lastName,
+        (enrichment['company'] as string | undefined) ?? existing.company,
+        contact,
+        (enrichment['email'] as string | undefined) ?? existing.email,
+      );
+
+    const sequence = await this.db.client.$transaction(async (tx) => {
+      const last = await tx.leadTouchpoint.findFirst({
+        where: { leadId: match.leadId },
+        orderBy: { sequence: 'desc' },
+        select: { sequence: true },
+      });
+      const next = (last?.sequence ?? 0) + 1;
+
+      await tx.leadTouchpoint.create({
+        data: {
+          id: newId(),
+          organizationId: existing.organizationId,
+          leadId: match.leadId,
+          sequence: next,
+          occurredAt: now,
+          channel: touchpointChannelFor(input.createdVia ?? 'manual'),
+          leadSourceId: input.leadSourceId ?? null,
+          landingPageUrl: input.landingPageUrl ?? null,
+          utm: (input.utm ?? {}) as never,
+          costAttributable: isPaidChannel(input.createdVia ?? 'manual'),
+        },
+      });
+
+      await tx.lead.update({
+        where: { id: match.leadId },
+        data: {
+          ...enrichment,
+          ...(nextFullName && nextFullName !== existing.fullName ? { fullName: nextFullName } : {}),
+          ...(Object.keys(mergedCustom).length > 0
+            ? {
+                customValues: mergedCustom as never,
+                customSearchText: searchTextFor(definitions, mergedCustom),
+              }
+            : {}),
+          touchCount: { increment: 1 },
+          lastActivityAt: now,
+        },
+      });
+
+      await this.timeline.recordManyInTransaction(tx, [
+        {
+          type: ACTIVITY_TYPES.LEAD_DUPLICATE_DETECTED,
+          leadId: match.leadId,
+          occurredAt: now,
+          payload: {
+            decision: 'attached to this lead',
+            matchedFields: match.matchedFields,
+            confidence: match.confidence,
+            ruleName: match.ruleName,
+            createdVia: input.createdVia ?? 'manual',
+            fieldsFilled: filled,
+          },
+        },
+        {
+          type: ACTIVITY_TYPES.LEAD_SOURCE_CAPTURED,
+          leadId: match.leadId,
+          occurredAt: now,
+          payload: {
+            sequence: next,
+            channel: touchpointChannelFor(input.createdVia ?? 'manual'),
+            leadSourceId: input.leadSourceId ?? null,
+            utm: input.utm ?? {},
+            repeatCapture: true,
           },
         },
       ]);
+
+      await this.audit.recordInTransaction(tx, {
+        action: 'lead.repeat_capture_attached',
+        resourceType: 'lead',
+        resourceId: match.leadId,
+        after: {
+          matchedFields: match.matchedFields,
+          ruleName: match.ruleName,
+          fieldsFilled: filled,
+          touchpoint: next,
+        },
+      });
+
+      await this.outbox.emit(tx, [
+        {
+          name: 'lead.touchpoint_added',
+          aggregateType: 'lead',
+          aggregateId: match.leadId,
+          payload: {
+            leadId: match.leadId,
+            sequence: next,
+            channel: touchpointChannelFor(input.createdVia ?? 'manual'),
+            attachedBy: principal.actorId ?? null,
+          },
+        },
+      ]);
+
+      return next;
     });
 
-    return { id, fullName };
+    return {
+      id: match.leadId,
+      fullName: nextFullName || existing.fullName,
+      // The caller asked to create a lead and did not get a new one. Saying so is not optional.
+      attachedToExisting: true,
+      matchedFields: match.matchedFields,
+      confidence: match.confidence,
+      rule: match.ruleName,
+      touchpointSequence: sequence,
+      fieldsFilled: filled,
+      assignment: {
+        assignedUserId: existing.assignedUserId,
+        teamId: existing.teamId,
+        rule: null,
+        usedFallback: false,
+        // Reassignment is not triggered by a repeat capture: whoever is working the lead keeps it.
+        explanation: 'Kept with whoever already holds the lead.',
+      },
+    };
   }
 
   // ── Updating ──────────────────────────────────────────────────────────────
@@ -1356,4 +1724,19 @@ function isPaidChannel(createdVia: string): boolean {
 
 function toCamel(value: string): string {
   return value.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
+}
+
+/**
+ * How long ago, in words.
+ *
+ * Used in the message a `reject` rule produces. "That looks like Anita Sharma, captured 3 days ago"
+ * is actionable; "duplicate detected" is not.
+ */
+function describeAge(when: Date): string {
+  const days = Math.floor((Date.now() - when.getTime()) / 86_400_000);
+  if (days <= 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 30) return `${days} days ago`;
+  const months = Math.floor(days / 30);
+  return months === 1 ? 'about a month ago' : `about ${months} months ago`;
 }

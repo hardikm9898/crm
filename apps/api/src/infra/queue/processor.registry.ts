@@ -8,6 +8,7 @@ import { InvitationMailProcessor } from '../../modules/users/processors/invitati
 import {
   InvitationExpiryProcessor,
   ActivityPartitionProcessor,
+  LeadRecycleProcessor,
   OutboxReapProcessor,
   SessionPruneProcessor,
   TrialCheckProcessor,
@@ -15,6 +16,7 @@ import {
 import {
   MemberJoinedNotificationProcessor,
   TrialExpiredNotificationProcessor,
+  UnassignedLeadNotificationProcessor,
 } from '../../modules/notifications/notifications.processor.js';
 import type { JobProcessor } from './job-processor.js';
 
@@ -38,12 +40,14 @@ export const PROCESSOR_TYPES: readonly Type<JobProcessor>[] = [
   SecurityNoticeMailProcessor,
   MemberJoinedNotificationProcessor,
   TrialExpiredNotificationProcessor,
+  UnassignedLeadNotificationProcessor,
   // maintenance
   SessionPruneProcessor,
   InvitationExpiryProcessor,
   TrialCheckProcessor,
   OutboxReapProcessor,
   ActivityPartitionProcessor,
+  LeadRecycleProcessor,
 ];
 
 /** Resolves the processors from a Nest context (application or test). */

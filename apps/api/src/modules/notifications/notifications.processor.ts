@@ -109,3 +109,56 @@ export class TrialExpiredNotificationProcessor implements JobProcessor<EventJobP
     }
   }
 }
+
+/**
+ * Tells managers a lead landed in the unassigned pool (`FR-ASG-4`).
+ *
+ * This is the notification that justifies the whole fallback machinery. A lead that arrives at 9pm,
+ * matches a rule whose pool is all off shift, and goes nowhere is the single most expensive silent
+ * failure this product can have — the business paid for the click and nobody ever calls. So the
+ * engine emits its own event for it rather than letting it be inferred from an assignment with a
+ * null, and this processor tells whoever holds `lead:assign` that there is a lead waiting.
+ */
+@Injectable()
+export class UnassignedLeadNotificationProcessor implements JobProcessor<EventJobPayload> {
+  readonly queue = QUEUES.NOTIFICATIONS;
+  readonly jobName = JOBS.NOTIFY_LEAD_UNASSIGNED;
+
+  constructor(
+    private readonly notifications: NotificationsService,
+    @Inject(LOGGER) private readonly logger: Logger,
+  ) {}
+
+  async process(payload: EventJobPayload, _job: Job): Promise<void> {
+    const organizationId = payload.organizationId;
+    const leadId = payload.aggregateId;
+    if (!organizationId || !leadId) {
+      this.logger.error({ payload }, 'unassigned-lead notification has no organization or lead');
+      return;
+    }
+
+    const body = payload.payload ?? {};
+    const fullName = typeof body['fullName'] === 'string' ? body['fullName'] : 'A lead';
+    const explanation = typeof body['explanation'] === 'string' ? body['explanation'] : null;
+
+    // `lead:assign` rather than a role name: whoever the organization made responsible for
+    // distributing work, whatever they call that role (rule 4).
+    const recipients = await this.notifications.recipientsWithPermission(
+      organizationId,
+      PERMISSIONS.LEAD_ASSIGN,
+    );
+
+    for (const userId of recipients) {
+      await this.notifications.create({
+        organizationId,
+        userId,
+        type: 'lead.unassigned_pool',
+        title: `${fullName} is waiting for someone to pick up`,
+        body: explanation ?? undefined,
+        link: `/leads/${leadId}`,
+        dedupeKey: payload.eventId ?? `lead-unassigned:${leadId}`,
+        data: { leadId, ruleName: body['ruleName'] ?? null },
+      });
+    }
+  }
+}

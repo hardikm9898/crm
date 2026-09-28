@@ -252,12 +252,23 @@ describe('branches', () => {
   });
 
   it('refuses a branch id from another organization', async () => {
+    // The other organization is created here rather than found: on a freshly migrated database
+    // there is no other organization, and a test that depends on one left behind by an earlier run
+    // passes for a reason that has nothing to do with what it claims to check.
+    const foreignOrganizationId = newId();
+    await ctx.db.organization.create({
+      data: {
+        id: foreignOrganizationId,
+        name: `Foreign ${EMAIL_MARKER}`,
+        slug: `foreign-${foreignOrganizationId.slice(0, 8)}`,
+        status: 'active',
+        publicKey: `pk_test_${foreignOrganizationId.slice(0, 12)}`,
+      },
+    });
     const other = await ctx.db.branch.create({
       data: {
         id: newId(),
-        organizationId: (
-          await ctx.db.organization.findFirstOrThrow({ where: { id: { not: organizationId } } })
-        ).id,
+        organizationId: foreignOrganizationId,
         name: 'Foreign Branch',
       },
     });
@@ -269,6 +280,7 @@ describe('branches', () => {
     });
     expect(response.statusCode).toBe(404);
     await ctx.db.branch.delete({ where: { id: other.id } });
+    await ctx.db.organization.delete({ where: { id: foreignOrganizationId } });
   });
 });
 
@@ -344,8 +356,15 @@ describe('teams', () => {
 
   it('refuses a user who is not a member of the organization', async () => {
     const team = await ctx.db.team.findFirstOrThrow({ where: { organizationId } });
-    const stranger = await ctx.db.user.findFirstOrThrow({
-      where: { memberships: { none: { organizationId } } },
+    // Same reasoning as the foreign branch above: the stranger is created, not looked for.
+    const strangerId = newId();
+    const stranger = await ctx.db.user.create({
+      data: {
+        id: strangerId,
+        email: `stranger.${strangerId.slice(0, 8)}.${EMAIL_MARKER}@test.local`,
+        name: 'Stranger',
+        status: 'active',
+      },
     });
     const response = await call<EnvelopeBody<never>>(ctx.app, {
       method: 'POST',

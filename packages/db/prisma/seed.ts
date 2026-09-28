@@ -4,7 +4,7 @@ import { Algorithm, hash } from '@node-rs/argon2';
 import { SYSTEM_ROLE_TEMPLATES, newId, newToken, normalizePhone } from '@leados/shared';
 import { createUnscopedDbClient } from '../src/client.js';
 import { seedPlatformCatalogue } from '../src/seeding/platform-catalogue.js';
-import { seedCrmDefaults } from '../src/seeding/crm-defaults.js';
+import { seedCrmDefaults, seedDefaultAssignmentRule } from '../src/seeding/crm-defaults.js';
 import type { PrismaClient } from '../generated/prisma/client.js';
 
 /**
@@ -231,7 +231,16 @@ async function seedOrganization(
     // "what a new organization looks like" would drift, and the drift would first appear as a
     // support ticket from a real tenant.
     const crm = await seedCrmDefaults(tx, organizationId);
-    if (crm) await seedDemoLeads(tx, organizationId, crm, branchId, teamId, userIdsByRole);
+    if (crm) {
+      // The executives are the round-robin pool: a manager who also holds leads makes the demo
+      // data less legible, and the fairness assertions less obvious.
+      await seedDefaultAssignmentRule(
+        tx,
+        organizationId,
+        userIdsByRole.get('sales_executive') ?? [],
+      );
+      await seedDemoLeads(tx, organizationId, crm, branchId, teamId, userIdsByRole);
+    }
 
     await tx.auditLog.create({
       data: {

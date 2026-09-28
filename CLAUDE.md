@@ -102,6 +102,15 @@ change, or typecheck will fail confusingly.
   `maintenance.activity-partitions` job creates months ahead and reports anything stranded.
 - **Prisma cannot create a partitioned table.** Generate the migration with `--create-only`, then edit
   the `CREATE TABLE` by hand to add `PARTITION BY RANGE (...)`. Prisma's later diffs do not notice.
+- **Prisma's next diff _deletes_ every hand-written database object.** Anything that cannot be
+  expressed in `schema.prisma` — a composite FK spanning three columns, a GIN or expression index, a
+  partial unique index, a trigger — is something `migrate diff` sees in the database, does not see in
+  the schema, and drops. The step-2 migration was generated with six such `DROP`s at the top and they
+  were applied: lead search fell back to sequential scans and the FK that makes "a lead in another
+  pipeline's stage" unrepresentable was simply gone, with every test still green. **Read the
+  generated SQL and delete the spurious drops**, then check
+  `packages/db/src/schema-objects.int-spec.ts` covers the object — that suite is the only guard, and
+  a new hand-written object that is not listed there is one Prisma will quietly remove later.
 - **`prisma migrate dev` prompts and hangs in a non-interactive shell.** Use `prisma migrate deploy`
   (or `--create-only` then `deploy`) from scripts and agents.
 - **Rebuild `@leados/db` and `@leados/shared` after editing them**, not just `db:generate`: the API
@@ -113,6 +122,14 @@ change, or typecheck will fail confusingly.
 - **A test that names a model as a hypothetical breaks when the model becomes real.**
   `registry-check.spec.ts` asserted that `Lead` was unregistered; the day `Lead` was added, the test
   passed for the wrong reason. Use a deliberately fictional name.
+- **A test that _finds_ its fixture instead of creating it passes for the wrong reason.** Two
+  cross-tenant checks did `findFirstOrThrow` for "some other organization" and "a user who is not a
+  member" — true only because earlier runs had left rows behind. On a freshly migrated database they
+  failed, having never really tested anything. Create what a test needs.
+- **A setup call whose status nobody asserts fails silently and takes the assertion with it.** A
+  PATCH switching a rule to `round_robin` before it had a pool was rightly refused with a 422; the
+  test ignored the response, asserted against the _old_ rule, and read a plausible wrong answer.
+  Setup calls go through a helper that throws on a non-2xx.
 
 - **The platform catalogue is reference data, not fixtures.** Without `permissions` and a plan,
   creating an organization fails on a foreign key. `seedPlatformCatalogue()` is called by both
