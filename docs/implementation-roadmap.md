@@ -254,6 +254,84 @@ customers, deals and the lead UI remain later steps. The duplicates and assignme
 not built — both surfaces are complete and tested over HTTP, and the UI arrives with the lead
 list and detail work, since a merge screen without a lead detail page has nowhere to live.
 
+### Step 3 — scoring and saved views ✅ _(landed 2026-09-30)_
+
+The two things that turn a list of leads into a day's work: which ones are worth calling, and the
+saved question that puts them on one screen.
+
+- **A lead's score is the sum of its score events** ([ADR-0015](./decisions/ADR-0015-score-as-event-sum.md)).
+  `leads.score` caches `sum(lead_score_events.delta)`, so `FR-SCR-2`'s explainability is exact rather
+  than approximate: the breakdown a manager reads _is_ the arithmetic that produced the number, and the
+  API returns `addsUp` rather than asserting it. Repair is a re-sum that writes no event — recording
+  the drift as one would break the invariant it restores. Idempotency is a unique index on
+  `(lead, rule, source_event)`, so an at-least-once redelivery scores once.
+- **A dormant trigger is refused, not stored.** `FR-SCR-1` names website behaviour, WhatsApp and email
+  engagement as scoring inputs, and none of those events exist before Phases 5, 8 and 9. A rule on one
+  would sit inert while the business believed their scoring covered engagement, so `SCORING_TRIGGERS`
+  marks each trigger live or not and creation is refused with the phase it arrives in.
+- **Bands are a partition of 0–1000, enforced twice.** Validated as a contiguous cover with no gap,
+  and `score_bands_no_overlap` is a Postgres **exclusion constraint** — an overlap is unrepresentable
+  rather than merely refused. Editing the set re-bands every lead in the same request: leaving it to a
+  job means a business renames a band and their "Hot leads" view is empty until the job runs, which
+  reads as data loss.
+- **Decay is a function of elapsed time, not of how often the sweep ran.** "After 14 days, five points
+  a week, never below the floor" is computed as _what should be gone by now, minus what already is_,
+  so a missed night catches up and a second run the same night takes nothing. No "last swept" column
+  to get wrong. A lead with no recorded activity is new, not stale, and decays by nothing.
+- **The filter DSL is data, validated before it is stored** (`FR-VIEW-2`). The same flat
+  AND-within-group / OR-across-groups shape the assignment and scoring rules use — one vocabulary,
+  three features. Date conditions carry a **named window** (`{ window: 'today' }`) rather than a
+  timestamp, resolved in the organization's timezone at read time, which is what stops "Today's
+  follow-ups" meaning last Tuesday forever.
+- **The compiler emits Prisma predicates, never SQL.** Not squeamishness: the tenant-scoping extension
+  works by rewriting Prisma's `where`, so a filter assembled as raw SQL would bypass the layer that
+  makes one tenant unable to read another's leads. Data scoping is combined with `AND` _after_ the
+  filter compiles, so a filter can only narrow what a caller may see.
+- **Computed fields are rewritten into something indexable.** "Older than 30 days" becomes a bound on
+  `created_at` rather than a subtraction per row; tags become a join. The inversion matters — older
+  means an _earlier_ timestamp, and getting it backwards silently shows a manager the wrong half of
+  their pipeline.
+- **Saved views, private, team or workspace** (`FR-VIEW-3`), with column selection, sort, and a landing
+  view per role. Visibility is enforced on read and a private view answers **404**, because confirming
+  it exists is itself a leak of somebody's work. Provisioning seeds the five views from §17 plus
+  Unassigned, shared with the workspace.
+- **4 new tables**, 5 new composite foreign keys, a new `scoring` queue (concurrency 10) fed by six
+  lead events through the outbox, and the nightly `score.decay-sweep` at 01:07.
+
+**718 tests green** (336 unit, 382 integration). **133 routes**, up from 116 (13 public, 13 exempt,
+107 permission-gated). Eighteen database guarantees were verified directly against PostgreSQL before
+any application code was built on them, and the surface was then exercised over HTTP against the built
+artifact — 84 further checks across two scripts.
+
+**Three bugs the HTTP runs found that the unit tests could not.** All three were silent:
+
+1. **A lost update under real concurrency.** Three captures of one person arrive within milliseconds;
+   two scoring jobs read `score = 0` and both wrote `15`. The lead ended with two score events worth
+   30 points under a cached score of 15 — a breakdown that did not add up, which is the one thing that
+   would make the number untrustworthy. Every path that changes a score now takes
+   `SELECT … FOR UPDATE` on the lead and reads the score, band, per-rule counts and decay-so-far
+   _after_ the lock. The same race let two jobs both pass a cap of one.
+2. **A currency custom field compared as an object.** `custom.budget >= 5000000` matched nothing,
+   because a currency value is stored as `{ currency, amountMinor }` and the filter compared the whole
+   object with a number. The comparable sub-path is now declared in the custom-field type registry —
+   the file that decides how a type is stored — rather than guessed by the compiler.
+3. **The response envelope silently dropped a handler's extra keys.** `POST /leads/search` echoes which
+   view ran and which conditions applied, and none of it reached the client: a paginated payload's
+   `items` become `data` and every sibling key was discarded. A handler can now contribute `meta`.
+
+Also fixed, because it would have bitten the web app next: **a POST with no body was a 400.** Fastify
+rejects an empty body when `content-type: application/json` is set, which every client that sets a
+default content-type does — so `/leads/:id/restore`, `/leads/:id/recompute-score` and
+`/duplicates/:id/dismiss` all required a literal `{}`. An empty body now parses as `{}` and the route's
+own schema decides.
+
+**Deferred, and why:** the lead list, detail and kanban screens, import/export, bulk actions, customers
+and deals remain later steps — the filter and scoring surfaces are complete and tested over HTTP, and
+they are what the list UI will be built from. Global search across conversations, deals and tasks
+(`FR-VIEW-1`) waits for those entities to exist; lead search itself landed in step 1.
+`lead_score_events` will want the monthly partitioning `activities` has once Phase 5 starts scoring
+WhatsApp engagement, which is the point at which it becomes one of the larger tables.
+
 **Exit criteria**
 
 - Creating a custom field of every supported type requires **no migration and no deploy**, and that

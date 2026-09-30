@@ -6,7 +6,7 @@ import {
   newToken,
   withPlatformScope,
 } from '@leados/shared';
-import { seedCrmDefaults, seedDefaultAssignmentRule } from '@leados/db';
+import { seedCrmDefaults, seedDefaultAssignmentRule, seedScoringAndViews } from '@leados/db';
 import { DbService } from '../../infra/db/db.service.js';
 import { OutboxService } from '../../infra/outbox/outbox.service.js';
 import { AuditService } from '../../infra/audit/audit.service.js';
@@ -160,6 +160,10 @@ export class OrganizationProvisioningService {
         // The owner is the only member at signup, so they are the pool. A round-robin of one still
         // exercises the whole path — eligibility, working hours, the fallback — from day one.
         await seedDefaultAssignmentRule(tx, organizationId, [input.ownerUserId]);
+        // Score bands, scoring rules and the saved views from database-design §17. Bands especially
+        // belong here rather than in a later step: a lead scored before any band exists has a score
+        // and no band, and every band-filtered view would then be quietly empty.
+        await seedScoringAndViews(tx, organizationId);
 
         if (plan) {
           await tx.subscription.create({

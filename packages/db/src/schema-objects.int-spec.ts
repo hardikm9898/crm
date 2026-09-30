@@ -61,6 +61,13 @@ const REQUIRED_INDEXES = [
   'lead_duplicates_open',
   'lead_merges_undoable',
   'lead_merges_one_standing_per_merged_lead',
+  // Scoring and saved views.
+  'lead_score_events_once_per_source_event',
+  'saved_views_owner_name_key',
+  'saved_views_shared_name_key',
+  'saved_views_one_default_per_role',
+  'leads_score_band',
+  'leads_decay_candidates',
 ];
 
 /**
@@ -93,6 +100,24 @@ const REQUIRED_CONSTRAINTS = [
   // The composite FK that makes a pool member's membership, not merely their user row, the thing
   // being referenced.
   'assignment_pool_members_membership_same_org_fk',
+  // Scoring. The exclusion constraint is the one that cannot be expressed any other way: it makes
+  // two overlapping score bands unrepresentable rather than merely refused.
+  'score_bands_no_overlap',
+  'score_bands_range',
+  'scoring_rules_decay_matches_trigger',
+  'scoring_rules_decay_shape',
+  'lead_score_events_delta_not_zero',
+  'lead_score_events_score_after_range',
+  'lead_score_events_lead_same_org_fk',
+  'lead_score_events_rule_same_org_fk',
+  // Saved views.
+  'saved_views_visibility',
+  'saved_views_team_requires_team',
+  'saved_views_private_requires_owner',
+  'saved_views_filters_is_object',
+  'saved_views_team_same_org_fk',
+  'saved_views_role_same_org_fk',
+  'saved_views_owner_same_org_fk',
 ];
 
 describe('hand-written indexes survive every generated migration', () => {
@@ -142,6 +167,13 @@ describe('the objects Prisma cannot describe at all', () => {
       SELECT count(*) AS count FROM pg_trigger
       WHERE tgrelid = 'leads'::regclass AND tgname = 'leads_search_vector_trg' AND NOT tgisinternal
     `;
+    expect(Number(rows[0]?.count ?? 0)).toBe(1);
+  });
+
+  it('keeps btree_gist, without which the band exclusion constraint cannot exist', async () => {
+    const rows = await h.unscoped.$queryRaw<
+      { count: bigint }[]
+    >`SELECT count(*) AS count FROM pg_extension WHERE extname = 'btree_gist'`;
     expect(Number(rows[0]?.count ?? 0)).toBe(1);
   });
 

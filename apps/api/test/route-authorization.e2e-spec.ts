@@ -51,6 +51,9 @@ interface Tenant {
   mergeId: string;
   duplicateRuleId: string;
   assignmentRuleId: string;
+  // Phase 2, step 3 — scoring and saved views
+  scoringRuleId: string;
+  savedViewId: string;
 }
 
 let orgA: Tenant;
@@ -195,9 +198,12 @@ async function createTenant(label: string): Promise<Tenant> {
     token,
   });
 
-  const [duplicateRule, assignmentRule] = await Promise.all([
+  const [duplicateRule, assignmentRule, scoringRule, savedView] = await Promise.all([
     ctx.db.duplicateRule.findFirstOrThrow({ where: { organizationId, isActive: true } }),
     ctx.db.assignmentRule.findFirstOrThrow({ where: { organizationId } }),
+    // Both are provisioned with the organization, so these are reads rather than writes.
+    ctx.db.scoringRule.findFirstOrThrow({ where: { organizationId, deletedAt: null } }),
+    ctx.db.savedView.findFirstOrThrow({ where: { organizationId, deletedAt: null } }),
   ]);
 
   return {
@@ -223,6 +229,8 @@ async function createTenant(label: string): Promise<Tenant> {
     mergeId: merged.body.data.mergeId,
     duplicateRuleId: duplicateRule.id,
     assignmentRuleId: assignmentRule.id,
+    scoringRuleId: scoringRule.id,
+    savedViewId: savedView.id,
   };
 }
 
@@ -358,6 +366,11 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       '/assignment/rules/:id': `/assignment/rules/${orgA.assignmentRuleId}`,
       '/assignment/rules/:id/conditions': `/assignment/rules/${orgA.assignmentRuleId}/conditions`,
       '/assignment/rules/:id/pool': `/assignment/rules/${orgA.assignmentRuleId}/pool`,
+      // Phase 2, step 3 — scoring and saved views
+      '/scoring/rules/:id': `/scoring/rules/${orgA.scoringRuleId}`,
+      '/views/:id': `/views/${orgA.savedViewId}`,
+      '/leads/:id/score-breakdown': `/leads/${orgA.leadId}/score-breakdown`,
+      '/leads/:id/recompute-score': `/leads/${orgA.leadId}/recompute-score`,
     };
 
     // An unmapped parameter would test nothing meaningful, so it is reported instead.
@@ -635,6 +648,28 @@ function bodyFor(
       return { leadIds: [target.leadId] };
     case '/assignment/reassign':
       return { leadIds: [target.leadId], assignedUserId: target.userId };
+    // Phase 2, step 3 — scoring and saved views
+    case '/scoring/rules':
+      return { name: `Swept scoring ${SUFFIX}`, triggerEvent: 'lead.created', points: 5 };
+    case '/scoring/rules/:id':
+      return { name: `Swept scoring ${SUFFIX}` };
+    case '/scoring/bands':
+      return {
+        bands: [
+          { name: `Swept low ${SUFFIX}`, minScore: 0, maxScore: 500 },
+          { name: `Swept high ${SUFFIX}`, minScore: 501, maxScore: 1000 },
+        ],
+      };
+    case '/scoring/test':
+      return { lead: { city: 'Swept' } };
+    case '/views':
+      return { name: `Swept view ${SUFFIX}`, filters: { conditions: [] } };
+    case '/views/:id':
+      return { name: `Swept view ${SUFFIX}` };
+    case '/leads/search':
+      return { filter: { conditions: [] } };
+    case '/leads/:id/recompute-score':
+      return {};
     case '/auth/switch-org':
       return { organizationId: target.organizationId };
     case '/auth/mfa/confirm':

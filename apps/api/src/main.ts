@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { config as loadDotenv } from 'dotenv';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
+import { allowEmptyJsonBody } from './infra/http/empty-json-body.js';
 import type { Logger } from 'pino';
 import { AppModule } from './app.module.js';
 import { APP_CONFIG } from './infra/config/config.module.js';
@@ -38,6 +39,9 @@ async function bootstrap(): Promise<void> {
   await bootstrapHttp();
 }
 
+/** 256 KiB: large enough for an import mapping or a long filter, small enough to bound a flood. */
+const BODY_LIMIT_BYTES = 256 * 1024;
+
 async function bootstrapHttp(): Promise<void> {
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
@@ -45,7 +49,7 @@ async function bootstrapHttp(): Promise<void> {
       // Request ids come from our own middleware so they are consistent across processes and
       // appear in logs, responses, audit rows and traces alike.
       genReqId: () => '',
-      bodyLimit: 256 * 1024,
+      bodyLimit: BODY_LIMIT_BYTES,
       trustProxy: true,
     }),
     { bufferLogs: true },
@@ -58,6 +62,7 @@ async function bootstrapHttp(): Promise<void> {
   // balancer probes never move (docs/api-architecture.md §1).
   app.setGlobalPrefix('api/v1', { exclude: ['health/live', 'health/ready', 'health/deep'] });
 
+  allowEmptyJsonBody(app, BODY_LIMIT_BYTES);
   app.useLogger(new PinoLoggerService(logger));
   app.useGlobalInterceptors(new EnvelopeInterceptor());
   app.useGlobalFilters(new AppExceptionFilter(logger));

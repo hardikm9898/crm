@@ -4,7 +4,11 @@ import { Algorithm, hash } from '@node-rs/argon2';
 import { SYSTEM_ROLE_TEMPLATES, newId, newToken, normalizePhone } from '@leados/shared';
 import { createUnscopedDbClient } from '../src/client.js';
 import { seedPlatformCatalogue } from '../src/seeding/platform-catalogue.js';
-import { seedCrmDefaults, seedDefaultAssignmentRule } from '../src/seeding/crm-defaults.js';
+import {
+  seedCrmDefaults,
+  seedDefaultAssignmentRule,
+  seedScoringAndViews,
+} from '../src/seeding/crm-defaults.js';
 import type { PrismaClient } from '../generated/prisma/client.js';
 
 /**
@@ -239,6 +243,7 @@ async function seedOrganization(
         organizationId,
         userIdsByRole.get('sales_executive') ?? [],
       );
+      await seedScoringAndViews(tx, organizationId);
       await seedDemoLeads(tx, organizationId, crm, branchId, teamId, userIdsByRole);
     }
 

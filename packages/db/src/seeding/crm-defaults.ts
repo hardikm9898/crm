@@ -265,3 +265,241 @@ export const CRM_DEFAULT_SEEDS = {
   sources: SOURCE_SEEDS,
   lostReasons: LOST_REASON_SEEDS,
 } as const;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Scoring and saved views (Phase 2 step 3)
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface BandSeed {
+  readonly name: string;
+  readonly minScore: number;
+  readonly maxScore: number;
+  readonly colour: string;
+}
+
+/**
+ * Three bands, covering 0–1000 with no gap (`FR-SCR-3`).
+ *
+ * The names are the ones every sales team already uses, and the thresholds are deliberately low:
+ * a lead that matched two positive rules should read as warm, because a business that never sees a
+ * hot lead concludes scoring is broken and turns it off.
+ */
+const BAND_SEEDS: readonly BandSeed[] = [
+  { name: 'Cold', minScore: 0, maxScore: 29, colour: '#868e96' },
+  { name: 'Warm', minScore: 30, maxScore: 64, colour: '#f59f00' },
+  { name: 'Hot', minScore: 65, maxScore: 1000, colour: '#e03131' },
+];
+
+interface ScoringRuleSeed {
+  readonly name: string;
+  readonly triggerEvent: string;
+  readonly conditions: readonly Record<string, unknown>[];
+  readonly points: number;
+  readonly maxApplications: number | null;
+  readonly decay?: Record<string, number>;
+  readonly priority: number;
+}
+
+/**
+ * Rules that work on a tenant's first day, using only signals that exist in Phase 2.
+ *
+ * Nothing here scores website behaviour or WhatsApp engagement, because those events are not
+ * emitted yet and a rule on a dormant trigger is refused rather than stored inert. What is left is
+ * still the strongest early signal a small business has: **the same person enquiring twice.**
+ */
+const SCORING_RULE_SEEDS: readonly ScoringRuleSeed[] = [
+  {
+    name: 'Came back again',
+    triggerEvent: 'lead.touchpoint_added',
+    conditions: [],
+    points: 15,
+    // Four repeats is where "interested" stops being news and a person should already have called.
+    maxApplications: 4,
+    priority: 0,
+  },
+  {
+    name: 'Someone has taken it on',
+    triggerEvent: 'lead.assigned',
+    conditions: [],
+    points: 5,
+    maxApplications: 1,
+    priority: 10,
+  },
+  {
+    name: 'Real progress in the pipeline',
+    triggerEvent: 'lead.stage_changed',
+    conditions: [],
+    points: 10,
+    maxApplications: 3,
+    priority: 20,
+  },
+  {
+    name: 'Marked urgent',
+    triggerEvent: 'lead.updated',
+    conditions: [
+      { fieldPath: 'priority', operator: 'in', value: ['high', 'urgent'], groupIndex: 0 },
+    ],
+    points: 10,
+    maxApplications: 1,
+    priority: 30,
+  },
+  {
+    name: 'Gone quiet',
+    triggerEvent: 'schedule.decay',
+    conditions: [],
+    points: 0,
+    maxApplications: null,
+    // A fortnight of silence, then five points a week, never below cold's ceiling — a stale lead
+    // stops looking hot without being erased.
+    decay: { afterDays: 14, points: 5, everyDays: 7, floor: 0 },
+    priority: 100,
+  },
+];
+
+interface ViewSeed {
+  readonly name: string;
+  readonly filters: Record<string, unknown>;
+  readonly sort: Record<string, unknown>;
+  readonly columns: readonly string[];
+  readonly sortOrder: number;
+}
+
+/**
+ * The five views from `docs/database-design.md` §17, as filters rather than as code.
+ *
+ * Every date condition uses a **named window**, not a timestamp. "Today's Follow-ups" saved with an
+ * absolute date is a view that is wrong tomorrow and misleading forever, and it is the one view an
+ * executive opens every morning.
+ */
+const VIEW_SEEDS: readonly ViewSeed[] = [
+  {
+    name: "Today's follow-ups",
+    filters: {
+      conditions: [{ field: 'nextActionAt', operator: 'lte', value: { window: 'today' } }],
+    },
+    sort: { field: 'nextActionAt', direction: 'asc' },
+    columns: ['fullName', 'phoneE164', 'statusId', 'nextActionAt', 'assignedUserId'],
+    sortOrder: 0,
+  },
+  {
+    name: 'Overdue',
+    filters: {
+      conditions: [{ field: 'nextActionAt', operator: 'lte', value: { window: 'overdue' } }],
+    },
+    sort: { field: 'nextActionAt', direction: 'asc' },
+    columns: ['fullName', 'phoneE164', 'statusId', 'nextActionAt', 'assignedUserId'],
+    sortOrder: 1,
+  },
+  {
+    name: 'New leads',
+    filters: { conditions: [{ field: 'createdAt', operator: 'gte', value: { window: 'today' } }] },
+    sort: { field: 'createdAt', direction: 'desc' },
+    columns: ['fullName', 'phoneE164', 'leadSourceId', 'createdAt', 'assignedUserId'],
+    sortOrder: 2,
+  },
+  {
+    name: 'Hot leads',
+    filters: { conditions: [{ field: 'scoreBand', operator: 'eq', value: 'Hot' }] },
+    sort: { field: 'score', direction: 'desc' },
+    columns: ['fullName', 'phoneE164', 'score', 'statusId', 'assignedUserId'],
+    sortOrder: 3,
+  },
+  {
+    name: 'No next action',
+    filters: { conditions: [{ field: 'nextActionAt', operator: 'is_null' }] },
+    sort: { field: 'lastActivityAt', direction: 'asc' },
+    columns: ['fullName', 'phoneE164', 'statusId', 'lastActivityAt', 'assignedUserId'],
+    sortOrder: 4,
+  },
+  {
+    name: 'Unassigned',
+    filters: { conditions: [{ field: 'assignedUserId', operator: 'is_null' }] },
+    sort: { field: 'createdAt', direction: 'asc' },
+    columns: ['fullName', 'phoneE164', 'leadSourceId', 'createdAt', 'score'],
+    sortOrder: 5,
+  },
+];
+
+export interface ScoringDefaultsResult {
+  readonly bandIds: readonly string[];
+  readonly ruleIds: readonly string[];
+  readonly viewIds: readonly string[];
+}
+
+/**
+ * Bands, scoring rules and saved views for a new organization.
+ *
+ * Idempotent per concern rather than all-or-nothing: a tenant that deleted every one of their views
+ * should not have them reinstated because their bands are missing.
+ */
+export async function seedScoringAndViews(
+  tx: DbTransactionClient,
+  organizationId: string,
+): Promise<ScoringDefaultsResult> {
+  const bandIds: string[] = [];
+  const existingBand = await tx.scoreBand.findFirst({ where: { organizationId } });
+  if (!existingBand) {
+    for (const band of BAND_SEEDS) {
+      const id = newId();
+      await tx.scoreBand.create({ data: { id, organizationId, ...band } });
+      bandIds.push(id);
+    }
+  }
+
+  const ruleIds: string[] = [];
+  const existingRule = await tx.scoringRule.findFirst({ where: { organizationId } });
+  if (!existingRule) {
+    for (const rule of SCORING_RULE_SEEDS) {
+      const id = newId();
+      await tx.scoringRule.create({
+        data: {
+          id,
+          organizationId,
+          name: rule.name,
+          triggerEvent: rule.triggerEvent,
+          conditions: rule.conditions as never,
+          points: rule.points,
+          maxApplications: rule.maxApplications,
+          ...(rule.decay ? { decay: rule.decay as never } : {}),
+          priority: rule.priority,
+        },
+      });
+      ruleIds.push(id);
+    }
+  }
+
+  const viewIds: string[] = [];
+  const existingView = await tx.savedView.findFirst({
+    where: { organizationId, entityType: 'lead' },
+  });
+  if (!existingView) {
+    for (const view of VIEW_SEEDS) {
+      const id = newId();
+      await tx.savedView.create({
+        data: {
+          id,
+          organizationId,
+          entityType: 'lead',
+          name: view.name,
+          filters: view.filters as never,
+          columns: view.columns as never,
+          sort: view.sort as never,
+          // Provisioned views belong to the whole workspace: a view only the owner can see is not
+          // a default, it is somebody's private list.
+          visibility: 'organization',
+          isSystem: true,
+          sortOrder: view.sortOrder,
+        },
+      });
+      viewIds.push(id);
+    }
+  }
+
+  return { bandIds, ruleIds, viewIds };
+}
+
+export const SCORING_DEFAULT_SEEDS = {
+  bands: BAND_SEEDS,
+  rules: SCORING_RULE_SEEDS,
+  views: VIEW_SEEDS,
+} as const;

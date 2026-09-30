@@ -558,6 +558,10 @@ model Organization {
   assignmentRuleConditions AssignmentRuleCondition[]
   assignmentPoolMembers    AssignmentPoolMember[]
   roundRobinStates         RoundRobinState[]
+  scoringRules             ScoringRule[]
+  scoreBands               ScoreBand[]
+  leadScoreEvents          LeadScoreEvent[]
+  savedViews               SavedView[]
 
   @@index([status])
   @@index([createdAt])
@@ -607,6 +611,7 @@ model Team {
   branch       Branch?      @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict, map: "teams_branch_same_org_fk")
   members      TeamMember[]
   leads        Lead[]
+  savedViews   SavedView[]
 
   @@unique([organizationId, id], name: "team_tenant_key")
   @@index([organizationId, deletedAt])
@@ -659,6 +664,7 @@ model Membership {
   workingHours            WorkingHours[]
   assignedLeads           Lead[]                   @relation("lead_assignee")
   assignmentPools         AssignmentPoolMember[]
+  savedViews              SavedView[]
 
   @@unique([organizationId, id], name: "membership_tenant_key")
   @@unique([organizationId, userId])
@@ -684,6 +690,7 @@ model Role {
   permissions  RolePermission[]
   users        UserRole[]
   invitations  Invitation[]
+  defaultViews SavedView[]
 
   @@unique([organizationId, id], name: "role_tenant_key")
   @@unique([organizationId, code])
@@ -1364,6 +1371,7 @@ model Lead {
   duplicateCandidateOf LeadDuplicate[]     @relation("duplicate_candidate")
   mergesAsSurvivor     LeadMerge[]         @relation("merge_survivor")
   mergesAsAbsorbed     LeadMerge[]         @relation("merge_absorbed")
+  scoreEvents          LeadScoreEvent[]
 
   @@unique([organizationId, id], name: "lead_tenant_key")
   /// The default list.
@@ -1722,4 +1730,146 @@ model RoundRobinState {
   @@unique([organizationId, id], name: "round_robin_state_tenant_key")
   @@unique([organizationId, ruleId])
   @@map("round_robin_state")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Scoring (FR-SCR-1..3)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// One additive or decay rule (`FR-SCR-1`).
+///
+/// `triggerEvent` names the domain event that makes the rule run, which is what keeps scoring out
+/// of the write path: a lead is created, the event goes through the outbox, and the scoring queue
+/// applies whatever rules that event triggers. A rule whose trigger no code path emits yet is
+/// refused at configuration time rather than stored inert — see `SCORING_TRIGGERS`.
+model ScoringRule {
+  id             String    @id @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  name           String
+  /// The domain event this rule reacts to, or `schedule.decay` for a decay rule.
+  triggerEvent   String    @map("trigger_event")
+  /// Flat AND-within-group / OR-across-groups conditions, the same shape assignment rules use.
+  conditions     Json      @default("[]") @db.JsonB
+  /// Points added when the rule applies. Negative is allowed: a bad signal costs points.
+  points         Int       @default(0)
+  /// How often this rule may apply to one lead. NULL means as often as its trigger fires.
+  maxApplications Int?     @map("max_applications")
+  /// `{ afterDays, points, everyDays, floor }` for a decay rule; NULL for an additive one.
+  decay          Json?     @db.JsonB
+  /// Lower runs first. Unlike assignment, **every** matching rule applies — this only orders them
+  /// so the breakdown reads in the order a business listed them.
+  priority       Int       @default(0)
+  isActive       Boolean   @default(true) @map("is_active")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  scoreEvents  LeadScoreEvent[]
+
+  @@unique([organizationId, id], name: "scoring_rule_tenant_key")
+  @@unique([organizationId, name])
+  @@index([organizationId, triggerEvent, isActive, priority])
+  @@map("scoring_rules")
+}
+
+/// A named slice of the score range (`FR-SCR-3`).
+///
+/// Bands are validated as a **partition** of 0–1000: no overlaps, no gaps. An overlap would make a
+/// lead's band depend on evaluation order, and a gap would leave a lead with a score and no band,
+/// quietly excluding it from every band-filtered view the business relies on.
+model ScoreBand {
+  id             String   @id @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  name           String
+  minScore       Int      @map("min_score")
+  maxScore       Int      @map("max_score")
+  colour         String?
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, id], name: "score_band_tenant_key")
+  @@unique([organizationId, name])
+  @@index([organizationId, minScore])
+  @@map("score_bands")
+}
+
+/// Every point a lead's score is made of (`FR-SCR-2`).
+///
+/// **`leads.score` is a cache of `sum(delta)` over these rows.** That is what makes the breakdown a
+/// manager reads identical to the arithmetic that produced the number, and recomputation a re-sum
+/// rather than a re-derivation. `sourceEventId` carries the outbox event id, so a redelivery of the
+/// same event scores once — enforced by a partial unique index rather than by application logic.
+model LeadScoreEvent {
+  id             String   @id @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  leadId         String   @map("lead_id") @db.Uuid
+  /// NULL for an adjustment that no rule produced (a recompute correction, a manual override).
+  ruleId         String?  @map("rule_id") @db.Uuid
+  delta          Int
+  /// The rule's name at the time, or a sentence for an adjustment: this has to stay readable after
+  /// the rule is renamed or deleted.
+  reason         String
+  /// The score after applying this delta, so the breakdown reads as a running balance.
+  scoreAfter     Int      @map("score_after")
+  /// The outbox event that caused this, when there was one.
+  sourceEventId  String?  @map("source_event_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lead         Lead         @relation(fields: [organizationId, leadId], references: [organizationId, id], onDelete: Cascade, map: "lead_score_events_lead_same_org_fk")
+  rule         ScoringRule? @relation(fields: [organizationId, ruleId], references: [organizationId, id], onDelete: Restrict, map: "lead_score_events_rule_same_org_fk")
+
+  @@unique([organizationId, id], name: "lead_score_event_tenant_key")
+  @@index([organizationId, leadId, createdAt])
+  @@index([organizationId, ruleId])
+  @@map("lead_score_events")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Saved views (FR-VIEW-3)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// A filter a business saved and named.
+///
+/// `filters` holds the DSL from `@leados/shared/filters`, validated before it is stored — a view
+/// that fails at read time fails on somebody's dashboard while they are trying to work. Date
+/// conditions may carry a *named window* (`{ window: 'today' }`) rather than a timestamp, which is
+/// what stops "Today's Follow-ups" meaning last Tuesday forever.
+model SavedView {
+  id             String    @id @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  /// NULL for a view the system provisioned, which nobody personally owns.
+  ownerId        String?   @map("owner_id") @db.Uuid
+  entityType     String    @map("entity_type")
+  name           String
+  /// `{ conditions: [{ field, operator, value, groupIndex }] }`.
+  filters        Json      @default("{}") @db.JsonB
+  /// Which columns the list shows, in order.
+  columns        Json      @default("[]") @db.JsonB
+  /// `{ field, direction }`.
+  sort           Json      @default("{}") @db.JsonB
+  visibility     String    @default("private")
+  /// Required when `visibility` is `team`; ignored otherwise.
+  teamId         String?   @map("team_id") @db.Uuid
+  /// When set, this is the view members of that role land on.
+  defaultForRoleId String? @map("default_for_role_id") @db.Uuid
+  /// True for the views provisioning created, so "reset my views" can tell them apart.
+  isSystem       Boolean   @default(false) @map("is_system")
+  sortOrder      Int       @default(0) @map("sort_order")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  owner        Membership?  @relation(fields: [organizationId, ownerId], references: [organizationId, userId], onDelete: Cascade, map: "saved_views_owner_same_org_fk")
+  team         Team?        @relation(fields: [organizationId, teamId], references: [organizationId, id], onDelete: Restrict, map: "saved_views_team_same_org_fk")
+  role         Role?        @relation(fields: [organizationId, defaultForRoleId], references: [organizationId, id], onDelete: Restrict, map: "saved_views_role_same_org_fk")
+
+  @@unique([organizationId, id], name: "saved_view_tenant_key")
+  @@index([organizationId, entityType, visibility])
+  @@index([organizationId, ownerId, entityType])
+  @@map("saved_views")
 }

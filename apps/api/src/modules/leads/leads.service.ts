@@ -17,6 +17,9 @@ import { AuditService } from '../../infra/audit/audit.service.js';
 import { OutboxService, type DomainEventInput } from '../../infra/outbox/outbox.service.js';
 import { TimelineService } from '../../infra/timeline/timeline.service.js';
 import { DataScopeService, applyScopeFilter } from '../../infra/authz/data-scope.service.js';
+import { FilterCompilerService } from '../views/filter-compiler.service.js';
+import { ViewsService } from '../views/views.service.js';
+import { ScoringEngineService } from '../scoring/scoring-engine.service.js';
 import { EntitlementService } from '../../infra/entitlements/entitlement.service.js';
 import { FieldRegistryService } from '../custom-fields/field-registry.service.js';
 import {
@@ -24,6 +27,7 @@ import {
   type DuplicateCandidate,
 } from '../duplicates/duplicate-detection.service.js';
 import { AssignmentEngineService } from '../assignment/assignment-engine.service.js';
+import type { SearchLeadsInput } from '../views/views.dto.js';
 import type {
   AddTouchpointInput,
   AssignLeadInput,
@@ -65,6 +69,9 @@ export class LeadsService {
     private readonly audit: AuditService,
     private readonly outbox: OutboxService,
     private readonly timeline: TimelineService,
+    private readonly filters: FilterCompilerService,
+    private readonly views: ViewsService,
+    private readonly scoring: ScoringEngineService,
   ) {}
 
   // ── Reading ───────────────────────────────────────────────────────────────
@@ -121,6 +128,134 @@ export class LeadsService {
         total,
       },
     };
+  }
+
+  /**
+   * The filter-driven list (`FR-VIEW-2`, `FR-VIEW-3`).
+   *
+   * A POST, because a filter is a nested object that has no business in a query string. A saved
+   * view and an ad-hoc filter run through **the same** compile-and-query path: two paths would
+   * drift, and the one that drifted would be the saved view, which is what a business opens every
+   * morning.
+   *
+   * Data scoping is applied *after* the filter compiles and is combined with `AND`, so a filter can
+   * only ever narrow what a caller is allowed to see. A filter that named another person's leads
+   * returns nothing rather than being refused — the refusal would confirm they exist.
+   */
+  async search(input: SearchLeadsInput) {
+    const scopeFilter = this.scopes.filterFor(PERMISSIONS.LEAD_READ, {
+      userColumn: 'assignedUserId',
+      teamColumn: 'teamId',
+      branchColumn: 'branchId',
+    });
+
+    let filter = input.filter as unknown;
+    let sort = input.sort;
+    let viewName: string | null = null;
+    if (input.viewId) {
+      const view = await this.views.forSearch(input.viewId);
+      viewName = view.name;
+      filter = view.filters;
+      // An explicit sort in the request wins: a person clicking a column header on a saved view
+      // means to re-sort it, not to save it.
+      sort = sort ?? (view.sort as SearchLeadsInput['sort']);
+    }
+
+    const compiled = await this.filters.compile({
+      filter,
+      ...(input.at ? { at: input.at } : {}),
+    });
+
+    const baseWhere: Record<string, unknown> = {
+      deletedAt: input.deleted === true ? { not: null } : null,
+      ...(Object.keys(compiled.where).length > 0 ? { AND: [compiled.where] } : {}),
+    };
+    const scopedWhere = applyScopeFilter(baseWhere, scopeFilter);
+    if (scopedWhere === null) {
+      return { ...this.emptyPage(input.limit), meta: { view: viewName, filter: compiled.applied } };
+    }
+
+    const orderBy = this.searchOrder(sort);
+    const [total, rows] = await Promise.all([
+      this.db.client.lead.count({ where: scopedWhere }),
+      this.db.client.lead.findMany({
+        where: scopedWhere,
+        orderBy,
+        take: input.limit + 1,
+        ...(input.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
+        include: this.listInclude(),
+      }),
+    ]);
+
+    const page = rows.slice(0, input.limit);
+    const hasMore = rows.length > input.limit;
+    return {
+      items: page.map((lead) => this.presentSummary(lead)),
+      pagination: {
+        limit: input.limit,
+        nextCursor: hasMore ? (page[page.length - 1]?.id ?? null) : null,
+        hasMore,
+        total,
+      },
+      /**
+       * Echoed so a list can say what it is showing, and why these rows. In `meta` because the
+       * response envelope lifts a paginated payload's `items` to `data` and would otherwise drop
+       * any sibling key.
+       */
+      meta: { view: viewName, filter: compiled.applied },
+    };
+  }
+
+  /** The score breakdown (`FR-SCR-2`), on the lead where a person looks for it. */
+  async scoreBreakdown(id: string) {
+    const lead = await this.db.client.lead.findFirst({
+      where: { id },
+      select: { id: true, assignedUserId: true, teamId: true, branchId: true },
+    });
+    if (!lead) throw AppError.notFound('Lead');
+    this.assertCanSee(lead);
+    const breakdown = await this.scoring.breakdown(id);
+    /* c8 ignore next */
+    if (!breakdown) throw AppError.notFound('Lead');
+    return breakdown;
+  }
+
+  /**
+   * Re-sums a lead's score events and corrects the cached column.
+   *
+   * `lead:update` rather than `lead:read`: it writes. Offered at all because a band edit, a rule
+   * deletion or a restored merge can leave the cached score behind, and "recalculate" is a thing a
+   * manager should be able to do without waiting for a nightly job.
+   */
+  async recomputeScore(id: string) {
+    const lead = await this.db.client.lead.findFirst({
+      where: { id, deletedAt: null },
+      select: { id: true, assignedUserId: true, teamId: true, branchId: true },
+    });
+    if (!lead) throw AppError.notFound('Lead');
+    if (
+      !this.scopes.canAct(PERMISSIONS.LEAD_UPDATE, {
+        userId: lead.assignedUserId,
+        teamId: lead.teamId,
+        branchId: lead.branchId,
+      })
+    ) {
+      throw AppError.notFound('Lead');
+    }
+    const result = await this.scoring.recompute(id);
+    /* c8 ignore next */
+    if (!result) throw AppError.notFound('Lead');
+    return result;
+  }
+
+  /**
+   * The sort for a filtered search. Only indexed columns are offered, and the id tiebreak is what
+   * makes cursor pagination stable when two leads share a timestamp.
+   */
+  private searchOrder(sort: SearchLeadsInput['sort']) {
+    const field = sort?.field ?? 'createdAt';
+    const direction = sort?.direction ?? 'desc';
+    return [{ [field]: direction }, { id: direction }] as Record<string, 'asc' | 'desc'>[];
   }
 
   async findOne(id: string) {

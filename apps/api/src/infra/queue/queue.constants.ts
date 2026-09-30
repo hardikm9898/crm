@@ -11,6 +11,12 @@ export const QUEUES = {
   NOTIFICATIONS: 'notifications',
   /** Platform-scoped housekeeping: retention, sweeps, reconciliation. */
   MAINTENANCE: 'maintenance',
+  /**
+   * Lead scoring. Separate from notifications because a scoring backlog must never delay an
+   * invitation email, and because scoring is the queue most likely to be replayed in bulk after a
+   * rule change.
+   */
+  SCORING: 'scoring',
 } as const;
 
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
@@ -37,6 +43,9 @@ export const JOBS = {
   OUTBOX_REAP: 'maintenance.outbox-reap',
   ACTIVITY_PARTITIONS: 'maintenance.activity-partitions',
   LEAD_RECYCLE: 'maintenance.lead-recycle',
+
+  LEAD_SCORE: 'lead.score',
+  SCORE_DECAY_SWEEP: 'score.decay-sweep',
 } as const;
 
 export type JobName = (typeof JOBS)[keyof typeof JOBS];
@@ -53,6 +62,9 @@ export const QUEUE_POLICIES: Readonly<Record<QueueName, QueuePolicy>> = {
   // Housekeeping is idempotent and runs on a schedule, so a failure can wait for the next tick
   // rather than being retried aggressively.
   [QUEUES.MAINTENANCE]: { attempts: 3, backoffDelayMs: 30_000, concurrency: 2 },
+  // Idempotent per `(lead, rule, source event)`, so a retry is free; three attempts is enough to
+  // ride out a transient database blip without holding a lead's score hostage.
+  [QUEUES.SCORING]: { attempts: 3, backoffDelayMs: 5_000, concurrency: 10 },
 };
 
 /**

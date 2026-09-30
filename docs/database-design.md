@@ -281,6 +281,13 @@ Partial: (organization_id, assigned_user_id) WHERE next_action_at IS NULL AND st
 | `customer_merges`                           | As per leads            | —                                                                                                                                                                                                                                                                                                             |
 | `saved_views`                               | Filters/views           | org, owner_id?, `entity_type`, name, `filters JSONB`, `columns JSONB`, `sort JSONB`, `visibility (private                                                                                                                                                                                                     | team   | org)`, `is_default_for_role?` (`FR-VIEW-3`) |
 
+> **Amendment, 2026-09-30 (implementation).** `saved_views` also carries `team_id` and
+> `default_for_role_id`. `visibility = 'team'` is meaningless without naming _which_ team, and
+> `is_default_for_role` as a boolean cannot say which role — both are foreign keys, composite and
+> tenant-scoped like every other reference. Uniqueness is partial rather than absolute: one view name
+> per owner, one per name among the views everyone can see, one landing view per role per entity,
+> each `WHERE deleted_at IS NULL` so a deleted view's name is reusable.
+
 ### 6.3 Pipelines, assignment, scoring
 
 | Table                        | Key columns                                                                                                                                                            |
@@ -293,6 +300,21 @@ Partial: (organization_id, assigned_user_id) WHERE next_action_at IS NULL AND st
 | `round_robin_state`          | `(organization_id, rule_id) UQ`, `cursor_index`, `last_assigned_user_id`, `updated_at` (Redis is the fast path; this row is the durable truth)                         |
 | `scoring_rules`              | org, name, `trigger_event`, `conditions JSONB`, `points INT`, `max_applications?`, `decay JSONB?`, is_active                                                           |
 | `score_bands`                | org, name, `min_score`, `max_score`, colour                                                                                                                            |
+
+> **Amendment, 2026-09-30 (implementation).** Three refinements, each forced by a silent failure:
+>
+> - **Bands are a partition of 0–1000, enforced by an exclusion constraint** (`score_bands_no_overlap`,
+>   which needs `btree_gist`). An overlap would make a lead's band depend on evaluation order; a gap
+>   would leave a lead with a score and no band, missing from every band-filtered view. The
+>   application refuses both with a readable message; the constraint is what holds when two band
+>   replacements interleave.
+> - **`scoring_rules` ties `decay` to the trigger**: `(trigger_event = 'schedule.decay') = (decay IS
+NOT NULL)`. An additive rule on the sweep never fires and a decay spec on `lead.created` is never
+>   swept — both are misconfigurations nothing would report.
+> - **`lead_score_events` is the authoritative score** ([ADR-0015](./decisions/ADR-0015-score-as-event-sum.md)):
+>   `leads.score` caches its sum, idempotency is `UNIQUE (organization_id, lead_id, rule_id,
+source_event_id) WHERE source_event_id IS NOT NULL`, and `delta <> 0` keeps rows that changed
+>   nothing out of an explanation meant to read as arithmetic.
 
 ### 6.4 Tasks, SLA, activities
 

@@ -11,3 +11,5 @@ export * from './custom-fields.js';
 export * from './custom-field-validation.js';
 export * from './duplicates.js';
 export * from './assignment.js';
+export * from './scoring.js';
+export * from './filters.js';

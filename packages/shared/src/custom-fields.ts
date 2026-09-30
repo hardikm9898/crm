@@ -88,6 +88,17 @@ export interface CustomFieldTypeSpec {
   readonly searchable: boolean;
   /** Human sentence used by the field-builder UI and by import error messages. */
   readonly describe: string;
+  /**
+   * For a type stored as an object: the JSON sub-path holding the value worth comparing.
+   *
+   * A currency value is stored as `{ currency, amountMinor }`, so a filter on it has to compare
+   * `budget.amountMinor`, not `budget`. Declared here rather than in the filter compiler because
+   * this file is where "how is this type stored" is decided, and a compiler that guessed would
+   * compare an object against a number and match nothing — silently, which is how this was found.
+   */
+  readonly comparablePath?: readonly string[];
+  /** Units the comparable value is in, so a client knows what to send. */
+  readonly comparableUnit?: 'minor';
 }
 
 const TEXT_OPS: readonly FilterOperator[] = [
@@ -171,6 +182,8 @@ export const CUSTOM_FIELD_SPECS: Readonly<Record<CustomFieldType, CustomFieldTyp
     // codebase: a float cannot represent 0.1 and an invoice cannot be off by a paisa.
     type: 'currency',
     storage: 'object',
+    comparablePath: ['amountMinor'],
+    comparableUnit: 'minor',
     requiresOptions: false,
     multiValue: false,
     validation: ['min', 'max'],

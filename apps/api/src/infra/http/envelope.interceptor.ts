@@ -18,6 +18,14 @@ import { requestStore } from './request-store.js';
 
 export interface Paginated<T> {
   readonly items: readonly T[];
+  /**
+   * Extra context about *this* result, merged into the envelope's `meta`.
+   *
+   * Without it a paginated handler can only return rows: every other key it returns is dropped on
+   * the floor, silently. That cost a debugging session — `POST /leads/search` echoes which saved
+   * view ran and which conditions were applied, and the answer simply never reached the client.
+   */
+  readonly meta?: Record<string, unknown>;
   readonly pagination: {
     readonly limit: number;
     readonly nextCursor: string | null;
@@ -64,6 +72,7 @@ export class EnvelopeInterceptor implements NestInterceptor {
 
         if (isPaginated(payload)) {
           meta['pagination'] = payload.pagination;
+          if (payload.meta) Object.assign(meta, payload.meta);
           return { success: true, data: payload.items, meta } satisfies ResponseEnvelope<unknown>;
         }
 

@@ -91,6 +91,25 @@ change, or typecheck will fail confusingly.
 - **`pkill -f <pattern>` matches its own shell.** It kills the command chain it is part of (exit
   144), so anything after it in the same invocation never runs. Match on the child's own name
   (`pgrep -a next-server | … | xargs kill`) instead.
+- **Fastify rejects an empty body when `content-type: application/json` is set**, with "Body cannot be
+  empty…" — a 400 on every action endpoint that takes no payload, from any client that sets a default
+  content-type. `allowEmptyJsonBody()` parses an empty body as `{}`. It must use Nest's
+  `adapter.useBodyParser`, which also marks parsers as registered: Nest registers its own during
+  `listen()`, _after_ bootstrap code runs, so `addContentTypeParser` — with or without
+  `removeContentTypeParser` or `removeAllContentTypeParsers` first — loses the race and the app dies
+  with `FST_ERR_CTP_ALREADY_PRESENT`.
+- **The response envelope drops a paginated payload's sibling keys.** `{ items, pagination }` becomes
+  `{ data, meta.pagination }`, and anything else the handler returned is silently discarded. Return a
+  `meta` object for extra context; it is merged into the envelope's `meta`.
+- **A queue processor that reads-then-writes one row needs the row lock.** The scoring queue runs at
+  concurrency 10 and the same lead has several events in flight; two jobs read `score = 0` and both
+  wrote `15`, leaving two score events worth 30 under a cached 15. Everything derived from existing
+  rows — a running total, a `maxApplications` count, how much decay is already applied — must be read
+  _after_ `SELECT … FOR UPDATE`, not before.
+- **A `currency` custom field is stored as `{ currency, amountMinor }`, not a number.** Filtering
+  `custom.budget` against a number compares an object and matches nothing, silently. The comparable
+  sub-path is declared per type in `CUSTOM_FIELD_SPECS.comparablePath`; money filters take **minor
+  units**, which the filter catalogue states per field.
 
 - **A unique constraint on a partitioned table must contain the partition key.** `activities` is
   partitioned by `occurred_at`, so its primary key is `(id, occurred_at)` and its idempotency key is

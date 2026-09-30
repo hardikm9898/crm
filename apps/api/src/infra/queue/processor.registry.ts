@@ -18,6 +18,10 @@ import {
   TrialExpiredNotificationProcessor,
   UnassignedLeadNotificationProcessor,
 } from '../../modules/notifications/notifications.processor.js';
+import {
+  LeadScoreProcessor,
+  ScoreDecaySweepProcessor,
+} from '../../modules/scoring/scoring.processor.js';
 import type { JobProcessor } from './job-processor.js';
 
 /**
@@ -48,6 +52,9 @@ export const PROCESSOR_TYPES: readonly Type<JobProcessor>[] = [
   OutboxReapProcessor,
   ActivityPartitionProcessor,
   LeadRecycleProcessor,
+  // scoring
+  LeadScoreProcessor,
+  ScoreDecaySweepProcessor,
 ];
 
 /** Resolves the processors from a Nest context (application or test). */

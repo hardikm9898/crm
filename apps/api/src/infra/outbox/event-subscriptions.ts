@@ -29,20 +29,24 @@ export const EVENT_SUBSCRIPTIONS: Readonly<Record<string, readonly EventSubscrip
   // A lead nobody picked up is the most expensive silent failure in the product, so it has its own
   // event rather than being inferred from `lead.assigned` with a null (`FR-ASG-4`).
   'lead.unassigned_pool': [{ queue: QUEUES.NOTIFICATIONS, jobName: JOBS.NOTIFY_LEAD_UNASSIGNED }],
+  // Scoring reacts to what a lead does (`FR-SCR-2`). Every one of these is a trigger a tenant may
+  // write a rule on, and the job name is the same for all of them — the processor reads which event
+  // it was from the envelope, so adding a trigger is a line here and an entry in `SCORING_TRIGGERS`.
+  'lead.created': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }],
+  'lead.updated': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }],
+  'lead.assigned': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }],
+  'lead.status_changed': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }],
+  'lead.stage_changed': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }],
+  'lead.touchpoint_added': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }],
   // Recorded but not yet consumed. Listed explicitly so the set of known events is visible, and so
   // a typo in an event name shows up as "unsubscribed" rather than silently doing nothing.
   'organization.created': [],
   'onboarding.completed': [],
-  'lead.created': [],
-  'lead.updated': [],
   'lead.deleted': [],
-  'lead.assigned': [],
-  'lead.status_changed': [],
-  'lead.stage_changed': [],
   'lead.merged': [],
   'lead.merge_undone': [],
-  'lead.touchpoint_added': [],
   'lead.recycled': [],
+  'lead.score_changed': [],
 };
 
 export function subscribersFor(eventName: string): readonly EventSubscription[] {

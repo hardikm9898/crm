@@ -690,6 +690,245 @@ describe('layer 3 — duplicates and assignment cannot reference across tenants 
   });
 });
 
+describe('layer 3 — scoring and saved views cannot reference across tenants either', () => {
+  it('blocks a score event on another tenant’s lead', async () => {
+    await expect(
+      h.unscoped.leadScoreEvent.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          leadId: h.orgB.leadId,
+          delta: 10,
+          reason: 'Cross tenant',
+          scoreAfter: 10,
+        },
+      }),
+    ).rejects.toThrow(/lead_score_events_lead_same_org_fk|foreign key/i);
+  });
+
+  it('blocks a score event scored by another tenant’s rule', async () => {
+    const ruleId = newId();
+    await h.unscoped.scoringRule.create({
+      data: {
+        id: ruleId,
+        organizationId: h.orgB.organizationId,
+        name: `orgb-${ruleId.slice(0, 8)}`,
+        triggerEvent: 'lead.created',
+        points: 10,
+      },
+    });
+    await expect(
+      h.unscoped.leadScoreEvent.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          leadId: h.orgA.leadId,
+          ruleId,
+          delta: 10,
+          reason: 'Cross tenant rule',
+          scoreAfter: 10,
+        },
+      }),
+    ).rejects.toThrow(/lead_score_events_rule_same_org_fk|foreign key/i);
+    await h.unscoped.scoringRule.delete({ where: { id: ruleId } });
+  });
+
+  it('makes two overlapping bands unrepresentable, and adjacency still fine', async () => {
+    // An exclusion constraint rather than a check: a band set is replaced as a whole, and two
+    // concurrent replacements could otherwise interleave into an overlap no request asked for.
+    const first = newId();
+    await h.unscoped.scoreBand.create({
+      data: {
+        id: first,
+        organizationId: h.orgA.organizationId,
+        name: `low-${first.slice(0, 6)}`,
+        minScore: 0,
+        maxScore: 100,
+      },
+    });
+    await expect(
+      h.unscoped.scoreBand.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          name: `overlap-${first.slice(0, 6)}`,
+          minScore: 100,
+          maxScore: 200,
+        },
+      }),
+    ).rejects.toThrow(/score_bands_no_overlap|conflicting key/i);
+
+    const adjacent = newId();
+    await h.unscoped.scoreBand.create({
+      data: {
+        id: adjacent,
+        organizationId: h.orgA.organizationId,
+        name: `next-${adjacent.slice(0, 6)}`,
+        minScore: 101,
+        maxScore: 200,
+      },
+    });
+
+    // The constraint is per organization: the other tenant may use the same range.
+    const otherTenant = newId();
+    await h.unscoped.scoreBand.create({
+      data: {
+        id: otherTenant,
+        organizationId: h.orgB.organizationId,
+        name: `same-range-${otherTenant.slice(0, 6)}`,
+        minScore: 0,
+        maxScore: 100,
+      },
+    });
+
+    await h.unscoped.scoreBand.deleteMany({
+      where: { id: { in: [first, adjacent, otherTenant] } },
+    });
+  });
+
+  it('ties a scoring rule’s decay to the decay trigger, in both directions', async () => {
+    const base = {
+      organizationId: h.orgA.organizationId,
+      triggerEvent: 'schedule.decay',
+      points: 0,
+    };
+    await expect(
+      h.unscoped.scoringRule.create({
+        data: { ...base, id: newId(), name: `sweep-no-decay-${newId().slice(0, 6)}` },
+      }),
+    ).rejects.toThrow(/scoring_rules_decay_matches_trigger/i);
+
+    await expect(
+      h.unscoped.scoringRule.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          name: `event-with-decay-${newId().slice(0, 6)}`,
+          triggerEvent: 'lead.created',
+          points: 5,
+          decay: { afterDays: 1, points: 1, everyDays: 1, floor: 0 },
+        },
+      }),
+    ).rejects.toThrow(/scoring_rules_decay_matches_trigger/i);
+  });
+
+  it('refuses a score event worth nothing', async () => {
+    // A zero-delta row is noise in a breakdown that is meant to read as arithmetic.
+    await expect(
+      h.unscoped.leadScoreEvent.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          leadId: h.orgA.leadId,
+          delta: 0,
+          reason: 'Nothing happened',
+          scoreAfter: 0,
+        },
+      }),
+    ).rejects.toThrow(/lead_score_events_delta_not_zero/i);
+  });
+
+  it('blocks a saved view owned by a member of another tenant', async () => {
+    await expect(
+      h.unscoped.savedView.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          ownerId: h.orgB.userId,
+          entityType: 'lead',
+          name: `cross-owner-${newId().slice(0, 6)}`,
+        },
+      }),
+    ).rejects.toThrow(/saved_views_owner_same_org_fk|foreign key/i);
+  });
+
+  it('blocks a saved view shared with another tenant’s team', async () => {
+    await expect(
+      h.unscoped.savedView.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          entityType: 'lead',
+          name: `cross-team-${newId().slice(0, 6)}`,
+          visibility: 'team',
+          teamId: h.orgB.teamId,
+        },
+      }),
+    ).rejects.toThrow(/saved_views_team_same_org_fk|foreign key/i);
+  });
+
+  it('refuses a team view with no team and an unknown visibility', async () => {
+    await expect(
+      h.unscoped.savedView.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          entityType: 'lead',
+          name: `teamless-${newId().slice(0, 6)}`,
+          visibility: 'team',
+        },
+      }),
+    ).rejects.toThrow(/saved_views_team_requires_team/i);
+
+    await expect(
+      h.unscoped.savedView.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          entityType: 'lead',
+          name: `worldwide-${newId().slice(0, 6)}`,
+          visibility: 'world',
+        },
+      }),
+    ).rejects.toThrow(/saved_views_visibility/i);
+  });
+
+  it('allows one landing view per role, and a second only after the first is deleted', async () => {
+    const firstId = newId();
+    await h.unscoped.savedView.create({
+      data: {
+        id: firstId,
+        organizationId: h.orgA.organizationId,
+        entityType: 'lead',
+        name: `landing-${firstId.slice(0, 6)}`,
+        visibility: 'organization',
+        defaultForRoleId: h.orgA.roleId,
+      },
+    });
+    await expect(
+      h.unscoped.savedView.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          entityType: 'lead',
+          name: `landing-two-${firstId.slice(0, 6)}`,
+          visibility: 'organization',
+          defaultForRoleId: h.orgA.roleId,
+        },
+      }),
+    ).rejects.toThrow(/saved_views_one_default_per_role|unique/i);
+
+    // The index is partial on `deleted_at`, so soft-deleting the first frees the role.
+    await h.unscoped.savedView.update({
+      where: { id: firstId },
+      data: { deletedAt: new Date() },
+    });
+    const secondId = newId();
+    await h.unscoped.savedView.create({
+      data: {
+        id: secondId,
+        organizationId: h.orgA.organizationId,
+        entityType: 'lead',
+        name: `landing-three-${secondId.slice(0, 6)}`,
+        visibility: 'organization',
+        defaultForRoleId: h.orgA.roleId,
+      },
+    });
+
+    await h.unscoped.savedView.deleteMany({ where: { id: { in: [firstId, secondId] } } });
+  });
+});
+
 describe('layer 2 — the CRM models are scoped like every other tenant table', () => {
   it('shows each tenant only its own leads', async () => {
     const a = await tenantContext.run(h.orgA.principal, async () => h.db.lead.findMany({}));

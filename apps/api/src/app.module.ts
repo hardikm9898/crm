@@ -28,6 +28,8 @@ import { CrmConfigModule } from './modules/crm-config/crm-config.module.js';
 import { DuplicatesModule } from './modules/duplicates/duplicates.module.js';
 import { AssignmentModule } from './modules/assignment/assignment.module.js';
 import { LeadsModule } from './modules/leads/leads.module.js';
+import { ScoringModule } from './modules/scoring/scoring.module.js';
+import { ViewsModule } from './modules/views/views.module.js';
 import { HealthModule } from './modules/health/health.module.js';
 
 /**
@@ -59,6 +61,8 @@ import { HealthModule } from './modules/health/health.module.js';
     CrmConfigModule,
     DuplicatesModule,
     AssignmentModule,
+    ScoringModule,
+    ViewsModule,
     LeadsModule,
     MaintenanceModule,
     HealthModule,

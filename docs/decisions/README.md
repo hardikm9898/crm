@@ -19,3 +19,4 @@ A decision is changed by writing a **new** ADR that supersedes the old one, neve
 | [0012](./ADR-0012-global-identity-tenant-membership.md) | Global user identity, tenant-scoped membership                  | Accepted |
 | [0013](./ADR-0013-hs256-access-tokens.md)               | HS256 access tokens until a second verifier exists              | Accepted |
 | [0014](./ADR-0014-duplicate-matching.md)                | Duplicate rules as field sets; first rule wins; phone aliases   | Accepted |
+| [0015](./ADR-0015-score-as-event-sum.md)                | A lead's score is the sum of its score events                   | Accepted |

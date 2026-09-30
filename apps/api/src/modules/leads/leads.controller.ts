@@ -29,6 +29,7 @@ import {
   type ListLeadsQuery,
   type TimelineQuery,
 } from './leads.dto.js';
+import { searchLeadsSchema } from '../views/views.dto.js';
 
 /**
  * Leads.
@@ -159,5 +160,35 @@ export class LeadsController {
     @Query(new ZodBody(timelineQuerySchema)) query: TimelineQuery,
   ) {
     return this.timeline.forLead(id, query);
+  }
+
+  // ── Filtered search and scoring ───────────────────────────────────────────
+
+  /**
+   * The filter-driven list (`FR-VIEW-2`).
+   *
+   * A POST that reads: a filter is a nested object and a saved view's filter can exceed what a URL
+   * should carry. `GET /leads` keeps the simple parameters for links and bookmarks.
+   */
+  @Post('search')
+  @HttpCode(200)
+  @RequirePermission(PERMISSIONS.LEAD_READ)
+  async search(@Body(zodBody(searchLeadsSchema)) body: unknown) {
+    return this.leads.search(body as Parameters<LeadsService['search']>[0]);
+  }
+
+  /** Which rules gave this lead its points (`FR-SCR-2`). */
+  @Get(':id/score-breakdown')
+  @RequirePermission(PERMISSIONS.LEAD_READ)
+  async scoreBreakdown(@Param('id') id: string) {
+    return this.leads.scoreBreakdown(id);
+  }
+
+  /** Re-sums the score events and corrects the cached score. Writes, hence `lead:update`. */
+  @Post(':id/recompute-score')
+  @HttpCode(200)
+  @RequirePermission(PERMISSIONS.LEAD_UPDATE)
+  async recomputeScore(@Param('id') id: string) {
+    return withMessage(await this.leads.recomputeScore(id), 'Score recalculated');
   }
 }

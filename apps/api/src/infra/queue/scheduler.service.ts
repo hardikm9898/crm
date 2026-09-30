@@ -69,6 +69,15 @@ export const SCHEDULES: readonly ScheduleDefinition[] = [
     cron: '53 5 * * *',
     description: 'Return leads nobody has touched in N days to the unassigned pool',
   },
+  {
+    queue: QUEUES.SCORING,
+    jobName: JOBS.SCORE_DECAY_SWEEP,
+    // Overnight, before anyone opens the app: a score that decayed at 1am is right when the first
+    // executive looks at their list, and the sweep's own cost lands when nothing else is running
+    // (docs/queue-event-architecture.md §6 puts it at 01:00).
+    cron: '7 1 * * *',
+    description: 'Take points off leads nobody has touched, so a stale score cannot look hot',
+  },
 ];
 
 const HEARTBEAT_INTERVAL_MS = 30_000;

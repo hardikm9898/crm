@@ -54,6 +54,11 @@ export const TENANT_MODELS = [
   'AssignmentRuleCondition',
   'AssignmentPoolMember',
   'RoundRobinState',
+  // Phase 2, step 3 — scoring and saved views
+  'ScoringRule',
+  'ScoreBand',
+  'LeadScoreEvent',
+  'SavedView',
 ] as const;
 
 export type TenantModel = (typeof TENANT_MODELS)[number];

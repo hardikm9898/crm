@@ -21,7 +21,10 @@ export {
   CRM_DEFAULT_SEEDS,
   seedCrmDefaults,
   seedDefaultAssignmentRule,
+  SCORING_DEFAULT_SEEDS,
+  seedScoringAndViews,
   type CrmDefaultsResult,
+  type ScoringDefaultsResult,
 } from './seeding/crm-defaults.js';
 
 // Model types and enums, so application modules never import @prisma/client directly.

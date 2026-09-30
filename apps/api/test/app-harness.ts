@@ -11,6 +11,7 @@ import { AppModule } from '../src/app.module.js';
 import { LOGGER } from '../src/infra/observability/logger.module.js';
 import { RedisService } from '../src/infra/redis/redis.service.js';
 import { EnvelopeInterceptor } from '../src/infra/http/envelope.interceptor.js';
+import { allowEmptyJsonBody } from '../src/infra/http/empty-json-body.js';
 import { AppExceptionFilter } from '../src/infra/http/app-exception.filter.js';
 
 /**
@@ -34,6 +35,7 @@ export async function bootTestApp(): Promise<TestApp> {
 
   const logger = app.get<Logger>(LOGGER);
   app.setGlobalPrefix('api/v1', { exclude: ['health/live', 'health/ready', 'health/deep'] });
+  allowEmptyJsonBody(app, 256 * 1024);
   app.useGlobalInterceptors(new EnvelopeInterceptor());
   app.useGlobalFilters(new AppExceptionFilter(logger));
   await app.init();
