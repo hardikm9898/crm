@@ -35,7 +35,7 @@ export async function callApi<T>(
  * them into a field map is what lets a form point at the input that is wrong instead of showing one
  * sentence at the top.
  */
-function fieldErrorsOf(error: unknown): { fieldErrors?: Record<string, string> } {
+export function fieldErrorsOf(error: unknown): { fieldErrors?: Record<string, string> } {
   const details = (error as { details?: unknown } | null)?.details;
   if (!Array.isArray(details)) return {};
   const fieldErrors: Record<string, string> = {};
@@ -45,6 +45,20 @@ function fieldErrorsOf(error: unknown): { fieldErrors?: Record<string, string> }
     if (typeof field === 'string' && typeof message === 'string') fieldErrors[field] = message;
   }
   return Object.keys(fieldErrors).length > 0 ? { fieldErrors } : {};
+}
+
+/**
+ * The text fields of a submission, for echoing back into a refused form.
+ *
+ * Files are skipped: they cannot be restored into an input, and putting a filename there would
+ * suggest the upload survived when it did not.
+ */
+export function submittedValues(form: FormData): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const [key, value] of form.entries()) {
+    if (typeof value === 'string') values[key] = value;
+  }
+  return values;
 }
 
 /** `FormData` values are strings or files; forms want trimmed strings and real absences. */

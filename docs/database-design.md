@@ -301,6 +301,15 @@ Partial: (organization_id, assigned_user_id) WHERE next_action_at IS NULL AND st
 | `scoring_rules`              | org, name, `trigger_event`, `conditions JSONB`, `points INT`, `max_applications?`, `decay JSONB?`, is_active                                                           |
 | `score_bands`                | org, name, `min_score`, `max_score`, colour                                                                                                                            |
 
+> **Amendment, 2026-10-05 (implementation).** Postgres indexes the **referenced** side of a foreign
+> key, never the referencing side. `leads.is_duplicate_of_id` and `leads.merged_into_id` point back
+> at `leads` with `ON DELETE RESTRICT`, so before `leads_duplicate_of` and `leads_merged_into`
+> existed, deleting a lead scanned the whole `leads` table twice — once per constraint. Invisible at
+> demo scale; on the 100 k-lead fixture in `packages/db/perf` the statement was still running after
+> three minutes, and with the indexes it takes five seconds. **Every new FK whose referencing
+> columns are not already the prefix of an index needs one**, and a cascade or a retention purge is
+> where its absence surfaces.
+
 > **Amendment, 2026-09-30 (implementation).** Three refinements, each forced by a silent failure:
 >
 > - **Bands are a partition of 0–1000, enforced by an exclusion constraint** (`score_bands_no_overlap`,

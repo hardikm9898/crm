@@ -68,6 +68,10 @@ const REQUIRED_INDEXES = [
   'saved_views_one_default_per_role',
   'leads_score_band',
   'leads_decay_candidates',
+  // The referencing side of the two self-FKs on `leads`. Postgres does not index it automatically,
+  // and without these every delete scans the whole table twice per row.
+  'leads_duplicate_of',
+  'leads_merged_into',
 ];
 
 /**

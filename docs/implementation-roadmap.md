@@ -332,6 +332,90 @@ they are what the list UI will be built from. Global search across conversations
 `lead_score_events` will want the monthly partitioning `activities` has once Phase 5 starts scoring
 WhatsApp engagement, which is the point at which it becomes one of the larger tables.
 
+### Step 4 — the lead screens ✅ _(landed 2026-10-05)_
+
+The first screens a business actually works in: the list they filter, the record they open, and the
+board they drag.
+
+- **The lead list** (`FR-LEAD`, `FR-VIEW-2/3`) with the saved views as chips, a filter bar built
+  entirely from the catalogue the API publishes, sorting, cursor pagination, and bulk assign, tag and
+  delete. **All of it is URL state** — `?view=`, `?f=`, `?sort=`, `?cursor=` — so a filtered list is
+  shareable, survives a reload, and the back button undoes a filter. `?f=city:eq:Pune~priority:in:high,urgent`
+  is the whole filter, readable in the address bar and round-trip tested.
+- **A saved view runs through the API's own `viewId`**, not through its expanded filter: the API
+  resolves it, checks its visibility and applies its sort. Reimplementing that in the browser is how
+  the two drift. The view's conditions are still rendered as chips, so "why am I seeing these rows"
+  is answerable without opening the view's definition.
+- **Lead detail** in three regions — identity, a tabbed centre, a controls rail — stacked on a phone
+  in that order, because at 375 px the first thing wanted is who this is and how to reach them.
+  Status, stage, owner and tags are each their own form posting to their own action, because each is
+  its own transition on the API with its own permission and preconditions. Tabs are URL state too.
+- **The timeline is a renderer registry** (`FR-TL-1`): `activity.type → a sentence`. A type this
+  build has never heard of degrades to a readable line rather than a blank row, which is what lets
+  the API ship new activity types ahead of the frontend — asserted against _every_ type in the
+  shared registry, including the phases not yet built.
+- **The score explains itself on the lead**: the band, and a "Why?" disclosure listing each rule's
+  contribution. If the breakdown ever stops adding up, the panel says so and offers to recalculate
+  rather than quietly showing a number nobody can check.
+- **The kanban board loads one page per column** (`NFR-PERF-4`), each column growing on its own
+  through the URL. Moving a lead is available two ways deliberately — dragging, and a picker on each
+  card for a keyboard, a screen reader or a phone — and both post to the same endpoint, so a stage
+  that requires fields refuses either way.
+- **Nothing here is a second source of truth.** No client data cache: every list must be correct at
+  first paint and re-read after a mutation, and a cache would buy a loading state, a hydration
+  boundary and a stale copy in exchange for nothing until infinite scroll exists. The prediction in
+  [frontend-architecture §10](./frontend-architecture.md) that the lead list would be where TanStack
+  Query earned its place did not hold: URL state and server actions covered it, and the dependency
+  is still unused.
+
+**794 tests green** (410 unit, 384 integration). The screens were then driven in a real browser
+against the built app, a real API and a real worker: **81 checks** across five suites — the list and
+its filters, create and refusal, the detail screen and its transitions, the board and bulk actions, a
+375 px viewport, a permission run as an executive, and a **100 000-lead tenant** for the latency
+budget.
+
+**The 100 k-lead exit criterion, measured rather than asserted.** `packages/db/perf` builds the
+fixture in ~18 seconds and removes it again, so the budget is reproducible instead of being a claim:
+
+| On 100 007 leads                          | median | p95    |
+| ----------------------------------------- | ------ | ------ |
+| Unfiltered list page                      | 13 ms  | 16 ms  |
+| Two-condition filter (city + priority)    | 62 ms  | 68 ms  |
+| Score-band view ("Hot leads")             | 11 ms  | 26 ms  |
+| Computed ageing filter (`idleDays >= 30`) | 30 ms  | 33 ms  |
+| All seven kanban columns, in parallel     | 46 ms  | 53 ms  |
+| `/leads` rendered end to end              | 96 ms  | 126 ms |
+| `/pipeline` rendered end to end           | 88 ms  | 103 ms |
+
+The board's first column held 14 285 leads and returned ten.
+
+**Four defects the browser and the fixture found, none of which a unit test would have:**
+
+1. **Every Zod default message was reaching users.** Typing a two-digit phone number answered "Too
+   small: expected string to have >=4 characters" under the field. The validation pipe maps
+   `issue.message` onto the field-error contract, so this was every form in the product, not one
+   field. Fixed with a global Zod error map (`installValidationCopy`) that supplies human sentences
+   while leaving any message an endpoint wrote in place.
+2. **A refused form emptied itself.** A server action re-renders the tree, the client form remounts,
+   and eight fields had to be retyped. The submission is now echoed back in `ActionState.values`.
+3. **Deleting leads was quadratic.** `leads.is_duplicate_of_id` and `leads.merged_into_id` point back
+   at `leads` with `ON DELETE RESTRICT`, and Postgres does not index the referencing side of a
+   foreign key — so every deletion scanned the whole table twice. Invisible at demo scale; on the
+   fixture the statement was still running after three minutes. With the two partial indexes added it
+   takes 4.9 seconds.
+4. **The dev seed could not top up an existing workspace.** It skipped an organization that already
+   existed, so the score bands, scoring rules and saved views written in step 3 never reached the
+   demo tenants — and tags had never been seeded at all, leaving the tagging control pointing at an
+   empty list. Each configuration seeder is now independently idempotent and `pnpm db:seed` reports
+   what it added.
+
+**Deferred, and why:** the import wizard, export jobs, customers, deals and quotations remain later
+steps. A command palette, prefetch-on-intent and the virtualized long list from
+[frontend-architecture §7](./frontend-architecture.md) are not built: at the measured numbers above
+nothing in this step needs them, and building them now would be optimising against a budget already
+met by a factor of twenty. Today (`FR-TSK-7`) waits for tasks in Phase 3, which is also when the
+"next action" column on these screens stops being empty.
+
 **Exit criteria**
 
 - Creating a custom field of every supported type requires **no migration and no deploy**, and that

@@ -7,6 +7,7 @@ import { seedPlatformCatalogue } from '../src/seeding/platform-catalogue.js';
 import {
   seedCrmDefaults,
   seedDefaultAssignmentRule,
+  seedDefaultTags,
   seedScoringAndViews,
 } from '../src/seeding/crm-defaults.js';
 import type { PrismaClient } from '../generated/prisma/client.js';
@@ -81,6 +82,38 @@ const ORGS: OrgSpec[] = [
   },
 ];
 
+/**
+ * Runs the configuration seeders against an organization that already exists.
+ *
+ * Each one decides for itself whether there is anything to do, so this is safe to call on every
+ * seed run. It deliberately does **not** create people or demo leads: those are sample data, and
+ * duplicating them on every run would make the demo workspace grow without bound.
+ */
+async function topUpConfiguration(db: PrismaClient, organizationId: string): Promise<string[]> {
+  const added: string[] = [];
+  await db.$transaction(async (tx) => {
+    if (await seedCrmDefaults(tx, organizationId)) added.push('CRM vocabulary');
+    if ((await seedDefaultTags(tx, organizationId)) > 0) added.push('tags');
+
+    const executives = await tx.userRole.findMany({
+      where: { organizationId, role: { code: 'sales_executive' } },
+      select: { userId: true },
+    });
+    const ruleId = await seedDefaultAssignmentRule(
+      tx,
+      organizationId,
+      executives.map((row) => row.userId),
+    );
+    if (ruleId) added.push('assignment rule');
+
+    const scoring = await seedScoringAndViews(tx, organizationId);
+    if (scoring.bandIds.length > 0) added.push('score bands');
+    if (scoring.ruleIds.length > 0) added.push('scoring rules');
+    if (scoring.viewIds.length > 0) added.push('saved views');
+  });
+  return added;
+}
+
 async function seedOrganization(
   db: PrismaClient,
   spec: OrgSpec,
@@ -89,7 +122,18 @@ async function seedOrganization(
 ): Promise<void> {
   const existing = await db.organization.findUnique({ where: { slug: spec.slug } });
   if (existing) {
-    console.warn(`  organization ${spec.slug} already present — skipping`);
+    // Not simply skipped. The people and the demo leads are created once, but the *configuration*
+    // seeders are idempotent per concern, and skipping them meant a development workspace seeded
+    // before a feature existed never received its defaults — which is how the score bands and saved
+    // views came to be missing from every demo tenant after they were written. Re-running
+    // `pnpm db:seed` is what a developer does after pulling a change that adds defaults, so it has
+    // to top up rather than no-op.
+    const added = await topUpConfiguration(db, existing.id);
+    console.warn(
+      added.length > 0
+        ? `  organization ${spec.slug} already present — added ${added.join(', ')}`
+        : `  organization ${spec.slug} already present and up to date`,
+    );
     return;
   }
 
@@ -235,15 +279,19 @@ async function seedOrganization(
     // "what a new organization looks like" would drift, and the drift would first appear as a
     // support ticket from a real tenant.
     const crm = await seedCrmDefaults(tx, organizationId);
-    if (crm) {
+    // Outside the `if (crm)` below on purpose: `seedCrmDefaults` returns null when the vocabulary
+    // already exists, so gating these on it meant an existing development workspace never received
+    // anything added later — the bands, rules and views were simply missing from every org seeded
+    // before they were written. Each of these is independently idempotent.
+    await seedDefaultAssignmentRule(
+      tx,
+      organizationId,
       // The executives are the round-robin pool: a manager who also holds leads makes the demo
       // data less legible, and the fairness assertions less obvious.
-      await seedDefaultAssignmentRule(
-        tx,
-        organizationId,
-        userIdsByRole.get('sales_executive') ?? [],
-      );
-      await seedScoringAndViews(tx, organizationId);
+      userIdsByRole.get('sales_executive') ?? [],
+    );
+    await seedScoringAndViews(tx, organizationId);
+    if (crm) {
       await seedDemoLeads(tx, organizationId, crm, branchId, teamId, userIdsByRole);
     }
 

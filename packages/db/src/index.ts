@@ -21,6 +21,7 @@ export {
   CRM_DEFAULT_SEEDS,
   seedCrmDefaults,
   seedDefaultAssignmentRule,
+  seedDefaultTags,
   SCORING_DEFAULT_SEEDS,
   seedScoringAndViews,
   type CrmDefaultsResult,

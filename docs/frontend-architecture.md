@@ -293,17 +293,27 @@ a plan that is contradicted by the code is worse than no plan.
 
 ### 10.1 Departures, with reasons
 
-| Planned                                      | Built                                                                                   | Why                                                                                                                                                                                                                                                                                                      |
-| -------------------------------------------- | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Next.js 15                                   | **Next.js 16**                                                                          | 16 was current when the app was created. Its `middleware.ts` is deprecated in favour of `proxy.ts`, which is what `src/proxy.ts` uses.                                                                                                                                                                   |
-| shadcn/ui (Radix)                            | **no component library**                                                                | Phase 1 needs eight components (card, stat, table, badge, button, field, empty state, error notice). A library earns its weight when there are dialogs, comboboxes and date pickers to get right — that is the CRM screens, and it can be adopted then without rewriting these pages.                    |
-| TanStack Query for all server state          | **server components; TanStack Query kept as a dependency for later**                    | Every Phase 1 screen is a read that must be correct at first paint and is re-read after a mutation. A client cache adds a loading state, a second source of truth and a hydration boundary, and buys nothing until there is polling, infinite scroll and optimistic status changes — i.e. the lead list. |
-| Zustand for UI state                         | **not yet introduced**                                                                  | Nothing in Phase 1 has UI state that outlives a component.                                                                                                                                                                                                                                               |
-| Mutations via `useMutation`                  | **server actions**                                                                      | The access token is in an httpOnly cookie, so only the server can attach it. See §10.3.                                                                                                                                                                                                                  |
-| Types from a generated OpenAPI client        | **hand-written client (`lib/api.ts`) speaking the documented envelope**                 | The spec is published in Phase 4. A generated client for a spec that does not exist would be fiction; the hand-written one is deliberately thin so it can be deleted.                                                                                                                                    |
-| Shared Zod schemas from `packages/contracts` | **route-handler schemas local to the web app**                                          | `packages/contracts` does not exist yet. The API validates authoritatively; the web app validates only what its own route handlers accept.                                                                                                                                                               |
-| Tokens in `packages/ui`                      | **`apps/web/src/app/globals.css`**                                                      | They move to `packages/ui` when a second app needs them (the tenant website renderer, Phase 7).                                                                                                                                                                                                          |
-| `(public)` and `(onboarding)` route groups   | **`login/`, `accept-invitation/` at the root; onboarding is a card inside `/settings`** | There is no marketing site in this repo yet, and a four-step checklist did not justify a route group with its own layout. The wizard is resumable and server-stored as planned.                                                                                                                          |
+| Planned                             | Built                                                                | Why                                                                                                                                                                                                                                                                                                      |
+| ----------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Next.js 15                          | **Next.js 16**                                                       | 16 was current when the app was created. Its `middleware.ts` is deprecated in favour of `proxy.ts`, which is what `src/proxy.ts` uses.                                                                                                                                                                   |
+| shadcn/ui (Radix)                   | **no component library**                                             | Phase 1 needs eight components (card, stat, table, badge, button, field, empty state, error notice). A library earns its weight when there are dialogs, comboboxes and date pickers to get right — that is the CRM screens, and it can be adopted then without rewriting these pages.                    |
+| TanStack Query for all server state | **server components; TanStack Query kept as a dependency for later** | Every Phase 1 screen is a read that must be correct at first paint and is re-read after a mutation. A client cache adds a loading state, a second source of truth and a hydration boundary, and buys nothing until there is polling, infinite scroll and optimistic status changes — i.e. the lead list. |
+
+> **Amendment, 2026-10-05 (Phase 2 step 4).** The lead list is built and the prediction above did
+> not hold: it needed no client cache. Filters, sorting, the active saved view, the page cursor and
+> the kanban's per-column pages all live in the **URL**, which makes a filtered list shareable,
+> survives a reload, gives the back button the behaviour it looks like it has, and keeps the page a
+> server component with one source of truth. Mutations are server actions that revalidate the paths
+> they changed. Measured on a 100 000-lead tenant, `/leads` renders in 126 ms p95 and `/pipeline` in
+> 103 ms — so there is nothing a cache would be bought with. TanStack Query remains an unused
+> dependency; the first screen likely to need it is the WhatsApp inbox in Phase 5, which has polling
+> and optimistic sends.
+> | Zustand for UI state | **not yet introduced** | Nothing in Phase 1 has UI state that outlives a component. |
+> | Mutations via `useMutation` | **server actions** | The access token is in an httpOnly cookie, so only the server can attach it. See §10.3. |
+> | Types from a generated OpenAPI client | **hand-written client (`lib/api.ts`) speaking the documented envelope** | The spec is published in Phase 4. A generated client for a spec that does not exist would be fiction; the hand-written one is deliberately thin so it can be deleted. |
+> | Shared Zod schemas from `packages/contracts` | **route-handler schemas local to the web app** | `packages/contracts` does not exist yet. The API validates authoritatively; the web app validates only what its own route handlers accept. |
+> | Tokens in `packages/ui` | **`apps/web/src/app/globals.css`** | They move to `packages/ui` when a second app needs them (the tenant website renderer, Phase 7). |
+> | `(public)` and `(onboarding)` route groups | **`login/`, `accept-invitation/` at the root; onboarding is a card inside `/settings`** | There is no marketing site in this repo yet, and a four-step checklist did not justify a route group with its own layout. The wizard is resumable and server-stored as planned. |
 
 ### 10.2 Routes that exist
 
@@ -379,3 +389,24 @@ exist.
 
 Those checks are development scripts, not committed tests: they need a booted API, a worker and seed
 data. Turning them into a CI job is Phase 12 work (`docs/implementation-roadmap.md`).
+
+### 10.6 Verification — Phase 2, step 4 (the lead screens)
+
+`pnpm --filter @leados/web test` covers the pure logic added here: the filter ⇄ URL codec (including
+the round trip of a value containing the separators, which is how a tilde-escaping bug was found),
+money and relative-time formatting, score-band tone resolved by _position in the range_ rather than
+by name, and the timeline renderer registry — asserted against every type in the shared registry, so
+the fallback is proven for the phases not yet built.
+
+Everything that only exists in a browser was driven against the **built** app with a real API and
+worker: the list, its saved-view chips and its filter bar; a filter that matches nothing; a mangled
+filter URL; sorting; creating a lead and landing on it; a refusal that lands on the field and keeps
+what was typed; the detail screen's tabs, transitions and score breakdown; the kanban board, a move
+through the accessible picker, and per-column pagination; bulk assign and a bulk tag that must not
+delete the tags already on a lead; a 375 px viewport; and a permission run as an executive.
+
+**Five suites, 81 checks**, all green — including a **100 000-lead tenant** built by
+`packages/db/perf/leads-100k.sql`, where the board's first column holds 14 285 leads and returns
+ten. Three of the four defects fixed in this step were found only here, and the fourth only by the
+fixture: Zod's developer-facing messages reaching users, a refused form emptying itself, and an
+unindexed foreign key making lead deletion quadratic.

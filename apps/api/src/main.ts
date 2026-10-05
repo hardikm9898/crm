@@ -4,6 +4,7 @@ import { config as loadDotenv } from 'dotenv';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { allowEmptyJsonBody } from './infra/http/empty-json-body.js';
+import { installValidationCopy } from './infra/http/validation-copy.js';
 import type { Logger } from 'pino';
 import { AppModule } from './app.module.js';
 import { APP_CONFIG } from './infra/config/config.module.js';
@@ -30,6 +31,10 @@ loadDotenv({ path: resolve(import.meta.dirname, '../../../.env'), quiet: true })
  * Splitting them means a WhatsApp backlog cannot slow the dashboard, and the ingestion tier can
  * be scaled on its own.
  */
+// Before any schema is parsed: the error map supplies Zod's *default* messages, so installing it
+// late would let the first few requests answer with developer phrasing.
+installValidationCopy();
+
 async function bootstrap(): Promise<void> {
   const role = process.env['ROLE'] ?? 'api';
   if (role === 'worker' || role === 'scheduler') {

@@ -110,6 +110,21 @@ change, or typecheck will fail confusingly.
   `custom.budget` against a number compares an object and matches nothing, silently. The comparable
   sub-path is declared per type in `CUSTOM_FIELD_SPECS.comparablePath`; money filters take **minor
   units**, which the filter catalogue states per field.
+- **Zod's default messages are written for a developer, and they reached users.** "Too small:
+  expected string to have >=4 characters" appeared under the phone box on the lead form, because the
+  validation pipe maps `issue.message` straight onto the field-error contract. `installValidationCopy()`
+  registers a global Zod error map that supplies human sentences; a schema that passes its own
+  message still wins, which is why this is an error map rather than a rewrite of every DTO.
+- **A server action resets every uncontrolled input in its form.** The action re-renders the server
+  tree, the client form remounts, and a refused submission comes back empty — eight fields to retype.
+  Echo the submission back in `ActionState.values` (`submittedValues(form)`) and set `defaultValue`
+  from it.
+- **An unindexed foreign key makes deletes quadratic.** Postgres indexes the _referenced_ side of an
+  FK, never the referencing side. `leads.is_duplicate_of_id` and `leads.merged_into_id` point back at
+  `leads` with `ON DELETE RESTRICT`, so every lead deletion scanned the whole table twice — invisible
+  at demo scale, and a statement that never finished on the 100 k-lead fixture. Any new FK whose
+  referencing columns are not already the prefix of an index needs one (`leads_duplicate_of`,
+  `leads_merged_into`).
 
 - **A unique constraint on a partitioned table must contain the partition key.** `activities` is
   partitioned by `occurred_at`, so its primary key is `(id, occurred_at)` and its idempotency key is
@@ -149,6 +164,11 @@ change, or typecheck will fail confusingly.
   PATCH switching a rule to `round_robin` before it had a pool was rightly refused with a 422; the
   test ignored the response, asserted against the _old_ rule, and read a plausible wrong answer.
   Setup calls go through a helper that throws on a non-2xx.
+- **A browser check must wait for the right thing.** `waitForLoadState('networkidle')` returns
+  immediately after a client-side navigation, so an assertion on `page.url()` reads the old URL —
+  use `waitForURL`. And `waitForSelector('[role="alert"]')` matches Next's always-empty route
+  announcer and resolves before the error has rendered, which is the same trap as reading it:
+  scope it to `main [role="alert"]`.
 
 - **The platform catalogue is reference data, not fixtures.** Without `permissions` and a plan,
   creating an organization fails on a foreign key. `seedPlatformCatalogue()` is called by both

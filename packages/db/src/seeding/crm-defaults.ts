@@ -87,12 +87,50 @@ const LOST_REASON_SEEDS: readonly { readonly name: string; readonly requiresNote
   { name: 'Other', requiresNote: true },
 ];
 
+/**
+ * A handful of tags, because every other piece of a tenant's vocabulary is seeded and this one was
+ * not — which left tagging invisible on first login and in the demo workspace: the control existed,
+ * the list behind it was empty, and nothing said why.
+ *
+ * Deliberately about *what a business notices*, not about temperature — the score bands already say
+ * hot or cold, and a tag that duplicates them is two things to keep in sync.
+ */
+const TAG_SEEDS: readonly { readonly name: string; readonly colour: string }[] = [
+  { name: 'Follow up', colour: '#3b5bdb' },
+  { name: 'Budget confirmed', colour: '#0ca678' },
+  { name: 'Price sensitive', colour: '#f59f00' },
+  { name: 'Referral', colour: '#7048e8' },
+  { name: 'Do not call', colour: '#e03131' },
+];
+
 export interface CrmDefaultsResult {
   readonly defaultStatusId: string;
   readonly pipelineId: string;
   readonly firstStageId: string;
   readonly sourceIdsByName: ReadonlyMap<string, string>;
   readonly duplicateRuleId: string;
+}
+
+/**
+ * The starter tags, idempotent on their own.
+ *
+ * Separate from `seedCrmDefaults` because that function short-circuits on "this tenant already has
+ * statuses" — so anything added to it later never reaches a workspace that already exists. Each
+ * concern seeded after the first release needs its own absence check, or `pnpm db:seed` silently
+ * stops being a way to top up.
+ */
+export async function seedDefaultTags(
+  tx: DbTransactionClient,
+  organizationId: string,
+): Promise<number> {
+  const existing = await tx.tag.findFirst({ where: { organizationId } });
+  if (existing) return 0;
+  for (const seed of TAG_SEEDS) {
+    await tx.tag.create({
+      data: { id: newId(), organizationId, name: seed.name, colour: seed.colour },
+    });
+  }
+  return TAG_SEEDS.length;
 }
 
 /**
@@ -184,6 +222,8 @@ export async function seedCrmDefaults(
     });
   }
 
+  await seedDefaultTags(tx, organizationId);
+
   // One duplicate rule, per docs/database-design.md §17: the same phone within a year is the same
   // person, and the capture attaches to the existing lead rather than creating a second record.
   // `attach_to_existing` is the default because it is the only action that cannot lose information:
@@ -264,6 +304,7 @@ export const CRM_DEFAULT_SEEDS = {
   stages: STAGE_SEEDS,
   sources: SOURCE_SEEDS,
   lostReasons: LOST_REASON_SEEDS,
+  tags: TAG_SEEDS,
 } as const;
 
 // ═══════════════════════════════════════════════════════════════════════════
