@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
+import { DocumentsModule } from '../documents/documents.module.js';
 import {
+  DocumentExpiryProcessor,
   InvitationExpiryProcessor,
   ActivityPartitionProcessor,
   LeadRecycleProcessor,
@@ -13,6 +15,7 @@ import {
  * composition root collects into `JOB_PROCESSORS`.
  */
 @Module({
+  imports: [DocumentsModule],
   providers: [
     SessionPruneProcessor,
     InvitationExpiryProcessor,
@@ -20,6 +23,7 @@ import {
     OutboxReapProcessor,
     ActivityPartitionProcessor,
     LeadRecycleProcessor,
+    DocumentExpiryProcessor,
   ],
   exports: [
     SessionPruneProcessor,
@@ -28,6 +32,7 @@ import {
     OutboxReapProcessor,
     ActivityPartitionProcessor,
     LeadRecycleProcessor,
+    DocumentExpiryProcessor,
   ],
 })
 export class MaintenanceModule {}

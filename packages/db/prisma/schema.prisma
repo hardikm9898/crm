@@ -562,6 +562,10 @@ model Organization {
   scoreBands               ScoreBand[]
   leadScoreEvents          LeadScoreEvent[]
   savedViews               SavedView[]
+  documents                Document[]
+  importJobs               ImportJob[]
+  importRows               ImportRow[]
+  exportJobs               ExportJob[]
 
   @@index([status])
   @@index([createdAt])
@@ -1372,6 +1376,7 @@ model Lead {
   mergesAsSurvivor     LeadMerge[]         @relation("merge_survivor")
   mergesAsAbsorbed     LeadMerge[]         @relation("merge_absorbed")
   scoreEvents          LeadScoreEvent[]
+  importRows           ImportRow[]
 
   @@unique([organizationId, id], name: "lead_tenant_key")
   /// The default list.
@@ -1872,4 +1877,162 @@ model SavedView {
   @@index([organizationId, entityType, visibility])
   @@index([organizationId, ownerId, entityType])
   @@map("saved_views")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Files, import and export (FR-IO-1..3)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// A stored file (docs/database-design.md §343).
+///
+/// The row is the record; the bytes live behind `StoragePort` — a local directory in development, an
+/// S3-compatible bucket in production. Keeping the key rather than the bytes is what lets the driver
+/// change without a migration, and what stops a 10 MB upload becoming a 10 MB row in a table that
+/// every lead query shares a buffer pool with.
+model Document {
+  id             String    @id @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  /// What the file belongs to: `import`, `export`, later a lead's attachment.
+  subject        String
+  /// The storage driver's key. Opaque to everything above the port.
+  fileKey        String    @map("file_key")
+  fileName       String    @map("file_name")
+  mimeType       String    @map("mime_type")
+  sizeBytes      Int       @map("size_bytes")
+  /// SHA-256 of the contents, so a re-upload of the same file is recognisable.
+  checksum       String
+  /// Virus scanning is a Phase 12 concern; the column exists so nothing has to migrate for it, and
+  /// `pending` is honest about the fact that nothing has scanned it.
+  scanStatus     String    @default("pending") @map("scan_status")
+  uploadedById   String?   @map("uploaded_by_id") @db.Uuid
+  /// A download link is time-limited: an export of a tenant's whole lead list must not be fetchable
+  /// forever by anyone who once saw the URL (`FR-IO-3`).
+  expiresAt      DateTime? @map("expires_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  importJobs   ImportJob[]
+  exportJobs   ExportJob[]
+
+  @@unique([organizationId, id], name: "document_tenant_key")
+  @@index([organizationId, subject, createdAt])
+  @@index([organizationId, expiresAt])
+  @@map("documents")
+}
+
+/// One run of the import wizard (`FR-IO-1`).
+///
+/// The job is created at upload and advances through the wizard's steps, so a person who closes the
+/// tab halfway through finds their mapping where they left it rather than starting again with a
+/// 10 000-row file.
+model ImportJob {
+  id             String    @id @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  documentId     String    @map("document_id") @db.Uuid
+  entityType     String    @default("lead") @map("entity_type")
+  /// `uploaded` → `mapped` → `validated` → `queued` → `running` → `completed` / `failed` /
+  /// `cancelled`. `queued` is distinct from `running` on purpose: a queue backlog should not look
+  /// like an import that has been running for twenty minutes without touching a row.
+  status         String    @default("uploaded")
+  /// Column header → field, as the wizard confirmed it.
+  mapping        Json      @default("{}") @db.JsonB
+  /// `create_only` | `skip_existing` | `update_existing` (`FR-IO-2`).
+  mode           String    @default("create_only")
+  /// The delimiter the file was read with, so the error file is written the same way.
+  delimiter      String    @default(",")
+  totalRows      Int       @default(0) @map("total_rows")
+  processedRows  Int       @default(0) @map("processed_rows")
+  createdCount   Int       @default(0) @map("created_count")
+  updatedCount   Int       @default(0) @map("updated_count")
+  attachedCount  Int       @default(0) @map("attached_count")
+  skippedCount   Int       @default(0) @map("skipped_count")
+  failedCount    Int       @default(0) @map("failed_count")
+  /// Set when the whole run failed rather than individual rows.
+  error          String?
+  /// The failed-rows file, written at the end of a run so a corrected file can be re-imported.
+  errorDocumentId String?  @map("error_document_id") @db.Uuid
+  requestedById  String?   @map("requested_by_id") @db.Uuid
+  startedAt      DateTime? @map("started_at") @db.Timestamptz(6)
+  finishedAt     DateTime? @map("finished_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  document     Document     @relation(fields: [organizationId, documentId], references: [organizationId, id], onDelete: Restrict, map: "import_jobs_document_same_org_fk")
+  rows         ImportRow[]
+
+  @@unique([organizationId, id], name: "import_job_tenant_key")
+  @@index([organizationId, status, createdAt])
+  @@map("import_jobs")
+}
+
+/// One row of an import, kept whether it succeeded or not (`FR-IO-1`).
+///
+/// Keeping the successful rows too is what makes an import auditable: "where did this lead come
+/// from" is answerable six months later, and the row number is what a person needs to find it in
+/// their own spreadsheet.
+model ImportRow {
+  id             String   @id @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  jobId          String   @map("job_id") @db.Uuid
+  /// 1-based, counting the header as row 1 — the number the spreadsheet shows.
+  rowNumber      Int      @map("row_number")
+  /// `created` | `updated` | `attached` | `skipped` | `failed`.
+  status         String
+  /// `[{ field, code, message }]`, the same shape the API's validation errors use.
+  errors         Json     @default("[]") @db.JsonB
+  /// The cells as read, so the error file can reproduce the row exactly as it arrived.
+  raw            Json     @default("{}") @db.JsonB
+  leadId         String?  @map("lead_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  job          ImportJob    @relation(fields: [organizationId, jobId], references: [organizationId, id], onDelete: Cascade, map: "import_rows_job_same_org_fk")
+  /// `Restrict`, like every other composite FK here: `SetNull` and `SetDefault` would both try to
+  /// clear the NOT NULL `organization_id`. A purge that really must remove a lead clears its import
+  /// rows first — deciding to lose that provenance explicitly rather than silently.
+  lead         Lead?        @relation(fields: [organizationId, leadId], references: [organizationId, id], onDelete: Restrict, map: "import_rows_lead_same_org_fk")
+
+  @@unique([organizationId, id], name: "import_row_tenant_key")
+  @@unique([organizationId, jobId, rowNumber])
+  @@index([organizationId, jobId, status])
+  @@map("import_rows")
+}
+
+/// A background export (`FR-IO-3`).
+///
+/// A job rather than a streamed response because an export of a hundred thousand leads cannot be
+/// held open on an HTTP request, and because a file that exists is one a person can fetch twice.
+model ExportJob {
+  id             String    @id @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  entityType     String    @default("lead") @map("entity_type")
+  /// The same filter DSL the lead list uses, so "export what I am looking at" is exactly that.
+  filters        Json      @default("{}") @db.JsonB
+  /// Which columns to write, in order.
+  columns        Json      @default("[]") @db.JsonB
+  status         String    @default("queued")
+  rowCount       Int       @default(0) @map("row_count")
+  error          String?
+  documentId     String?   @map("document_id") @db.Uuid
+  /// Denormalized from the document so a listing does not need the join.
+  expiresAt      DateTime? @map("expires_at") @db.Timestamptz(6)
+  /// True when the chosen columns include personal data, which is what makes the audit entry
+  /// required rather than merely nice (`FR-IO-3`).
+  includesPii    Boolean   @default(true) @map("includes_pii")
+  requestedById  String?   @map("requested_by_id") @db.Uuid
+  startedAt      DateTime? @map("started_at") @db.Timestamptz(6)
+  finishedAt     DateTime? @map("finished_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// `Restrict` for the same reason as above. An expired export is **soft**-deleted and its bytes
+  /// are dropped from storage, so the row stays and the history of who exported what survives.
+  document     Document?    @relation(fields: [organizationId, documentId], references: [organizationId, id], onDelete: Restrict, map: "export_jobs_document_same_org_fk")
+
+  @@unique([organizationId, id], name: "export_job_tenant_key")
+  @@index([organizationId, status, createdAt])
+  @@map("export_jobs")
 }

@@ -409,12 +409,106 @@ The board's first column held 14 285 leads and returned ten.
    empty list. Each configuration seeder is now independently idempotent and `pnpm db:seed` reports
    what it added.
 
-**Deferred, and why:** the import wizard, export jobs, customers, deals and quotations remain later
-steps. A command palette, prefetch-on-intent and the virtualized long list from
+**Deferred, and why:** the import wizard and export jobs landed in step 5 below; customers, deals and
+quotations remain later steps. A command palette, prefetch-on-intent and the virtualized long list from
 [frontend-architecture §7](./frontend-architecture.md) are not built: at the measured numbers above
 nothing in this step needs them, and building them now would be optimising against a budget already
 met by a factor of twenty. Today (`FR-TSK-7`) waits for tasks in Phase 3, which is also when the
 "next action" column on these screens stops being empty.
+
+### Step 5 — import and export ✅ _(landed 2026-10-05)_
+
+The two jobs every business does on its first day and its worst day: getting a spreadsheet in, and
+getting their own data back out.
+
+- **The import wizard** (`FR-IO-1`) is four persisted states — `uploaded` → `mapped` → `validated`
+  → `running` — not four steps of a client-side form. Somebody who maps forty columns of a 12 000-row
+  file and then closes the tab has not lost their work, `?job=` makes the wizard linkable, and a
+  support engineer can see exactly where a stuck import stopped.
+- **The mapping proposes itself.** `Mobile No.`, `E-mail ID`, `Pincode`, `Assigned To`,
+  `Whatsapp Opt In` all map without being told, through a two-pass index (normalised, then
+  space-stripped) over each field's label and aliases — `E-mail ID` normalises to `e mail id`, which
+  no sensible alias list contains, but compacted both sides give `emailid`. A field is proposed
+  **once**: if two columns both look like the phone number, neither is guessed, because reporting the
+  ambiguity beats importing the fax number as the mobile.
+- **The delimiter is sniffed** (`,` `;` tab `|`), the BOM is stripped, and `12,50,000` is read as
+  ₹12,50,000 while a European `1.234,56` is read as 1234.56 — decided by evidence in the string
+  rather than by a locale setting nobody will configure. Dates are day-first, and an ambiguous one is
+  flagged rather than silently transposed.
+- **Imported leads are created through `LeadsService`** — the tenant's duplicate rules, the
+  assignment engine, custom-field validation, the timeline entry and the outbox event, per row.
+  That is [ADR-0016](./decisions/ADR-0016-import-through-the-domain-service.md), and it is the whole
+  of `FR-IO-2`'s "never blind-create": a bulk insert would be two orders of magnitude faster and
+  would produce ten thousand leads with no owner, no timeline, no score and duplicates of each other.
+  The measured cost is **~35 rows/second**, which is why an import is a background job with a
+  progress bar and a cancel button.
+- **The three modes differ only in what they do with a match, never in what a match is.**
+  `create_only` lets the tenant's rules decide (`reject` refuses the row, `attach_to_existing`
+  appends a touchpoint to the lead they already had); `skip_existing` and `update_existing` ask the
+  same `DuplicateDetectionService` first, because they mean "I am re-uploading a list".
+- **A row is a record, not a log line.** Every row gets an `import_rows` row — created, updated,
+  attached, skipped or failed, with the cells as they arrived — which is what makes a retry
+  **resumable** (the rows already recorded are the rows already done, and the counters are recomputed
+  from them rather than trusted), what makes the error file reproduce a row exactly, and what answers
+  "where did this lead come from" six months later. A row never fails the run; only a fault that
+  makes the whole run impossible does.
+- **The failed-rows file is the original columns plus `_row` and `_errors`**, in the original
+  delimiter. A person fixes the file they recognise and re-imports it with the mapping they already
+  chose — which is why `csvCell` and `unguardCell` are an exact pair: the formula guard that stops
+  `=cmd|…` executing in Excel has to survive the round trip.
+- **Exports are a job, a permission and an expiring file** (`FR-IO-3`). `export:data` lets somebody
+  export; the moment a chosen column is personal data, `export:pii` is required too — checked again
+  at download, because permissions change and a file of ten thousand phone numbers must stop being
+  reachable by somebody whose access was taken away. Which columns count as personal data is
+  **declared** per column, not derived from the schema. Every request and every download is audited,
+  with `_pii` in the action name.
+- **The export is the list on screen.** The same filter DSL, the same saved view (resolved at
+  generation time so it reflects the view's current definition), and **the requester's own data
+  scope** — a sales manager's unfiltered export returned 5 of the workspace's 14 leads, which is the
+  single most important property an export has.
+- **Storage is a port with a local driver** (`STORAGE`), following the `MAILER` precedent, and
+  `documents` is its tenant-scoped index — so nothing above the port can enumerate a bucket, and a
+  storage key never has to be trusted. The hourly sweep drops the bytes of expired files and **keeps
+  the row**, because who exported what is audit history.
+- **A CSV upload is a raw `text/csv` body**, not multipart: one file, no other parts, and the body
+  limit is per content type so `application/json` keeps its 256 KiB while a CSV may have 20 MB. An
+  `onRequest` hook refuses CSV content types outside the import paths — Fastify parses a body before
+  any guard runs, so without it every route became a 20 MB sink reachable unauthenticated.
+
+**948 tests green** (509 unit, 439 integration), including a 30-case import/export e2e suite and a
+20-guarantee database verification run against real PostgreSQL. The wizard was then driven in a real
+browser against the built app, a real API and a real worker — **23 checks**: upload, the proposed
+mapping, the dry run's real problems, the run, the progress summary, the error-file download and its
+contents, an export request, the exports screen, and the downloaded CSV's columns.
+
+**The 10 000-row exit criterion, measured:** upload and propose in **127 ms**, the dry run over every
+row in **253 ms**, the import itself in **296 s** — 9 700 created, 300 failed with per-row reasons, a
+300-row error file, and 9 769 `lead.created` events dispatched and scored with nothing left waiting.
+
+**Four defects found by running it, not by testing it:**
+
+1. **The dry run lied about phone numbers.** It validated each row with `createLeadSchema`, which
+   knows a phone is 4–32 characters and nothing else — normalisation needs the organization's
+   country. A column of `not-a-phone` reported "5 rows ready to import" and then failed all five.
+   The mapper now normalises, so the preview is a promise the import keeps.
+2. **The wizard's screen ran a mutation to render itself.** It showed the dry run by calling
+   `POST /imports/:id/validate`, so every refresh re-ran a state transition — a state machine driven
+   by the browser's reload button. The dry run now has a read-only twin, `GET /imports/:id/check`.
+3. **A grant cache generation keyed by `INCR` started at the wrong number.** `PrincipalService`
+   defaulted an absent version key to 1, and `INCR` on a missing key also produces 1 — so the _first_
+   role change in a workspace's life wrote the version it was already caching under, and stale grants
+   stayed live for the full five-minute TTL. Every later change worked, which is what makes it the
+   kind of bug that ships.
+4. **Spreadsheet dates with a time on them failed.** `14/02/2026 10:30` did not match the day-first
+   pattern and fell through to `new Date()`, which reads a day-first date as invalid — so every dated
+   row of a file a spreadsheet had written failed. Found by rendering the export's own timestamps and
+   then asking whether they could be re-imported.
+
+**Deferred, and why:** the S3 driver (the local driver cannot serve a replicated API, and that is the
+trigger, not a date); virus scanning, which is why `documents.scan_status` exists and reads `pending`
+rather than pretending; streaming a generated file into storage, which is a port change — until then
+the export ceiling is 100 000 rows because the finished file is held in memory. Customers, deals and
+quotations remain later steps.
 
 **Exit criteria**
 

@@ -77,3 +77,36 @@ column is off-screen. Both post to the same action, so both go through the same 
 Below `sm` the list is one card per lead with its call and WhatsApp actions, not a six-column table
 in a horizontal scroll nobody uses. The detail screen stacks identity → centre → controls, because
 at 375 px the first thing wanted is who this is and how to reach them (`NFR-UX-1`).
+
+## The import wizard is a URL, not a component state machine
+
+`/leads/import` shows step one; `/leads/import?job=<id>` shows whichever step that job's **own
+status** has reached. So the wizard is reloadable, linkable to a colleague who knows the column
+names, and survives a closed tab halfway through a 12 000-row file. Holding the file and a
+forty-column mapping in client state would lose all of that to one stray refresh.
+
+The dry run appears as soon as the file is read, before anybody saves a mapping — the proposal is
+already stored, so the common case is "upload, read what will happen, press Import". It is fetched
+with `GET /imports/:id/check`, never the `POST …/validate` that records the step: a page that re-ran
+a state transition on every refresh would be a state machine driven by the reload button.
+
+A running import polls by calling `router.refresh()` every two seconds — the page is a server
+component, so "refresh" means re-reading the job from the API, which is exactly what should happen.
+The poll stops the moment the run is no longer in flight, so a forgotten tab does not poll all
+afternoon.
+
+## Downloads go through a route handler, not a link to the API
+
+Both tokens are httpOnly cookies, so the browser cannot call the API directly.
+`/leads/import/[id]/errors.csv` and `/leads/exports/[id]/download` are thin relays: no parsing, no
+re-encoding, and the API's own `content-disposition` is passed through, so the file somebody saves is
+byte-for-byte the file the API wrote. Rebuilding the CSV here would be a second implementation of the
+format — and the formula guard that makes it safe to open in Excel is part of that format.
+
+## Export means the list on screen
+
+The Export button carries the same `?view=` or `?f=` the screen just ran. An unfiltered export asks
+once before it generates, because "every lead in the workspace" is rarely what somebody meant by
+pressing a button next to a list. Columns are not chosen here: the default set is right nine times
+out of ten, and a column picker in a dropdown is the kind of thing that makes somebody give up and
+copy rows by hand.

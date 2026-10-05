@@ -340,7 +340,9 @@ source_event_id) WHERE source_event_id IS NOT NULL`, and `delta <> 0` keeps rows
 | `activities`         | **Append-only timeline.** org, `lead_id?`, `customer_id?`, `deal_id?`, `conversation_id?`, `type` (see §6.5), `actor_type`, `actor_id?`, `occurred_at timestamptz`, `payload JSONB`, `visibility (all                                        | internal)`, `source_event_id?`(idempotency),`created_at`. **Partitioned monthly by `occurred_at`** |
 | `notes`              | org, subject, `body`, `is_internal`, `mentions UUID[]`, author, deleted_at                                                                                                                                                                   |
 | `mentions`           | org, note_id/message_id, `mentioned_user_id`, `read_at?`                                                                                                                                                                                     |
-| `documents`          | org, subject, `file_key`, `file_name`, `mime_type`, `size_bytes`, `checksum`, `scan_status (pending                                                                                                                                          | clean                                                                                              | infected)`, uploaded_by, deleted_at                                                                              |
+
+`documents` moved to [§6.7](#67-files-imports-and-exports), where it sits with the import and export
+jobs that are its only writers today.
 
 `activities` indexes: `(organization_id, lead_id, occurred_at DESC)`,
 `(organization_id, type, occurred_at DESC)`, `(organization_id, actor_id, occurred_at DESC)`,
@@ -373,6 +375,45 @@ Adding a type = adding a constant + a renderer in the UI registry. No migration 
 | `quotations`      | org, deal_id?, lead_id?, `number` (`UNIQUE (organization_id, number)`), `version`, status (`draft                                                                                                           | sent      | accepted | rejected                                                                                                                                                            | expired`), `valid_until`, totals, `pdf_document_id?`, `sent_at?`, `sent_via` |
 | `quotation_items` | as `deal_items`                                                                                                                                                                                             |
 | `payments`        | org, `deal_id?`, `lead_id?`, `customer_id?`, `amount_minor`, currency, `method`, `status (pending                                                                                                           | succeeded | failed   | refunded)`, `provider`, `provider_payment_id?`, `paid_at?`, `attributed_touchpoint_id?`, `metadata JSONB`. **Revenue for attribution comes from here** (`FR-ATT-4`) |
+
+### 6.7 Files, imports and exports
+
+| Table         | Purpose                     | Key columns                                                                                                                                                                                                                                                                                                          |
+| ------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `documents`   | The index of object storage | org, `subject (import \| import_errors \| export)`, `file_key`, `file_name`, `mime_type`, `size_bytes`, `checksum` (SHA-256), `scan_status (pending \| clean \| infected)`, `uploaded_by_id?`, `expires_at?`, deleted_at                                                                                             |
+| `import_jobs` | One run of the wizard       | org, `document_id`, `entity_type`, `status (uploaded \| mapped \| validated \| queued \| running \| completed \| failed \| cancelled)`, `mapping JSONB`, `mode (create_only \| skip_existing \| update_existing)`, `delimiter`, seven counters, `error?`, `error_document_id?`, `requested_by_id?`, started/finished |
+| `import_rows` | What became of each row     | org, `job_id`, `row_number` (1-based, header is row 1), `status (created \| updated \| attached \| skipped \| failed)`, `errors JSONB`, `raw JSONB`, `lead_id?`                                                                                                                                                      |
+| `export_jobs` | A background export         | org, `entity_type`, `filters JSONB` (view id or the filter DSL), `columns JSONB`, status, `row_count`, `document_id?`, `expires_at?`, `includes_pii`, `requested_by_id?`, started/finished                                                                                                                           |
+
+> **Amendment, 2026-10-05 (implementation).** Four decisions in these tables are load-bearing, and
+> each is enforced by a constraint rather than by application code:
+>
+> - **An import's outcomes must add up.** `created + updated + attached + skipped + failed =
+processed_rows`, and `processed_rows <= total_rows`. A resumable run recomputes its counters from
+>   `import_rows` rather than trusting the job, and these two checks are what makes that
+>   reconstruction verifiable instead of hopeful. A progress bar that disagrees with the row records
+>   is a bug nobody notices until somebody counts.
+> - **A failed row carries a reason and an outcome row carries its lead.**
+>   `status <> 'failed' OR jsonb_array_length(errors) > 0`, and
+>   `status NOT IN ('created','updated','attached') OR lead_id IS NOT NULL`. A failed row with no
+>   error is a row a person cannot fix; a `created` row with no lead is provenance that leads
+>   nowhere. (`skipped` **may** carry a lead id, and does — "this row is already lead X" is the
+>   answer to "why did my re-upload import nothing".)
+> - **A document's checksum is a SHA-256 or the row does not exist** (`checksum ~ '^[0-9a-f]{64}$'`),
+>   its size is positive, and its subject is one of three known values. A zero-byte file with a
+>   plausible row is how an import reports "0 rows" for a file somebody can see has 4 000.
+> - **An export that says it is finished has a file** (`status <> 'completed' OR document_id IS NOT
+NULL`), and `documents_expiring` — a partial index on `expires_at WHERE expires_at IS NOT NULL
+AND deleted_at IS NULL` — is what makes the hourly expiry sweep a bounded index scan rather than
+>   a table scan of every file the workspace has ever produced.
+>
+> `import_rows.lead_id` and both `document_id` references are composite FKs with `ON DELETE
+RESTRICT`, like every other cross-table reference here: `SetNull` and `SetDefault` would each try
+> to clear the NOT NULL `organization_id`. The consequence is deliberate — a purge that really must
+> remove a lead clears its import rows first, deciding to lose that provenance explicitly rather
+> than silently. An **expired export is soft-deleted and its bytes are dropped, but the row stays**:
+> who exported what, and when, is audit history, and deleting the evidence with the file would
+> defeat the audit entry that `FR-IO-3` requires.
 
 ---
 
@@ -521,24 +562,27 @@ affected day, not by mutating counters).
 | `dsr_requests`                            | org, `subject`, `type (export                                                                                                                                                       | delete                                       | rectify)`, `status`, `requested_by`, `verified_at?`, `completed_at?`, `result_document_id?` |
 | `retention_policies`                      | org, `entity_type`, `retain_days`, `action (purge                                                                                                                                   | anonymize)`, `is_active`, `last_run_at?`     |
 | `ai_requests` / `ai_outputs` / `ai_usage` | org, feature, `entity`, `prompt_hash`, model, `tokens_in/out`, `cost_minor`, latency, `output JSONB`, `accepted_by_user_id?`, `edited BOOL` (`FR-AI-4`)                             |
-| `import_jobs` / `import_rows`             | org, file, `mapping JSONB`, mode, totals, per-row `status`, `errors JSONB`, `lead_id?`                                                                                              |
-| `export_jobs`                             | org, `entity_type`, `filters JSONB`, status, `document_id?`, `expires_at`, requested_by                                                                                             |
+
+`import_jobs`, `import_rows`, `export_jobs` and `documents` are defined in
+[§6.7](#67-files-imports-and-exports). A DSR export (`dsr_requests.result_document_id`) will be a
+`documents` row like any other, which is the reason that table is not private to the import module.
 
 ---
 
 ## 14. Partitioning & retention
 
-| Table                                | Partition                 | Default retention            | Notes                                             |
-| ------------------------------------ | ------------------------- | ---------------------------- | ------------------------------------------------- |
-| `activities`                         | monthly (`occurred_at`)   | 24 months, plan-configurable | Older months detached to cold storage before drop |
-| `messages` + `message_status_events` | monthly (`created_at`)    | 24 months                    | Legal/consent records survive in `consents`       |
-| `website_events`                     | **daily** (`occurred_at`) | 90 days (plan-based)         | Rollups are permanent, so history is not lost     |
-| `api_logs`                           | daily                     | 30 days                      |                                                   |
-| `webhook_deliveries` / `_attempts`   | monthly                   | 90 days                      |                                                   |
-| `inbound_payloads`                   | monthly                   | 90 days (errors 365)         | Errors retained longer for replay                 |
-| `automation_run_steps`               | monthly                   | 180 days                     |                                                   |
-| `usage_events`                       | monthly                   | 13 months                    | Counters are permanent                            |
-| `notifications`                      | monthly (at scale)        | 180 days                     |                                                   |
+| Table                                | Partition                 | Default retention            | Notes                                                                                                                                                                                                                    |
+| ------------------------------------ | ------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `activities`                         | monthly (`occurred_at`)   | 24 months, plan-configurable | Older months detached to cold storage before drop                                                                                                                                                                        |
+| `messages` + `message_status_events` | monthly (`created_at`)    | 24 months                    | Legal/consent records survive in `consents`                                                                                                                                                                              |
+| `website_events`                     | **daily** (`occurred_at`) | 90 days (plan-based)         | Rollups are permanent, so history is not lost                                                                                                                                                                            |
+| `api_logs`                           | daily                     | 30 days                      |                                                                                                                                                                                                                          |
+| `webhook_deliveries` / `_attempts`   | monthly                   | 90 days                      |                                                                                                                                                                                                                          |
+| `inbound_payloads`                   | monthly                   | 90 days (errors 365)         | Errors retained longer for replay                                                                                                                                                                                        |
+| `automation_run_steps`               | monthly                   | 180 days                     |                                                                                                                                                                                                                          |
+| `usage_events`                       | monthly                   | 13 months                    | Counters are permanent                                                                                                                                                                                                   |
+| `notifications`                      | monthly (at scale)        | 180 days                     |                                                                                                                                                                                                                          |
+| `documents`                          | —                         | per-row `expires_at`         | The row survives; the **bytes** are dropped by the hourly `maintenance.document-expiry` sweep. An export defaults to `EXPORT_RETENTION_HOURS` (72), an import's error file to 7 days, an uploaded source file to 30 days |
 
 `pg_partman`-style maintenance job: pre-create the next N partitions, detach+drop expired ones,
 `ANALYZE` after attach. Retention is per-plan (`analytics retention` entitlement) and enforced by a

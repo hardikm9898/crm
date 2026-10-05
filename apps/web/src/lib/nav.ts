@@ -48,6 +48,10 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     heading: 'Workspace',
     items: [
       { label: 'Notifications', href: '/notifications', permissions: [] },
+      // Exports are a workspace thing rather than a lead thing: the files outlive the list they
+      // came from, and the person who comes looking for yesterday's download is not on the lead
+      // screen. Import stays on the lead list, where somebody with a spreadsheet already is.
+      { label: 'Exports', href: '/leads/exports', permissions: ['export:data'] },
       { label: 'Organization', href: '/settings', permissions: ['organization:read'] },
       { label: 'People', href: '/settings/members', permissions: ['user:read'] },
       { label: 'Roles', href: '/settings/roles', permissions: ['role:read'] },

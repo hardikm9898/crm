@@ -70,6 +70,14 @@ export const SCHEDULES: readonly ScheduleDefinition[] = [
     description: 'Return leads nobody has touched in N days to the unassigned pool',
   },
   {
+    queue: QUEUES.MAINTENANCE,
+    jobName: JOBS.DOCUMENT_EXPIRY,
+    // Hourly, because the promise an export link makes is "this stops working after N hours" and a
+    // daily sweep would make that "after N hours, give or take a day" (`FR-IO-3`).
+    cron: '31 * * * *',
+    description: 'Drop the bytes of expired exports and import files',
+  },
+  {
     queue: QUEUES.SCORING,
     jobName: JOBS.SCORE_DECAY_SWEEP,
     // Overnight, before anyone opens the app: a score that decayed at 1am is right when the first

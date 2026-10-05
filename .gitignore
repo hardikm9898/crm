@@ -35,6 +35,9 @@ Thumbs.db
 # local data
 docker-data/
 tmp/
+# the local storage driver's root: uploaded imports and generated exports
+.data/
+apps/*/.data/
 
 # generated code (produced by `pnpm db:generate`)
 packages/db/generated/

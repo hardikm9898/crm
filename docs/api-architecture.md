@@ -299,6 +299,40 @@ CRUD /imports (upload → map → validate → run)  GET /imports/{id} | /import
 POST /exports                       GET /exports/{id}
 ```
 
+> **Amendment, 2026-10-05 (implementation).** The import and export surface as built:
+>
+> ```
+> GET  /imports/catalogue             the importable fields (incl. custom) and the modes
+> POST /imports?fileName=…            the body IS the file (content-type: text/csv)
+> GET  /imports | /imports/{id}       the jobs, and one job's state and counters
+> GET  /imports/{id}/preview          header, sample rows, proposed mapping, ambiguities
+> PUT  /imports/{id}/mapping          { mapping, mode }
+> GET  /imports/{id}/check            the dry run, read-only
+> POST /imports/{id}/validate         the dry run as a step (records `validated`)
+> POST /imports/{id}/start | /cancel
+> GET  /imports/{id}/rows             per-row outcomes, filterable by status
+> GET  /imports/{id}/errors.csv       the failed rows as a file
+> GET  /exports/catalogue             the columns, each flagged `pii`
+> POST /exports | GET /exports | /exports/{id} | /exports/{id}/download
+> ```
+>
+> Three deviations from the sketch above, each deliberate:
+>
+> - **The upload is a raw body, not multipart.** An import is one file and nothing else;
+>   `@fastify/multipart` would add a dependency, a streaming-to-disk story and a second body-limit
+>   setting to carry a payload with no other parts. The file's name travels as a query parameter,
+>   where it is visible in the access log. Body limits are **per content type**, so
+>   `application/json` keeps its 256 KiB while a CSV may have `UPLOAD_MAX_BYTES` — and an
+>   `onRequest` hook refuses CSV content types outside these paths, because Fastify parses a body
+>   before any guard runs.
+> - **The dry run is two endpoints, not one.** `GET …/check` reads; `POST …/validate` is the step a
+>   person takes. A screen that showed the report by POSTing re-ran a state transition on every
+>   refresh.
+> - **`errors.csv` and `download` bypass the response envelope** and set
+>   `content-disposition: attachment` plus `x-content-type-options: nosniff` — a CSV wrapped in
+>   `{ success, data }` is not a download, and a CSV a browser decides is HTML is a stored XSS
+>   vector.
+
 ### Automation, websites, analytics, marketing
 
 ```

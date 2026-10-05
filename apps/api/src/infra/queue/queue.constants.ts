@@ -17,6 +17,12 @@ export const QUEUES = {
    * rule change.
    */
   SCORING: 'scoring',
+  /**
+   * Bulk file work: an import run, an export generation. Separate because these are the only jobs
+   * that are *long* — a 50 000-row import holds its worker for minutes — and a queue of them must
+   * not be able to starve scoring or email. Concurrency is deliberately low for the same reason.
+   */
+  IMPORTS_EXPORTS: 'imports-exports',
 } as const;
 
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
@@ -46,6 +52,10 @@ export const JOBS = {
 
   LEAD_SCORE: 'lead.score',
   SCORE_DECAY_SWEEP: 'score.decay-sweep',
+
+  IMPORT_PROCESS: 'import.process',
+  EXPORT_GENERATE: 'export.generate',
+  DOCUMENT_EXPIRY: 'maintenance.document-expiry',
 } as const;
 
 export type JobName = (typeof JOBS)[keyof typeof JOBS];
@@ -65,6 +75,10 @@ export const QUEUE_POLICIES: Readonly<Record<QueueName, QueuePolicy>> = {
   // Idempotent per `(lead, rule, source event)`, so a retry is free; three attempts is enough to
   // ride out a transient database blip without holding a lead's score hostage.
   [QUEUES.SCORING]: { attempts: 3, backoffDelayMs: 5_000, concurrency: 10 },
+  // Low concurrency because each job is long and reads a whole file into memory; three attempts
+  // because a run resumes from the rows it has already recorded rather than starting again, so a
+  // retry after a database blip is safe and finishes the job.
+  [QUEUES.IMPORTS_EXPORTS]: { attempts: 3, backoffDelayMs: 10_000, concurrency: 5 },
 };
 
 /**

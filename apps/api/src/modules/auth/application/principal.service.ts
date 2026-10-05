@@ -92,8 +92,11 @@ export class PrincipalService {
 
   private async resolveGrants(organizationId: string, userId: string): Promise<CachedGrants> {
     const version = await this.scopeVersion(organizationId);
-    const cacheKey = this.redis.key(organizationId, 'grants', `v${version}`, userId);
+    // Cache unavailable: read through to the database rather than trusting — or writing — an entry
+    // under a version we could not establish.
+    if (version === null) return this.loadGrants(organizationId, userId);
 
+    const cacheKey = this.redis.key(organizationId, 'grants', `v${version}`, userId);
     const cached = await this.redis.getJson<CachedGrants>(cacheKey);
     if (cached) return cached;
 
@@ -144,14 +147,22 @@ export class PrincipalService {
     });
   }
 
-  private async scopeVersion(organizationId: string): Promise<number> {
+  /**
+   * The current grant-cache generation, or `null` when the cache cannot be reached.
+   *
+   * **The absent key is version 0, not 1.** `invalidateOrganization` invalidates by `INCR`, and
+   * `INCR` on a missing key produces 1 — so with a default of 1 the *first* role change in a
+   * workspace's life wrote the same version it was already caching under, and the stale grants
+   * stayed live for the full five-minute TTL. Every later change worked, which is exactly what
+   * makes it the kind of bug that reaches production: it only misfires once per workspace, on the
+   * change somebody makes while setting the workspace up.
+   */
+  private async scopeVersion(organizationId: string): Promise<number | null> {
     try {
       const value = await this.redis.client.get(this.versionKey(organizationId));
-      return value === null ? 1 : Number(value);
+      return value === null ? 0 : Number(value);
     } catch {
-      // Cache unavailable: use a version that cannot collide with a cached entry, so the
-      // request falls through to the database instead of trusting a stale grant set.
-      return 0;
+      return null;
     }
   }
 

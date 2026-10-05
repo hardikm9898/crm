@@ -40,6 +40,31 @@ export const configSchema = z.object({
 
   ENCRYPTION_MASTER_KEY: base64Key(32),
 
+  /**
+   * Where uploaded and generated files live. Only the local driver exists today (the S3 driver
+   * arrives with the media-heavy phases); the variable exists so switching is configuration rather
+   * than a code change, and so a deployment states its choice out loud.
+   */
+  STORAGE_DRIVER: z.enum(['local']).default('local'),
+  STORAGE_LOCAL_ROOT: z.string().default('.data/storage'),
+  /**
+   * The largest file an upload may carry. 20 MB is roughly 150 000 lead rows — far more than the
+   * per-import row cap — and small enough that a request body cannot exhaust the API's memory.
+   */
+  UPLOAD_MAX_BYTES: z.coerce
+    .number()
+    .int()
+    .min(1_024)
+    .max(200 * 1_024 * 1_024)
+    .default(20 * 1_024 * 1_024),
+  /** How long an export stays downloadable before the sweep drops its bytes (`FR-IO-3`). */
+  EXPORT_RETENTION_HOURS: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(24 * 30)
+    .default(72),
+
   S3_ENDPOINT: z.string().url().optional(),
   S3_REGION: z.string().default('us-east-1'),
   S3_BUCKET: z.string().optional(),

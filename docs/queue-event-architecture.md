@@ -101,7 +101,7 @@ cannot starve others. Each is deployed as its own worker group and scaled indepe
 | `analytics`       | `analytics.ingest-batch`, `analytics.session-close`, `analytics.identity-stitch`                                                                                                   | 30                 | 3 / exp                          | Dedupe on `(orgId, siteId, eventId)`                                                                                                                         |
 | `rollups`         | `rollup.website-daily`, `rollup.funnel-daily`, `rollup.source-daily`, `rollup.campaign-daily`, `rollup.user-daily`, `rollup.org-daily`, `rollup.platform-daily`, `rollup.backfill` | 5                  | 3 / exp                          | Idempotent upserts; recompute a whole day rather than incrementing                                                                                           |
 | `integrations`    | `ads.sync-campaigns`, `ads.sync-metrics`, `wa.sync-templates`, `gsc.sync`, `integration.health-check`                                                                              | 10                 | 5 / exp                          | Cursor-based; partial failure resumes, never restarts                                                                                                        |
-| `imports-exports` | `import.process`, `export.generate`                                                                                                                                                | 5                  | 3                                | Chunked with progress; result file to S3 with an expiring signed URL                                                                                         |
+| `imports-exports` | `import.process`, `export.generate`                                                                                                                                                | 5                  | 3                                | Per-row progress; result file in storage with an expiring **API-served** download (see the amendment below)                                                  |
 | `documents`       | `doc.scan`, `doc.thumbnail`, `pdf.quotation`                                                                                                                                       | 10                 | 3                                | Upload quarantine until `scan_status = clean`                                                                                                                |
 | `billing`         | `billing.charge`, `billing.dunning`, `usage.aggregate`, `trial.check`                                                                                                              | 5                  | 5 / long backoff                 | Money jobs: strict idempotency keys, never auto-retried past the provider's window                                                                           |
 | `maintenance`     | `partition.maintain`, `retention.purge`, `sla.sweep`, `task.overdue-sweep`, `health.probe`, `outbox.reap`                                                                          | 5                  | 3                                | Platform-scoped; explicitly allowed to run without a tenant context                                                                                          |
@@ -110,6 +110,23 @@ cannot starve others. Each is deployed as its own worker group and scaled indepe
 
 **Job payloads carry `organizationId`, `correlationId` and `eventId`.** A processor's first act is to
 restore the tenant context; a job without one throws before touching data (`FR-TEN-3`).
+
+> **Amendment, 2026-10-05 (implementation).** `imports-exports` landed with two changes to the row
+> above.
+>
+> **There is no signed URL.** The storage port deliberately exposes none: a download is served by
+> the API after a permission check, so `export:pii` can be re-checked at download time and the
+> access audited. A pre-signed URL would be a bearer of the whole list to anyone it reached, and
+> could not be withdrawn when somebody's access was.
+>
+> **The tenant context is not restored from the payload alone.** Both processors rebuild the
+> **requester's** principal through `PrincipalService` — permissions, data scope and all — because
+> an import may only update leads its requester can see, an export must contain only what they may
+> read, and the audit trail has to name a person. A system principal would quietly widen both. If
+> that person's access was revoked between pressing the button and the worker picking the job up,
+> the job fails saying so, which is the correct answer rather than acting on the authority of
+> nobody. This is the one place a job's tenant context comes from the _database_ rather than from
+> the envelope.
 
 ### Fairness
 

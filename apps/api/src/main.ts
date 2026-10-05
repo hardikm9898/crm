@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { config as loadDotenv } from 'dotenv';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
+import { allowCsvUpload } from './infra/http/csv-body.js';
 import { allowEmptyJsonBody } from './infra/http/empty-json-body.js';
 import { installValidationCopy } from './infra/http/validation-copy.js';
 import type { Logger } from 'pino';
@@ -47,6 +48,9 @@ async function bootstrap(): Promise<void> {
 /** 256 KiB: large enough for an import mapping or a long filter, small enough to bound a flood. */
 const BODY_LIMIT_BYTES = 256 * 1024;
 
+/** The versioned prefix, named once because the CSV path guard has to agree with it exactly. */
+const API_PREFIX = '/api/v1';
+
 async function bootstrapHttp(): Promise<void> {
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
@@ -65,9 +69,13 @@ async function bootstrapHttp(): Promise<void> {
 
   // /api/v1/* for the product API; /health/* stays unversioned so orchestrator and load
   // balancer probes never move (docs/api-architecture.md §1).
-  app.setGlobalPrefix('api/v1', { exclude: ['health/live', 'health/ready', 'health/deep'] });
+  app.setGlobalPrefix(API_PREFIX.slice(1), {
+    exclude: ['health/live', 'health/ready', 'health/deep'],
+  });
 
   allowEmptyJsonBody(app, BODY_LIMIT_BYTES);
+  // A CSV upload is the one body that may exceed the global limit, and only on the import routes.
+  allowCsvUpload(app, config.UPLOAD_MAX_BYTES, [`${API_PREFIX}/imports`]);
   app.useLogger(new PinoLoggerService(logger));
   app.useGlobalInterceptors(new EnvelopeInterceptor());
   app.useGlobalFilters(new AppExceptionFilter(logger));

@@ -174,6 +174,48 @@ change, or typecheck will fail confusingly.
   creating an organization fails on a foreign key. `seedPlatformCatalogue()` is called by both
   the dev seed and the test harness.
 
+- **A cache generation keyed by `INCR` starts at 0, not 1.** `PrincipalService` caches a person's
+  grants under `v<version>`, and `invalidateOrganization()` invalidates by `INCR`-ing that version —
+  but `INCR` on a missing key produces **1**, so while the default for an absent key was also 1, the
+  very first role change in a workspace's life wrote the version it was already caching under and
+  the stale grants stayed live for the full five-minute TTL. Every later change worked. A
+  once-per-workspace misfire, on the change somebody makes while setting the workspace up, is
+  exactly the shape of bug that reaches production.
+- **A dry run that only re-checks the schema lies.** The import's pre-flight validated each row with
+  `createLeadSchema`, which knows a phone is 4–32 characters and nothing else — normalization needs
+  the organization's country. So a column of `not-a-phone` reported "5 rows ready to import" and then
+  failed all five. Anything the write path validates with information a schema does not have
+  (the tenant's country, its statuses, its members) has to be checked by the **mapper**, which has
+  that information, or the preview is a promise the import breaks.
+- **A Fastify content-type parser is global, and the body is parsed before any guard runs.** Giving
+  `text/csv` a 20 MB limit for the import upload therefore gave _every_ route a 20 MB sink, reachable
+  unauthenticated by claiming that content type. `allowCsvUpload()` adds an `onRequest` hook that
+  refuses CSV content types outside the import paths — before a byte of body is read. `text/plain` is
+  deliberately not in the list: too many clients default to it.
+- **Rendering a page must never run a mutation.** The wizard's screen showed the dry run by calling
+  `POST /imports/:id/validate`, so every refresh re-ran a state transition — a state machine driven
+  by the browser's reload button. The dry run has a read-only twin (`GET /imports/:id/check`) and the
+  page uses that; the POST stays as the step a person takes.
+- **`node --watch` reloads the API, not a worker you started separately.** A background run then
+  executes the code you had before the fix, and the symptom is a result that contradicts the source
+  in front of you — an error message from a layer you just changed, in a file written seconds ago.
+  Restart the worker after touching anything a processor reaches. (And `pkill -f` on the worker
+  pattern kills the shell chain it is part of; `kill <pid>` from `pgrep -af main.ts` does not.)
+- **Excel executes a cell beginning `+`, so every exported phone number is tab-guarded.** `csvCell`
+  prefixes a tab and quotes the value — visible in the file and deliberate, because `+919845012345`
+  would otherwise be evaluated as a formula. `unguardCell` is its exact inverse, which is what makes
+  "export, fix, re-import" work, and the pair is covered by a round-trip test.
+- **An export's timestamps are rendered in the workspace's timezone, in `YYYY-MM-DD HH:mm`.** An ISO
+  UTC string reads as a bug to everyone who is not a programmer, and a locale format with slashes is
+  ambiguous. The chosen format is also one `parseSpreadsheetDate` accepts, so export → edit →
+  re-import does not move every date; that function had to learn to drop a trailing time, because
+  `14/02/2026 10:30` previously fell through to `new Date()`, which reads a day-first date as invalid
+  and failed every dated row of a file a spreadsheet had written.
+- **The storage port takes a `Buffer`, so a generated file is held in memory.** That is why the
+  export row ceiling is 100 000 and the CSV is appended a page at a time (`csvRow`) rather than built
+  from a 2D array of every cell. Streaming an object into storage is a port change that belongs with
+  the S3 driver — not a limit to raise by editing the constant.
+
 ## Reporting work
 
 Per `docs/implementation-roadmap.md`: what was completed, files changed, database changes, API

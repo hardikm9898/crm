@@ -8,6 +8,7 @@ import { JOBS, QUEUES } from '../../infra/queue/queue.constants.js';
 import type { JobProcessor } from '../../infra/queue/job-processor.js';
 import type { JobPayload } from '../../infra/queue/queue.service.js';
 import { EntitlementService } from '../../infra/entitlements/entitlement.service.js';
+import { DocumentsService } from '../documents/documents.service.js';
 
 /**
  * Scheduled housekeeping (docs/queue-event-architecture.md §5).
@@ -376,5 +377,31 @@ export class LeadRecycleProcessor implements JobProcessor {
         );
       }
     });
+  }
+}
+
+/**
+ * Drops the bytes of expired exports and import files (`FR-IO-3`).
+ *
+ * The promise an export link makes is "this stops working after N hours", and the `documents` row
+ * is what enforces it on read — this sweep is what makes it true on disk as well, so an expired
+ * export is not merely unreachable but gone. The row survives: who exported what is audit history,
+ * and deleting the evidence along with the file would defeat the point of recording it.
+ */
+@Injectable()
+export class DocumentExpiryProcessor implements JobProcessor {
+  readonly queue = QUEUES.MAINTENANCE;
+  readonly jobName = JOBS.DOCUMENT_EXPIRY;
+
+  constructor(
+    private readonly documents: DocumentsService,
+    @Inject(LOGGER) private readonly logger: Logger,
+  ) {}
+
+  async process(_payload: JobPayload, _job: Job): Promise<void> {
+    const result = await this.documents.sweepExpired();
+    if (result.examined > 0) {
+      this.logger.info(result, 'document expiry sweep complete');
+    }
   }
 }

@@ -194,6 +194,94 @@ describe('layer 3 — the database refuses cross-tenant references even when the
     ).rejects.toThrow(/user_roles_role_same_org_fk|foreign key/i);
   });
 
+  /**
+   * Imports and exports (`FR-IO-1`, `FR-IO-3`).
+   *
+   * These four matter more than most: an import row points at a lead, an import job points at an
+   * uploaded file, and an export job points at a generated one — so a crossed reference here is
+   * one tenant's spreadsheet becoming downloadable by another. The registry check cannot catch a
+   * missing composite FK, which is why every new tenant table gets its own case here.
+   */
+  it('blocks an import job pointing at another tenant file', async () => {
+    const documentId = newId();
+    await h.unscoped.document.create({
+      data: {
+        id: documentId,
+        organizationId: h.orgB.organizationId,
+        subject: 'import',
+        fileKey: `org/${h.orgB.organizationId}/import/x.csv`,
+        fileName: 'x.csv',
+        mimeType: 'text/csv',
+        sizeBytes: 12,
+        checksum: 'a'.repeat(64),
+      },
+    });
+
+    await expect(
+      h.unscoped.importJob.create({
+        data: { id: newId(), organizationId: h.orgA.organizationId, documentId },
+      }),
+    ).rejects.toThrow(/import_jobs_document_same_org_fk|foreign key/i);
+
+    await expect(
+      h.unscoped.exportJob.create({
+        data: { id: newId(), organizationId: h.orgA.organizationId, documentId },
+      }),
+    ).rejects.toThrow(/export_jobs_document_same_org_fk|foreign key/i);
+
+    await h.unscoped.document.delete({ where: { id: documentId } });
+  });
+
+  it('blocks an import row pointing at another tenant job, or another tenant lead', async () => {
+    const documentId = newId();
+    const jobId = newId();
+    await h.unscoped.document.create({
+      data: {
+        id: documentId,
+        organizationId: h.orgB.organizationId,
+        subject: 'import',
+        fileKey: `org/${h.orgB.organizationId}/import/y.csv`,
+        fileName: 'y.csv',
+        mimeType: 'text/csv',
+        sizeBytes: 12,
+        checksum: 'b'.repeat(64),
+      },
+    });
+    await h.unscoped.importJob.create({
+      data: { id: jobId, organizationId: h.orgB.organizationId, documentId },
+    });
+
+    // Org A's row cannot belong to org B's job …
+    await expect(
+      h.unscoped.importRow.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          jobId,
+          rowNumber: 2,
+          status: 'skipped',
+        },
+      }),
+    ).rejects.toThrow(/import_rows_job_same_org_fk|foreign key/i);
+
+    // … nor can org B's row claim org A's lead.
+    await expect(
+      h.unscoped.importRow.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgB.organizationId,
+          jobId,
+          rowNumber: 3,
+          status: 'created',
+          leadId: h.orgA.leadId,
+        },
+      }),
+    ).rejects.toThrow(/import_rows_lead_same_org_fk|foreign key/i);
+
+    await h.unscoped.importJob.delete({ where: { id: jobId } });
+    await h.unscoped.document.delete({ where: { id: documentId } });
+  });
+
   it('allows the same reference within one tenant', async () => {
     const id = newId();
     await h.unscoped.team.create({

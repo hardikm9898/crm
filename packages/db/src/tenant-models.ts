@@ -59,6 +59,11 @@ export const TENANT_MODELS = [
   'ScoreBand',
   'LeadScoreEvent',
   'SavedView',
+  // Phase 2, step 5 — files, import and export
+  'Document',
+  'ImportJob',
+  'ImportRow',
+  'ExportJob',
 ] as const;
 
 export type TenantModel = (typeof TENANT_MODELS)[number];

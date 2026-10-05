@@ -13,6 +13,7 @@ import {
   type SavedView,
   type ScoreBand,
 } from '@/lib/leads';
+import { ExportButton } from './_components/export-button';
 import { FilterBar } from './_components/filter-bar';
 import { LeadTable } from './_components/lead-table';
 
@@ -116,11 +117,28 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
               : undefined
         }
         action={
-          can(user, 'lead:create') && !deleted ? (
-            <Link href="/leads/new">
-              <Button>New lead</Button>
-            </Link>
-          ) : undefined
+          deleted ? undefined : (
+            <div className="flex items-center gap-2">
+              {/* Export carries the list the person is actually looking at — the same `?view=` or
+                  `?f=` the screen just ran, so "export this" means exactly what it says. */}
+              {can(user, 'export:data') && (
+                <ExportButton
+                  viewId={params.view ?? null}
+                  filter={effective.length > 0 ? toApiFilter(effective) : null}
+                />
+              )}
+              {can(user, 'lead:import') && (
+                <Link href="/leads/import">
+                  <Button variant="secondary">Import</Button>
+                </Link>
+              )}
+              {can(user, 'lead:create') && (
+                <Link href="/leads/new">
+                  <Button>New lead</Button>
+                </Link>
+              )}
+            </div>
+          )
         }
       />
 

@@ -66,6 +66,13 @@ export interface RequestOptions {
   /** Forwarded so a browser request carries the refresh cookie on auth routes. */
   credentials?: RequestCredentials;
   signal?: AbortSignal;
+  /**
+   * A body that is **not** JSON: a CSV upload, where the file's contents are the request.
+   *
+   * Separate from `body` rather than a union, so nothing can accidentally send a string through
+   * `JSON.stringify` and upload `"name,phone\n..."` — quoted, escaped and unparseable.
+   */
+  rawBody?: { readonly content: string; readonly contentType: string };
 }
 
 export async function request<T>(
@@ -76,9 +83,11 @@ export async function request<T>(
     method: options.method ?? 'GET',
     headers: {
       ...(options.body === undefined ? {} : { 'content-type': 'application/json' }),
+      ...(options.rawBody ? { 'content-type': options.rawBody.contentType } : {}),
       ...(options.token ? { authorization: `Bearer ${options.token}` } : {}),
     },
     ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+    ...(options.rawBody ? { body: options.rawBody.content } : {}),
     credentials: options.credentials ?? 'include',
     ...(options.signal ? { signal: options.signal } : {}),
     cache: 'no-store',

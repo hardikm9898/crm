@@ -47,6 +47,8 @@ export const EVENT_SUBSCRIPTIONS: Readonly<Record<string, readonly EventSubscrip
   'lead.merge_undone': [],
   'lead.recycled': [],
   'lead.score_changed': [],
+  'import.completed': [],
+  'export.completed': [],
 };
 
 export function subscribersFor(eventName: string): readonly EventSubscription[] {

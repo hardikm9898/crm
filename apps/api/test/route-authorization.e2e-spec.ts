@@ -54,6 +54,11 @@ interface Tenant {
   // Phase 2, step 3 — scoring and saved views
   scoringRuleId: string;
   savedViewId: string;
+  // Phase 2, step 5 — imports and exports. An import job needs a real uploaded file behind it, or
+  // every `/imports/:id/...` route would answer 404 for a reason that has nothing to do with
+  // tenancy and the sweep would record a refusal it never earned.
+  importJobId: string;
+  exportJobId: string;
 }
 
 let orgA: Tenant;
@@ -198,6 +203,23 @@ async function createTenant(label: string): Promise<Tenant> {
     token,
   });
 
+  // An import, uploaded the way a person uploads one: the body is the file.
+  const uploaded = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/v1/imports?fileName=sweep.csv',
+    payload: `Name,Mobile No.\nSweep Import ${label},98765000${label === 'orga' ? '21' : '22'}\n`,
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'text/csv' },
+  });
+  const importJobId = (uploaded.json() as EnvelopeBody<{ id: string }>).data.id;
+
+  // An export job, left `queued`: the sweep must not depend on a worker having run.
+  const exported = await call<EnvelopeBody<{ id: string }>>(ctx.app, {
+    method: 'POST',
+    url: '/api/v1/exports',
+    payload: { filter: { conditions: [] }, columns: ['company', 'status'] },
+    token,
+  });
+
   const [duplicateRule, assignmentRule, scoringRule, savedView] = await Promise.all([
     ctx.db.duplicateRule.findFirstOrThrow({ where: { organizationId, isActive: true } }),
     ctx.db.assignmentRule.findFirstOrThrow({ where: { organizationId } }),
@@ -231,6 +253,8 @@ async function createTenant(label: string): Promise<Tenant> {
     assignmentRuleId: assignmentRule.id,
     scoringRuleId: scoringRule.id,
     savedViewId: savedView.id,
+    importJobId,
+    exportJobId: exported.body.data.id,
   };
 }
 
@@ -371,6 +395,18 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       '/views/:id': `/views/${orgA.savedViewId}`,
       '/leads/:id/score-breakdown': `/leads/${orgA.leadId}/score-breakdown`,
       '/leads/:id/recompute-score': `/leads/${orgA.leadId}/recompute-score`,
+      // Phase 2, step 5 — imports and exports
+      '/imports/:id': `/imports/${orgA.importJobId}`,
+      '/imports/:id/preview': `/imports/${orgA.importJobId}/preview`,
+      '/imports/:id/mapping': `/imports/${orgA.importJobId}/mapping`,
+      '/imports/:id/check': `/imports/${orgA.importJobId}/check`,
+      '/imports/:id/validate': `/imports/${orgA.importJobId}/validate`,
+      '/imports/:id/start': `/imports/${orgA.importJobId}/start`,
+      '/imports/:id/cancel': `/imports/${orgA.importJobId}/cancel`,
+      '/imports/:id/rows': `/imports/${orgA.importJobId}/rows`,
+      '/imports/:id/errors.csv': `/imports/${orgA.importJobId}/errors.csv`,
+      '/exports/:id': `/exports/${orgA.exportJobId}`,
+      '/exports/:id/download': `/exports/${orgA.exportJobId}/download`,
     };
 
     // An unmapped parameter would test nothing meaningful, so it is reported instead.
@@ -449,6 +485,8 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       ['stageId', orgA.stageId],
       ['customFieldId', orgA.customFieldId],
       ['customFieldSectionId', orgA.customFieldSectionId],
+      ['importJobId', orgA.importJobId],
+      ['exportJobId', orgA.exportJobId],
     ];
 
     const problems: string[] = [];
@@ -670,6 +708,19 @@ function bodyFor(
       return { filter: { conditions: [] } };
     case '/leads/:id/recompute-score':
       return {};
+    // Phase 2, step 5 — imports and exports
+    case '/imports':
+      // The upload's body is the file itself, not JSON. A JSON body here is refused as an empty
+      // file, which is a 400 and therefore a legitimate sweep outcome for a collection route.
+      return {};
+    case '/imports/:id/mapping':
+      return { mapping: { Name: 'fullName', 'Mobile No.': 'phone' }, mode: 'create_only' };
+    case '/imports/:id/validate':
+    case '/imports/:id/start':
+    case '/imports/:id/cancel':
+      return {};
+    case '/exports':
+      return { filter: { conditions: [] }, columns: ['company'] };
     case '/auth/switch-org':
       return { organizationId: target.organizationId };
     case '/auth/mfa/confirm':

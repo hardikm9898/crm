@@ -11,6 +11,7 @@ import { AppModule } from '../src/app.module.js';
 import { LOGGER } from '../src/infra/observability/logger.module.js';
 import { RedisService } from '../src/infra/redis/redis.service.js';
 import { EnvelopeInterceptor } from '../src/infra/http/envelope.interceptor.js';
+import { allowCsvUpload } from '../src/infra/http/csv-body.js';
 import { allowEmptyJsonBody } from '../src/infra/http/empty-json-body.js';
 import { installValidationCopy } from '../src/infra/http/validation-copy.js';
 import { AppExceptionFilter } from '../src/infra/http/app-exception.filter.js';
@@ -38,6 +39,7 @@ export async function bootTestApp(): Promise<TestApp> {
   app.setGlobalPrefix('api/v1', { exclude: ['health/live', 'health/ready', 'health/deep'] });
   installValidationCopy();
   allowEmptyJsonBody(app, 256 * 1024);
+  allowCsvUpload(app, 20 * 1024 * 1024, ['/api/v1/imports']);
   app.useGlobalInterceptors(new EnvelopeInterceptor());
   app.useGlobalFilters(new AppExceptionFilter(logger));
   await app.init();

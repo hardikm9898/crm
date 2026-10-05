@@ -34,7 +34,8 @@ apps/web/src/app/
 │   ├── leads/
 │   │   ├── page.tsx                list · saved views · filter bar · bulk actions
 │   │   ├── [id]/                   lead detail (tabbed, see §5)
-│   │   └── import/                 wizard
+│   │   ├── import/                 wizard (step decided by the job's own status, ?job=…)
+│   │   └── exports/                generated files, with their expiry
 │   ├── pipeline/                   kanban
 │   ├── tasks/                      buckets: due now / today / overdue / upcoming / done
 │   ├── inbox/                      shared WhatsApp inbox (3-pane → stacked on mobile)

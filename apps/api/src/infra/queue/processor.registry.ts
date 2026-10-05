@@ -6,6 +6,7 @@ import {
 } from '../../modules/auth/processors/credential-mail.processor.js';
 import { InvitationMailProcessor } from '../../modules/users/processors/invitation-mail.processor.js';
 import {
+  DocumentExpiryProcessor,
   InvitationExpiryProcessor,
   ActivityPartitionProcessor,
   LeadRecycleProcessor,
@@ -22,6 +23,8 @@ import {
   LeadScoreProcessor,
   ScoreDecaySweepProcessor,
 } from '../../modules/scoring/scoring.processor.js';
+import { ExportGenerateProcessor } from '../../modules/exports/exports.processor.js';
+import { ImportProcessProcessor } from '../../modules/imports/imports.processor.js';
 import type { JobProcessor } from './job-processor.js';
 
 /**
@@ -52,9 +55,13 @@ export const PROCESSOR_TYPES: readonly Type<JobProcessor>[] = [
   OutboxReapProcessor,
   ActivityPartitionProcessor,
   LeadRecycleProcessor,
+  DocumentExpiryProcessor,
   // scoring
   LeadScoreProcessor,
   ScoreDecaySweepProcessor,
+  // imports and exports
+  ImportProcessProcessor,
+  ExportGenerateProcessor,
 ];
 
 /** Resolves the processors from a Nest context (application or test). */

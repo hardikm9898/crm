@@ -72,6 +72,9 @@ const REQUIRED_INDEXES = [
   // and without these every delete scans the whole table twice per row.
   'leads_duplicate_of',
   'leads_merged_into',
+  // Imports and exports. `documents_expiring` is what the hourly sweep scans; without it the sweep
+  // reads every document a workspace has ever stored to find the handful that expired.
+  'documents_expiring',
 ];
 
 /**
@@ -122,6 +125,37 @@ const REQUIRED_CONSTRAINTS = [
   'saved_views_team_same_org_fk',
   'saved_views_role_same_org_fk',
   'saved_views_owner_same_org_fk',
+  // Imports and exports (`FR-IO-1`, `FR-IO-3`).
+  'documents_size_positive',
+  'documents_name_present',
+  'documents_key_present',
+  'documents_checksum_sha256',
+  'documents_scan_status',
+  'documents_subject',
+  'import_jobs_status',
+  'import_jobs_mode',
+  'import_jobs_mapping_is_object',
+  'import_jobs_delimiter_single',
+  'import_jobs_counts_non_negative',
+  // The one that makes a progress bar unable to lie: the outcome counts must add up to what was
+  // processed, so a run cannot report 9 800 processed with only 9 000 accounted for.
+  'import_jobs_outcomes_account_for_processed',
+  'import_jobs_processed_within_total',
+  'import_jobs_document_same_org_fk',
+  'import_rows_status',
+  'import_rows_number_positive',
+  'import_rows_errors_is_array',
+  'import_rows_raw_is_object',
+  'import_rows_failed_has_error',
+  'import_rows_outcome_has_lead',
+  'import_rows_job_same_org_fk',
+  'import_rows_lead_same_org_fk',
+  'export_jobs_status',
+  'export_jobs_filters_is_object',
+  'export_jobs_columns_is_array',
+  'export_jobs_row_count_non_negative',
+  'export_jobs_completed_has_document',
+  'export_jobs_document_same_org_fk',
 ];
 
 describe('hand-written indexes survive every generated migration', () => {
