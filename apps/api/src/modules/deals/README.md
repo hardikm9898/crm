@@ -1,7 +1,7 @@
 # modules/deals
 
-The sale itself: what is being sold, for how much, and where it has got to (`FR-DEAL-1`,
-`FR-DEAL-2`, `FR-DEAL-3`).
+The sale itself: what is being sold, for how much, and where it has got to (`FR-DEAL-1`).
+Quotations (`FR-DEAL-2`) and payments (`FR-DEAL-3`) are separate modules over the same arithmetic.
 
 - `deals.controller.ts` — `DealsController` (list, board, create, get, timeline, update, items,
   stage, win, lose, reopen, delete, restore) and `ProductsController` (the catalogue)

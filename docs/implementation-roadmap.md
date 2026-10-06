@@ -582,8 +582,8 @@ every report that reads it.
 
 ### Step 7 — deals, products and line items ✅ _(landed 2026-10-06)_
 
-The money. `FR-DEAL-1` (deals on a pipeline), `FR-DEAL-2` (line items and a product catalogue),
-`FR-DEAL-3` (win, lose, reopen, with the tenant's own reasons).
+The money. `FR-DEAL-1` in full: deals with value, currency, expected close and a probability that
+comes from the stage; products and line items; won and lost with the tenant's own reasons.
 
 - **Line-item arithmetic lives in exactly one pure function, and the database re-checks it.**
   `lineTotals` / `documentTotals` in `@leados/shared`, over integers in minor units, with
