@@ -124,8 +124,14 @@ export async function request<T>(
   };
 }
 
-/** Human-readable copy for the error codes a screen can actually encounter. */
-export const ERROR_COPY: Record<string, string> = {
+/**
+ * Codes where **this app's** wording wins over the API's message.
+ *
+ * Session and access failures, where the API's text is either terse, aimed at an integrator, or
+ * something that should not be repeated verbatim to a browser — "no tenant context", a permission
+ * key, a plan feature flag. For these the app says the one sentence that is useful: sign in again.
+ */
+export const ERROR_OVERRIDES: Record<string, string> = {
   UNAUTHENTICATED: 'Please sign in again.',
   TOKEN_EXPIRED: 'Your session expired. Please sign in again.',
   TOKEN_REUSED: 'Your session was ended for security reasons. Please sign in again.',
@@ -135,15 +141,35 @@ export const ERROR_COPY: Record<string, string> = {
   TRIAL_EXPIRED: 'Your free trial has ended. Your data is safe — choose a plan to continue.',
   SUBSCRIPTION_INACTIVE: 'Your subscription has lapsed. Your data is safe — renew to continue.',
   FEATURE_NOT_IN_PLAN: 'That feature is not included in your current plan.',
-  LIMIT_EXCEEDED: 'You have reached your plan limit.',
   RATE_LIMITED: 'Too many attempts. Please wait a moment and try again.',
+};
+
+/**
+ * Codes where the API's own sentence wins, and this is only what to say when it has none.
+ *
+ * A business-rule refusal is the API explaining itself to a person: "This deal’s value comes from
+ * its line items", "Deactivate it instead — it will stop appearing when somebody adds a line", "The
+ * counter is already at 2. It can be moved forward, but not back". Those sentences were written for
+ * exactly this moment, and replacing them with "That is not allowed." turns a refusal that tells
+ * somebody what to do next into a dead end. That is what used to happen here, to every refusal in
+ * the product.
+ */
+export const ERROR_FALLBACKS: Record<string, string> = {
+  LIMIT_EXCEEDED: 'You have reached your plan limit.',
   VALIDATION_FAILED: 'Some details need correcting.',
   CONFLICT: 'That conflicts with something that already exists.',
   BUSINESS_RULE_VIOLATION: 'That is not allowed.',
   NOT_FOUND: 'Not found.',
 };
 
+/** Kept for callers that want the whole map; the two halves above are the contract. */
+export const ERROR_COPY: Record<string, string> = { ...ERROR_FALLBACKS, ...ERROR_OVERRIDES };
+
 export function describeError(error: unknown): string {
-  if (error instanceof ApiError) return ERROR_COPY[error.code] ?? error.message;
-  return 'Something went wrong. Please try again.';
+  if (!(error instanceof ApiError)) return 'Something went wrong. Please try again.';
+  const override = ERROR_OVERRIDES[error.code];
+  if (override) return override;
+  const message = error.message?.trim();
+  if (message) return message;
+  return ERROR_FALLBACKS[error.code] ?? 'Something went wrong. Please try again.';
 }

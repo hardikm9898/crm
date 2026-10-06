@@ -128,6 +128,25 @@ restore the tenant context; a job without one throws before touching data (`FR-T
 > nobody. This is the one place a job's tenant context comes from the _database_ rather than from
 > the envelope.
 
+> **Amendment, 2026-10-06 (implementation).** Two changes from the quotations step.
+>
+> **`pdf.quotation` is not a queue job.** It is rendered synchronously in the request that needs it
+> and cached per version as a `documents` row. One page of a dozen lines takes milliseconds, so
+> queueing it would buy a polling UI, a job state machine and a download button that says "come
+> back in a moment", in exchange for nothing — and because a sent quotation is immutable
+> ([ADR-0019](./decisions/ADR-0019-quotation-versions-are-immutable.md)), its bytes are too, so the
+> first request stores them and every later one serves that row. The `documents` queue row above
+> keeps `doc.scan` and `doc.thumbnail`, which are genuinely slow and genuinely asynchronous; it is
+> not declared in `QUEUES` until one of them exists.
+>
+> **`maintenance.quotation-expiry` is new**, daily at 00:49. `valid_until` is a date, so a quotation
+> valid "until the 20th" is valid for all of the 20th and expiring it just after midnight on the
+> 21st is exactly on time. The sweep reads across tenants under `withPlatformScope` and then writes
+> **inside each row's own tenant context** as a system principal, because `TimelineService` takes
+> the organization from the context by design — writing activity rows by hand under platform scope
+> is how one lands in the wrong workspace. Its `UPDATE` re-checks `status = 'sent'`, so a quotation
+> accepted between the read and the write is not quietly expired underneath the acceptance.
+
 ### Fairness
 
 Per-org token buckets guard `ingestion`, `whatsapp-out`, `automation` and `rollups`. A job that

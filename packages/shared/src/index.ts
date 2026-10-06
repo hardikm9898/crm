@@ -2,6 +2,7 @@ export * from './ids.js';
 export * from './phone.js';
 export * from './money.js';
 export * from './line-items.js';
+export * from './document-number.js';
 export * from './time.js';
 export * from './tenant-context.js';
 export * from './errors.js';

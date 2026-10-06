@@ -1307,3 +1307,159 @@ describe('layer 3 — a customer cannot be stitched to another tenant (FR-DEAL-4
     await h.unscoped.customer.deleteMany({ where: { id: { in: ids } } });
   });
 });
+
+describe('layer 3 — a quotation cannot be stitched to another tenant (FR-DEAL-2)', () => {
+  const liveLine = {
+    position: 1,
+    name: 'One hour',
+    quantity: 1,
+    unitPriceMinor: 1_000,
+    grossMinor: 1_000,
+    netMinor: 1_000,
+    taxMinor: 0,
+    totalMinor: 1_000,
+  };
+
+  async function quotation(organizationId: string, leadId: string) {
+    const id = newId();
+    await h.unscoped.quotation.create({
+      data: {
+        id,
+        organizationId,
+        leadId,
+        // Named from the tail of the id: a UUIDv7 minted in the same millisecond shares its prefix,
+        // and `(organization_id, number, version)` is unique.
+        number: `QTN-${id.slice(-8)}`,
+        version: 1,
+        status: 'draft',
+        currency: 'INR',
+      },
+    });
+    return id;
+  }
+
+  it('blocks a quotation against another tenant’s lead, customer, owner or deal', async () => {
+    const base = {
+      organizationId: h.orgA.organizationId,
+      number: `QTN-${newId().slice(-8)}`,
+      version: 1,
+      status: 'draft',
+      currency: 'INR',
+    };
+
+    await expect(
+      h.unscoped.quotation.create({ data: { ...base, id: newId(), leadId: h.orgB.leadId } }),
+    ).rejects.toThrow(/quotations_lead_same_org_fk|foreign key/i);
+
+    await expect(
+      h.unscoped.quotation.create({
+        data: {
+          ...base,
+          id: newId(),
+          number: `QTN-${newId().slice(-8)}`,
+          leadId: h.orgA.leadId,
+          ownerUserId: h.orgB.userId,
+        },
+      }),
+    ).rejects.toThrow(/quotations_owner_same_org_fk|foreign key/i);
+  });
+
+  it('blocks a quotation line on another tenant’s quotation or product', async () => {
+    const quotationId = await quotation(h.orgA.organizationId, h.orgA.leadId);
+    const productId = newId();
+    await h.unscoped.product.create({
+      data: { id: productId, organizationId: h.orgA.organizationId, name: 'A product' },
+    });
+
+    await expect(
+      h.unscoped.quotationItem.create({
+        data: { ...liveLine, id: newId(), organizationId: h.orgB.organizationId, quotationId },
+      }),
+    ).rejects.toThrow(/quotation_items_quotation_same_org_fk|foreign key/i);
+
+    await expect(
+      h.unscoped.quotationItem.create({
+        data: {
+          ...liveLine,
+          id: newId(),
+          organizationId: h.orgB.organizationId,
+          quotationId,
+          productId,
+        },
+      }),
+    ).rejects.toThrow(/quotation_items_(quotation|product)_same_org_fk|foreign key/i);
+  });
+
+  it('blocks a version chain that crosses tenants', async () => {
+    // Superseding another workspace's quotation would make one tenant's document history point
+    // into another's — and the id alone is not authority to do anything.
+    const mine = await quotation(h.orgA.organizationId, h.orgA.leadId);
+    const theirs = await quotation(h.orgB.organizationId, h.orgB.leadId);
+    await expect(
+      h.unscoped.quotation.update({
+        where: { id: mine },
+        data: { supersededById: theirs, supersededAt: new Date() },
+      }),
+    ).rejects.toThrow(/quotations_superseded_by_same_org_fk|foreign key/i);
+  });
+
+  it('keeps a document number unique per version, and lets a revision reuse it', async () => {
+    const number = `QTN-${newId().slice(-8)}`;
+    const base = {
+      organizationId: h.orgA.organizationId,
+      leadId: h.orgA.leadId,
+      number,
+      status: 'draft',
+      currency: 'INR',
+    };
+    await h.unscoped.quotation.create({ data: { ...base, id: newId(), version: 1 } });
+    // Version 2 of the same number is the whole point of the key.
+    await h.unscoped.quotation.create({ data: { ...base, id: newId(), version: 2 } });
+    // A second version 1 is not.
+    await expect(
+      h.unscoped.quotation.create({ data: { ...base, id: newId(), version: 1 } }),
+    ).rejects.toThrow(/unique|duplicate key/i);
+  });
+
+  it('lets two tenants use the same quotation number without colliding', async () => {
+    // The number series is per workspace, so `QTN-0001` exists in every one of them.
+    const number = 'QTN-0001';
+    for (const org of [h.orgA, h.orgB]) {
+      await h.unscoped.quotation.create({
+        data: {
+          id: newId(),
+          organizationId: org.organizationId,
+          leadId: org.leadId,
+          number,
+          version: 1,
+          status: 'draft',
+          currency: 'INR',
+        },
+      });
+    }
+    const seenByA = await tenantContext.run(h.orgA.principal, async () =>
+      h.db.quotation.findMany({ where: { number } }),
+    );
+    expect(seenByA).toHaveLength(1);
+    expect(seenByA[0]?.organizationId).toBe(h.orgA.organizationId);
+  });
+
+  it('shows each tenant only its own number series', async () => {
+    for (const org of [h.orgA, h.orgB]) {
+      await h.unscoped.numberSeries.create({
+        data: {
+          id: newId(),
+          organizationId: org.organizationId,
+          kind: `quotation-${newId().slice(-6)}`,
+          prefix: 'QTN-',
+          nextValue: 1,
+        },
+      });
+    }
+    const seenByA = await tenantContext.run(h.orgA.principal, async () =>
+      h.db.numberSeries.findMany({}),
+    );
+    expect(seenByA.every((row) => row.organizationId === h.orgA.organizationId)).toBe(true);
+    expect(seenByA.length).toBeGreaterThan(0);
+  });
+});

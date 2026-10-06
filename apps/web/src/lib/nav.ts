@@ -34,6 +34,7 @@ export const NAV_SECTIONS: readonly NavSection[] = [
       { label: 'Pipeline', href: '/pipeline', permissions: ['lead:read'] },
       { label: 'Customers', href: '/customers', permissions: ['customer:read'] },
       { label: 'Deals', href: '/deals', permissions: ['deal:read'] },
+      { label: 'Quotations', href: '/quotations', permissions: ['deal:read'] },
       { label: 'Tasks', href: '/tasks', permissions: ['task:read'], phase: 3 },
       { label: 'Inbox', href: '/inbox', permissions: ['conversation:read'], phase: 5 },
     ],
@@ -59,6 +60,13 @@ export const NAV_SECTIONS: readonly NavSection[] = [
       { label: 'Roles', href: '/settings/roles', permissions: ['role:read'] },
       // A price list is workspace configuration, like statuses and sources — not a deal screen.
       { label: 'Products', href: '/settings/products', permissions: ['deal:read'] },
+      // Numbering sits beside the price list for the same reason: moving the counter affects every
+      // quotation that follows, which is not a thing to do from a quotation screen.
+      {
+        label: 'Quotation numbering',
+        href: '/settings/quotations',
+        permissions: ['settings:manage'],
+      },
       { label: 'Your security', href: '/settings/security', permissions: [] },
     ],
   },

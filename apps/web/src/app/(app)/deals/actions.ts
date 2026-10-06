@@ -6,6 +6,7 @@ import { describeError, request } from '@/lib/api';
 import { callApi, fieldErrorsOf, submittedValues, text } from '@/lib/server-action';
 import { readAccessToken } from '@/lib/session';
 import type { ActionState } from '@/lib/action-state';
+import { parseAmountMinor, parseLineItems } from '@/lib/line-items-form';
 
 /**
  * Deal mutations.
@@ -14,19 +15,9 @@ import type { ActionState } from '@/lib/action-state';
  * because each is its own transition on the API with its own preconditions — the same reason a
  * lead's status, stage and owner are three forms rather than one.
  *
- * **Money arrives as rupees and leaves as paise.** A person types 12,50,000; the API takes minor
- * units. That conversion happens here, once, rather than in each form — and `parseAmountMinor`
- * refuses what it cannot read rather than silently sending a zero.
+ * **Money arrives as rupees and leaves as paise**, converted by `parseAmountMinor` in
+ * `lib/line-items-form` — shared with the quotation actions, which edit the same table.
  */
-const MINOR_UNITS = 100;
-
-function parseAmountMinor(value: string | undefined): number | null {
-  if (value === undefined || value.trim() === '') return null;
-  // Grouping separators are how people write money; the rest must be a number.
-  const cleaned = value.replace(/[,\s₹]/g, '');
-  if (!/^\d+(\.\d{1,2})?$/.test(cleaned)) return Number.NaN;
-  return Math.round(Number(cleaned) * MINOR_UNITS);
-}
 
 export async function createDeal(_previous: ActionState, form: FormData): Promise<ActionState> {
   const token = await readAccessToken();
@@ -131,43 +122,7 @@ export async function reopenDeal(_previous: ActionState, form: FormData): Promis
  */
 export async function setDealItems(_previous: ActionState, form: FormData): Promise<ActionState> {
   const id = String(form.get('id') ?? '');
-  const names = form.getAll('line-name').map(String);
-  const productIds = form.getAll('line-productId').map(String);
-  const quantities = form.getAll('line-quantity').map(String);
-  const prices = form.getAll('line-price').map(String);
-  const discounts = form.getAll('line-discount').map(String);
-  const taxes = form.getAll('line-tax').map(String);
-
-  const items: Record<string, unknown>[] = [];
-  const fieldErrors: Record<string, string> = {};
-  for (let index = 0; index < names.length; index += 1) {
-    const name = (names[index] ?? '').trim();
-    const productId = (productIds[index] ?? '').trim();
-    const quantityText = (quantities[index] ?? '').trim();
-    if (name === '' && productId === '' && quantityText === '') continue;
-
-    const quantity = Number(quantityText);
-    if (!Number.isFinite(quantity) || quantity <= 0) {
-      fieldErrors[`line-quantity-${index}`] = 'Enter a quantity greater than zero.';
-      continue;
-    }
-    const price = parseAmountMinor(prices[index]);
-    const discount = parseAmountMinor(discounts[index]);
-    if (Number.isNaN(price) || Number.isNaN(discount)) {
-      fieldErrors[`line-price-${index}`] = 'Enter an amount, like 5000 or 5,000.';
-      continue;
-    }
-
-    items.push({
-      ...(productId ? { productId } : {}),
-      ...(name ? { name } : {}),
-      quantity,
-      ...(price === null ? {} : { unitPriceMinor: price }),
-      discountMinor: discount ?? 0,
-      ...(taxes[index] && taxes[index] !== '' ? { taxPercent: Number(taxes[index]) } : {}),
-    });
-  }
-
+  const { items, fieldErrors } = parseLineItems(form);
   if (Object.keys(fieldErrors).length > 0) {
     return { status: 'error', message: 'Some lines need correcting.', fieldErrors };
   }

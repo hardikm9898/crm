@@ -33,6 +33,7 @@ import { ViewsModule } from './modules/views/views.module.js';
 import { CustomersModule } from './modules/customers/customers.module.js';
 import { DealsModule } from './modules/deals/deals.module.js';
 import { DocumentsModule } from './modules/documents/documents.module.js';
+import { QuotationsModule } from './modules/quotations/quotations.module.js';
 import { ExportsModule } from './modules/exports/exports.module.js';
 import { ImportsModule } from './modules/imports/imports.module.js';
 import { StorageModule } from './infra/storage/storage.module.js';
@@ -73,6 +74,7 @@ import { HealthModule } from './modules/health/health.module.js';
     LeadsModule,
     CustomersModule,
     DealsModule,
+    QuotationsModule,
     DocumentsModule,
     ImportsModule,
     ExportsModule,

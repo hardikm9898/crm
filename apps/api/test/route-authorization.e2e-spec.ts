@@ -61,6 +61,7 @@ interface Tenant {
   exportJobId: string;
   customerId: string;
   dealId: string;
+  quotationId: string;
   productId: string;
 }
 
@@ -254,6 +255,16 @@ async function createTenant(label: string): Promise<Tenant> {
     token,
   });
 
+  const quotation = await call<EnvelopeBody<{ id: string }>>(ctx.app, {
+    method: 'POST',
+    url: '/api/v1/quotations',
+    payload: {
+      dealId: deal.body.data.id,
+      items: [{ name: 'Sweep line', quantity: 1, unitPriceMinor: 500_000, taxPercent: 18 }],
+    },
+    token,
+  });
+
   const [duplicateRule, assignmentRule, scoringRule, savedView] = await Promise.all([
     ctx.db.duplicateRule.findFirstOrThrow({ where: { organizationId, isActive: true } }),
     ctx.db.assignmentRule.findFirstOrThrow({ where: { organizationId } }),
@@ -291,6 +302,7 @@ async function createTenant(label: string): Promise<Tenant> {
     exportJobId: exported.body.data.id,
     customerId: customer.body.data.id,
     dealId: deal.body.data.id,
+    quotationId: quotation.body.data.id,
     productId: product.body.data.id,
   };
 }
@@ -450,6 +462,13 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       '/deals/:id/lose': `/deals/${orgA.dealId}/lose`,
       '/deals/:id/reopen': `/deals/${orgA.dealId}/reopen`,
       '/deals/:id/restore': `/deals/${orgA.dealId}/restore`,
+      '/quotations/:id': `/quotations/${orgA.quotationId}`,
+      '/quotations/:id/pdf': `/quotations/${orgA.quotationId}/pdf`,
+      '/quotations/:id/items': `/quotations/${orgA.quotationId}/items`,
+      '/quotations/:id/send': `/quotations/${orgA.quotationId}/send`,
+      '/quotations/:id/accept': `/quotations/${orgA.quotationId}/accept`,
+      '/quotations/:id/reject': `/quotations/${orgA.quotationId}/reject`,
+      '/quotations/:id/revise': `/quotations/${orgA.quotationId}/revise`,
       '/products/:id': `/products/${orgA.productId}`,
       '/customers/:id': `/customers/${orgA.customerId}`,
       '/customers/:id/timeline': `/customers/${orgA.customerId}/timeline`,
@@ -785,6 +804,23 @@ function bodyFor(
     case '/deals/:id/reopen':
     case '/deals/:id/restore':
       return {};
+    // Phase 2, step 8 — quotations
+    case '/quotations':
+      return {
+        dealId: target.dealId,
+        items: [{ name: 'A line', quantity: 1, unitPriceMinor: 1_000 }],
+      };
+    case '/quotations/:id':
+      return { title: 'Retitled by another tenant' };
+    case '/quotations/:id/items':
+      return { items: [{ name: 'A line', quantity: 1, unitPriceMinor: 1_000 }] };
+    case '/quotations/:id/send':
+    case '/quotations/:id/accept':
+    case '/quotations/:id/reject':
+    case '/quotations/:id/revise':
+      return {};
+    case '/settings/number-series/quotation':
+      return { prefix: 'HACK-', padding: 4 };
     case '/products':
       return { name: 'Cross tenant product', priceMinor: 100 };
     case '/products/:id':

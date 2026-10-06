@@ -402,6 +402,46 @@ POST /exports                       GET /exports/{id}
 >   the whole filter expressible at all. A screen that sums the page it was given misreports the
 >   pipeline by whatever fraction the page is.
 
+> **Amendment, 2026-10-06 (implementation).** Quotations, their versions, their PDFs and the number
+> series:
+>
+> ```
+> GET    /quotations              ?dealId= ?leadId= ?customerId= ?ownerUserId= ?number=
+>                                 ?status=draft|sent|accepted|rejected|expired
+>                                 ?versions=current|all  (current is the default)
+>                                 ?deleted= ?limit= ?cursor= ?sort=created_at|total|valid_until
+>                                 → meta.totalMinor is the WHOLE filter's value
+> POST   /quotations              { dealId | leadId | customerId, title?, terms?, validUntil?,
+>                                   items? }  — omitting items copies the deal's lines
+> GET    /quotations/{id}         with its lines and every version of its number
+> GET    /quotations/{id}/pdf     the document itself; `inline`, not an envelope
+> PATCH  /quotations/{id}         draft only
+> PUT    /quotations/{id}/items   draft only; replaces the set and recomputes the header
+> POST   /quotations/{id}/send    { via: email|whatsapp|link|manual, to?, sentAt? } — freezes it
+> POST   /quotations/{id}/accept  { note? } — writes the figure onto the deal if it is still open
+> POST   /quotations/{id}/reject  { reasonId?, note? } — the tenant's own lost_reasons
+> POST   /quotations/{id}/revise  { items?, title?, terms?, validUntil? } → 201, a new version
+> DELETE /quotations/{id}         draft only; a sent quotation has left the building
+>
+> GET    /settings/number-series/quotation      settings:manage
+> PATCH  /settings/number-series/quotation      { prefix, padding, nextValue? } — forward only
+> ```
+>
+> Three conventions this step establishes:
+>
+> - **A lifecycle move is a POST to its own path, never a `status` field on a PATCH.** Each has its
+>   own preconditions, its own timeline entries on two subjects and its own event; a general PATCH
+>   that happened to carry `status` could check none of them. The same reason a lead's status move
+>   is a POST.
+> - **`send`, `accept` and `reject` are idempotent on the state they produce.** A second `accept`
+>   answers 200 with the same record rather than refusing, because a double-click must not produce
+>   a different answer. A move from the _wrong_ state is a 422 that says what to do instead.
+> - **A refusal's sentence is part of the contract.** The web app now prefers the API's own message
+>   for `BUSINESS_RULE_VIOLATION`, `CONFLICT`, `VALIDATION_FAILED` and `NOT_FOUND` and keeps its own
+>   copy only for session and access codes — so "The counter is already at 3. It can be moved
+>   forward, but not back" reaches the screen instead of "That is not allowed." Write these messages
+>   as the thing a person should read.
+
 ### Automation, websites, analytics, marketing
 
 ```

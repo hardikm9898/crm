@@ -141,6 +141,42 @@ export async function call<T = Record<string, unknown>>(
   };
 }
 
+/**
+ * A call whose response is **not** JSON.
+ *
+ * `call()` parses every body as JSON, which is right for an API where everything but a download is
+ * an envelope — and wrong for the three routes that hand back bytes (an export, an import's error
+ * file, a quotation PDF). Asserting on those needs the raw buffer: "is this really a PDF" is a
+ * question about the first five bytes, and a JSON parse error would hide the answer.
+ */
+export async function callRaw(
+  app: NestFastifyApplication,
+  options: {
+    method: 'GET' | 'POST';
+    url: string;
+    token?: string;
+    headers?: Record<string, string>;
+  },
+): Promise<{
+  statusCode: number;
+  body: Buffer;
+  headers: Record<string, string | string[] | undefined>;
+}> {
+  const response = await app.inject({
+    method: options.method,
+    url: options.url,
+    headers: {
+      ...(options.token ? { authorization: `Bearer ${options.token}` } : {}),
+      ...options.headers,
+    },
+  });
+  return {
+    statusCode: response.statusCode,
+    body: Buffer.from(response.rawPayload),
+    headers: response.headers as Record<string, string | string[] | undefined>,
+  };
+}
+
 export interface EnvelopeBody<T> {
   success: boolean;
   data: T;

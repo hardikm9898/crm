@@ -660,6 +660,103 @@ the whole point of having built it first. **`payments`** follows them, and until
 it). Revenue reporting and attribution therefore read won deals, not payments, and nothing in the
 product claims otherwise yet.
 
+### Step 8 — quotations, versions and the document ✅ _(landed 2026-10-06)_
+
+`FR-DEAL-2` in full: quotations with line items, taxes, discounts, validity, PDF generation,
+versioning, and a record of how each one was sent.
+
+- **A quotation is the only record in this product that leaves the building, and the design is
+  built around that.** `number` identifies the quotation and `(number, version)` identifies the
+  document; a revision **inserts a new row** and marks the old one superseded, and nothing about a
+  sent version is ever updated again. So "what did we actually send them on the 14th?" has an
+  answer that can be read out on the phone — which an audit log of `total_minor` changing from
+  250000 to 220000 does not. The two designs rejected (edit in place with an audit log; versions in
+  a child table, leaving the parent's totals a second copy of a child's) are in
+  [ADR-0019](./decisions/ADR-0019-quotation-versions-are-immutable.md).
+- **The number comes from a locked counter row.** `number_series`, one row per
+  `(organization, kind)`, read with `SELECT … FOR UPDATE` inside the transaction that inserts the
+  document. `MAX(number) + 1` is a read-then-write race that hands two people the same number — the
+  same trap as the scoring queue's double write, with the same answer — and a Postgres sequence is
+  global, so one workspace's quotations would advance another's numbering and leak how much business
+  the platform is doing. The prefix and the padding are the tenant's; the counter moves **forward
+  only**, because an earlier number is already in somebody's inbox.
+- **The lines are the deal's, copied once.** Omitting `items` means "copy the deal's lines", which
+  is what raising a quotation from a deal means; after that the deal goes on moving and the document
+  does not. Both are priced by one `LineBuilderService` over one `lineTotals()`, extracted from the
+  deals service in this step — the other half of
+  [ADR-0018](./decisions/ADR-0018-money-arithmetic-in-one-place.md), and the same reason the browser
+  table is read by one `parseLineItems()`.
+- **The lifecycle is a protocol, so the database holds it.** `draft | sent | accepted | rejected |
+expired` as a CHECK (a lead's status is the tenant's vocabulary; a document's lifecycle is not),
+  plus four status/timestamp pairs that make a `sent_at` with no send, or an "accepted" with no
+  acceptance date, unrepresentable rather than merely unlikely. A sent version refuses `PATCH` and
+  `PUT /items` with a sentence that says to raise a revision; only the current version can be
+  accepted; a draft is the only thing that can be deleted.
+- **Accepting writes the agreed figure onto the deal, while the deal is still open.** A pipeline
+  forecast that disagrees with the document the customer signed is worse than no forecast. A won or
+  lost deal is left alone — that sale is settled — and the timeline **says which happened**, because
+  a refusal nobody can see is indistinguishable from a bug.
+- **The PDF is a real document.** A4, the workspace's name, the party's billing address, the lines
+  with per-rate tax broken out, the totals and the terms, in DejaVu Sans — a declared dependency
+  rather than a path under `/usr/share/fonts`, because the standard PDF fonts have no `₹` and a
+  container without that path would render every quotation unreadable with nothing failing until
+  somebody opened one. Rendered **synchronously** (milliseconds, so a queue would buy a polling UI
+  and nothing else) and cached per version as a `documents` row with no expiry: an export goes
+  stale, a quotation is a record. A draft renders fresh and is never stored, which the database also
+  refuses.
+- **Validity expires on a schedule.** `maintenance.quotation-expiry`, daily at 00:49, because
+  `valid_until` is a date and a quotation valid "until the 20th" is valid for all of it. A price from
+  April that still reads "sent" is one somebody honours by accident.
+- **The screens follow the document.** A list of current versions with the whole filter's value and
+  a status filter; a detail screen that is an editor while it is a draft and a frozen record
+  afterwards, with every version listed and a link to the PDF; a quotations panel on the deal that
+  shows the history and raises the next one; and a settings screen for the numbering, where a rewind
+  is refused with the API's own sentence.
+
+**1 210 tests green** (575 unit, 635 integration) — up from 1 095 — including a 40-case quotations
+suite over real HTTP that attacks the version rule directly (reprice a sent version, revise a draft,
+revise a superseded version, accept a superseded one, accept an expired one, five quotations raised
+concurrently to prove the counter), 8 arithmetic tests for the number formatting, 9 for the shared
+line-items parser, 43 new database guarantees asserted against real PostgreSQL, and 6 cross-tenant
+tests including a version chain that tries to cross workspaces. Then **106 browser checks** against
+the built app (47 new, 59 existing and still green), among them the whole money chain: a quotation
+raised from a deal at ₹1,15,050, sent, revised, accepted, and the deal's own value following it to
+the same figure.
+
+**Four defects found by running it, not by testing it:**
+
+1. **Every refusal in the product read "That is not allowed."** `ERROR_COPY` mapped
+   `BUSINESS_RULE_VIOLATION` to that string and `describeError` preferred it over the API's own
+   message — so "This deal's value comes from its line items", "Deactivate it instead" and "The
+   counter is already at 3. It can be moved forward, but not back" were all discarded in favour of
+   four words that tell nobody anything. Split into `ERROR_OVERRIDES` (session and access codes,
+   where the API's text is for an integrator) and `ERROR_FALLBACKS` (used **only** when the API sent
+   no message).
+2. **A deal attached to both a lead and a converted customer wrote its timeline entry twice.** A
+   converted person's journey is the union of their lead's entries and their customer's, so a deal
+   won against both showed the win twice on the customer's screen — exactly the duplication that
+   splitting `lead.converted` from `customer.created` was meant to prevent, reintroduced from the
+   other direction. Both the deal and the quotation writers now write one row per **party**, keeping
+   the lead row because the union already carries it across.
+3. **Accepting a quotation on a closed deal silently did nothing.** The write-back is deliberately
+   skipped, but nothing said so, so the only way to notice was to go and look at the deal. The
+   timeline now carries `dealClosed` and reads "the deal is already closed, so its value is
+   unchanged — reopen it to carry this figure".
+4. **The expiry sweep could not write a timeline entry at all.** `withPlatformScope` leaves the
+   tenant context unset and `TimelineService` takes the organization from it by design, so the first
+   row threw. The sweep reads across tenants and then writes inside each row's own context as a
+   system principal.
+
+**Deferred, and why:** **`payments` is not built**, so `customers.lifetime_value_minor`,
+`first_purchase_at` and `last_purchase_at` stay absent for a third step — a money column with no
+writer lies to every report that reads it — and revenue reporting still derives from won deals
+rather than from a ledger. **Delivery is recorded, not performed:** `sent_via` is evidence that
+somebody sent the quotation, and the product does not yet email or WhatsApp it (`manual` is the
+honest default); the mailer is a development logger until Phase 5 brings the real one. **Per-script
+font fallback in the PDF is not built** — the document font covers Latin, `₹` and ordinary
+punctuation, so a name in Devanagari or Gujarati prints as empty boxes, and the renderer logs the
+code points it could not draw so that this is found in a log rather than by a customer.
+
 **Exit criteria**
 
 - Creating a custom field of every supported type requires **no migration and no deploy**, and that
@@ -891,14 +988,13 @@ partially landed, with the specific gaps named.
 ## Immediate next step
 
 _This section names the next step only; what each landed step actually did is in the step entries
-above. Last reviewed 2026-10-06, after Phase 2 step 7._
+above. Last reviewed 2026-10-06, after Phase 2 step 8._
 
-**Phase 2, step 8 — quotations, manual payments, and the documents they produce.** A quotation is a
-numbered, versioned document over the line-item arithmetic that step 7 put in one place
-([ADR-0018](./decisions/ADR-0018-money-arithmetic-in-one-place.md)): `quotations` +
-`quotation_items`, a per-tenant number series, `draft → sent → accepted | rejected | expired`, a
-rendered PDF through the storage port, and `quotation.sent` on the deal's and the party's timelines.
-Manual `payments` follow in the same step, because they are what finally lets `customers` carry
-`lifetime_value_minor`, `first_purchase_at` and `last_purchase_at` — three columns deliberately
-absent since step 6 for want of a writer — and what every revenue and attribution report in Phases 8
-and 9 is specified to read.
+**Phase 2, step 9 — payments, and the three customer columns that have been waiting for them.**
+`FR-DEAL-3`: `payments` recorded manually (a provider adapter is a later phase), partial payments
+against a deal or a quotation, `payment.received` on the deal's and the party's timelines, and the
+numbering series reused for receipts. That ledger is the only legitimate writer of
+`customers.lifetime_value_minor`, `first_purchase_at` and `last_purchase_at` — deliberately absent
+since step 6 — and it is what every revenue and attribution report in Phases 8 and 9 is specified to
+read, which they currently cannot. It is the last step of Phase 2's commercial surface; after it the
+remaining Phase 2 work is the industry templates and the onboarding wizard.

@@ -55,14 +55,16 @@ export type ListProductsQuery = z.infer<typeof listProductsSchema>;
 // ── Line items ──────────────────────────────────────────────────────────────
 
 /**
- * One line, as a client sends it.
+ * One line, as a client sends it. **Exported**, because a quotation's lines are the same shape by
+ * design — one schema for one concept, the same reason there is one `LineBuilderService` and one
+ * `lineTotals()`.
  *
  * The name, price and tax rate are **sent**, not looked up from `productId` at write time: a line
  * states what was agreed, and a later price change must not rewrite it. `productId` is for
  * reporting, and the API fills the three from the product only when the client omits them — which
  * is the convenience of picking a product from the catalogue.
  */
-const dealItemSchema = z
+export const lineItemSchema = z
   .object({
     productId: z.string().uuid().nullish(),
     name: z.string().trim().min(1).max(200).optional(),
@@ -97,7 +99,7 @@ export const createDealSchema = z
     currency: z.string().trim().length(3).toUpperCase().optional(),
     probability: z.coerce.number().int().min(0).max(100).optional(),
     expectedCloseDate: z.coerce.date().optional(),
-    items: z.array(dealItemSchema).max(200).optional(),
+    items: z.array(lineItemSchema).max(200).optional(),
     customValues: z.record(z.string(), z.unknown()).optional(),
   })
   .strict()
@@ -125,7 +127,7 @@ export type UpdateDealInput = z.infer<typeof updateDealSchema>;
  * `PUT` semantics rather than per-item endpoints: a line-items editor submits the table it has, and
  * three endpoints (add, edit, remove) would make reordering a sequence of writes that can half-fail.
  */
-export const setDealItemsSchema = z.object({ items: z.array(dealItemSchema).max(200) }).strict();
+export const setDealItemsSchema = z.object({ items: z.array(lineItemSchema).max(200) }).strict();
 export type SetDealItemsInput = z.infer<typeof setDealItemsSchema>;
 
 export const moveDealSchema = z

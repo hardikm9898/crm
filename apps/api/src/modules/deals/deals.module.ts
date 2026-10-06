@@ -3,6 +3,7 @@ import { CustomFieldsModule } from '../custom-fields/custom-fields.module.js';
 import { DealsController, ProductsController } from './deals.controller.js';
 import { DealsService } from './deals.service.js';
 import { ProductsService } from './products.service.js';
+import { LineBuilderService } from './line-builder.service.js';
 
 /**
  * Deals, products and line items.
@@ -16,7 +17,7 @@ import { ProductsService } from './products.service.js';
 @Module({
   imports: [CustomFieldsModule],
   controllers: [DealsController, ProductsController],
-  providers: [DealsService, ProductsService],
-  exports: [DealsService],
+  providers: [DealsService, ProductsService, LineBuilderService],
+  exports: [DealsService, LineBuilderService],
 })
 export class DealsModule {}

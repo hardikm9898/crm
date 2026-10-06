@@ -425,6 +425,60 @@ AND deleted_at IS NULL`. SKUs are unique when present; a product without one is 
 >   `customers`. Same weights, same refresh-on-write trigger; if it is dropped a deal simply stops
 >   appearing in search and nothing else looks broken.
 
+> **Amendment, 2026-10-06 (implementation, step 8).** `quotations`, `quotation_items` and
+> `number_series` are built; the `payments` row above remains a sketch. The reasoning is
+> [ADR-0019](./decisions/ADR-0019-quotation-versions-are-immutable.md).
+>
+> - **A version is a row, not an edit.** `number` identifies the quotation and
+>   `UNIQUE (organization_id, number, version)` identifies the document; a revision inserts a new
+>   row with the same number and sets `superseded_by_id` / `superseded_at` on the one it replaces.
+>   Nothing about a sent version is ever updated again — which is the only way "what did we send
+>   them on the 14th?" has an answer that can be read out on the phone.
+> - **`number_series` is new**, one row per `(organization, kind)`, holding `prefix`, `padding` and
+>   `next_value`. It is read with `SELECT … FOR UPDATE` inside the transaction that inserts the
+>   document. `MAX(number) + 1` is a read-then-write race that hands two people the same number; a
+>   Postgres sequence is global, so one workspace's quotations would advance another's and leak how
+>   much business the platform is doing. `kind` is `quotation` today and is what an invoice series
+>   will use.
+> - **The money columns are a deal's four**, `BIGINT` minor units, computed by the same
+>   `documentTotals()` and checked by the same shape of constraint
+>   ([ADR-0018](./decisions/ADR-0018-money-arithmetic-in-one-place.md)).
+> - **`status` is a CHECK, not a row.** A lead's status is the tenant's vocabulary; a document's
+>   lifecycle (`draft | sent | accepted | rejected | expired`) is a protocol the application
+>   depends on, so it is a constraint.
+> - **`activities` gained no `quotation_id`.** A quotation's events are written on the **deal** and
+>   on the **party**, because those are the screens somebody opens; the document's own lifecycle is
+>   already in its columns.
+> - **`documents.subject` gained `quotation`.** A rendered PDF is a `documents` row with **no
+>   expiry**: an export is a convenience that goes stale, a quotation is a record.
+>
+> Hand-written objects carrying guarantees the application cannot (all in
+> `packages/db/src/schema-objects.int-spec.ts`):
+>
+> - **`quotations_current`**, a partial index on `superseded_at IS NULL AND deleted_at IS NULL`.
+>   Every list reads it: "the quotations" means the current version of each number, and a full index
+>   on a table whose superseded rows accumulate forever answers that worse every month.
+> - **`quotations_awaiting_expiry`**, partial on `status = 'sent' AND valid_until IS NOT NULL` — the
+>   handful of rows the daily sweep scans, out of everything ever quoted.
+> - **`quotations_superseded_by`**, the referencing side of the version self-FK. Postgres indexes
+>   only the referenced side, and the same omission on `leads.merged_into_id` made deletion
+>   quadratic.
+> - **The four status/timestamp pairs** — `quotations_sent_has_timestamp` (`(status = 'draft') =
+(sent_at IS NULL)`), and the same shape for accepted, rejected and expired. A status and its
+>   timestamp are one fact: a `sent_at` with no send would make "when did this go out?" answerable
+>   and "has it gone out?" not. The draft pair also makes an accepted-but-never-sent quotation
+>   unrepresentable.
+> - **`quotations_pdf_needs_sending`**, so a draft cannot carry a rendered PDF. A file of a
+>   document that is still being written is a file somebody sends by mistake.
+> - **`quotations_superseded_pair`** and **`quotations_not_superseded_by_self`**: both halves of a
+>   supersession or neither, and a version cannot replace itself.
+> - **`quotations_totals_add_up`**, plus `quotation_items_net_is_gross_less_discount` and
+>   `quotation_items_total_is_net_plus_tax` — the same three the deal tables carry, so a second
+>   implementation of the arithmetic fails the write instead of persisting a document whose lines do
+>   not add up to its own total.
+> - **`quotations_reason_needs_rejection`**, so a rejection reason for a rejection that did not
+>   happen is not storable.
+
 ### 6.7 Customers and conversion
 
 | Table       | Purpose             | Key columns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |

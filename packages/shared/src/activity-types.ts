@@ -70,7 +70,12 @@ export const ACTIVITY_TYPES = {
   MENTION_CREATED: 'mention.created',
   DOCUMENT_UPLOADED: 'document.uploaded',
   // commercial (Phase 2 later steps)
+  QUOTATION_CREATED: 'quotation.created',
   QUOTATION_SENT: 'quotation.sent',
+  QUOTATION_REVISED: 'quotation.revised',
+  QUOTATION_ACCEPTED: 'quotation.accepted',
+  QUOTATION_REJECTED: 'quotation.rejected',
+  QUOTATION_EXPIRED: 'quotation.expired',
   DEAL_CREATED: 'deal.created',
   DEAL_UPDATED: 'deal.updated',
   DEAL_STAGE_CHANGED: 'deal.stage_changed',

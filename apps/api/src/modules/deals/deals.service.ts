@@ -2,17 +2,14 @@ import { Injectable } from '@nestjs/common';
 import {
   ACTIVITY_TYPES,
   AppError,
-  LineItemError,
   PERMISSIONS,
   documentTotals,
-  lineTotals,
   newId,
   searchTextFor,
   tenantContext,
   validateCustomValues,
   weightedValueMinor,
   type CountryCode,
-  type LineItemInput,
 } from '@leados/shared';
 import { DbService } from '../../infra/db/db.service.js';
 import { AuditService } from '../../infra/audit/audit.service.js';
@@ -21,6 +18,7 @@ import { TimelineService } from '../../infra/timeline/timeline.service.js';
 import { TimelineReadService } from '../../infra/timeline/timeline-read.service.js';
 import { DataScopeService, applyScopeFilter } from '../../infra/authz/data-scope.service.js';
 import { FieldRegistryService } from '../custom-fields/field-registry.service.js';
+import { LineBuilderService } from './line-builder.service.js';
 import type {
   CreateDealInput,
   DealBoardQuery,
@@ -60,6 +58,7 @@ export class DealsService {
     private readonly db: DbService,
     private readonly scopes: DataScopeService,
     private readonly fields: FieldRegistryService,
+    private readonly lines: LineBuilderService,
     private readonly audit: AuditService,
     private readonly outbox: OutboxService,
     private readonly timeline: TimelineService,
@@ -286,7 +285,7 @@ export class DealsService {
     const custom = await this.resolveCustomValues(input.customValues ?? {}, 'create', organization);
 
     const currency = input.currency ?? organization.defaultCurrency;
-    const lines = await this.buildLines(input.items ?? []);
+    const lines = await this.lines.build(input.items ?? []);
     const totals =
       lines.length > 0
         ? documentTotals(lines.map((line) => line.input))
@@ -328,7 +327,12 @@ export class DealsService {
           createdById: principal.actorId ?? null,
         },
       });
-      if (lines.length > 0) await this.writeLines(tx, id, principal.organizationId, lines);
+      await this.lines.write(
+        tx,
+        { table: 'dealItem', parentColumn: 'dealId', parentId: id },
+        principal.organizationId,
+        lines,
+      );
 
       await this.recordOnAllSubjects(tx, {
         dealId: id,
@@ -452,13 +456,18 @@ export class DealsService {
       );
     }
 
-    const lines = await this.buildLines(input.items);
+    const lines = await this.lines.build(input.items);
     const totals = documentTotals(lines.map((line) => line.input));
     const now = new Date();
 
     await this.db.client.$transaction(async (tx) => {
       await tx.dealItem.deleteMany({ where: { dealId: id } });
-      if (lines.length > 0) await this.writeLines(tx, id, principal.organizationId, lines);
+      await this.lines.write(
+        tx,
+        { table: 'dealItem', parentColumn: 'dealId', parentId: id },
+        principal.organizationId,
+        lines,
+      );
       await tx.deal.update({
         where: { id },
         data: {
@@ -807,117 +816,6 @@ export class DealsService {
    * client that states them keeps what it stated — because a line records what was agreed, which is
    * not always what the catalogue says today.
    */
-  private async buildLines(
-    items: readonly {
-      productId?: string | null | undefined;
-      name?: string | undefined;
-      description?: string | null | undefined;
-      quantity: number;
-      unit?: string | null | undefined;
-      unitPriceMinor?: number | undefined;
-      discountMinor: number;
-      taxPercent?: number | undefined;
-    }[],
-  ) {
-    const productIds = [
-      ...new Set(items.map((item) => item.productId).filter((id): id is string => Boolean(id))),
-    ];
-    const products =
-      productIds.length === 0
-        ? []
-        : await this.db.client.product.findMany({
-            where: { id: { in: productIds }, deletedAt: null },
-          });
-    const byId = new Map(products.map((product) => [product.id, product]));
-
-    const missing = productIds.filter((id) => !byId.has(id));
-    if (missing.length > 0) throw AppError.notFound('Product');
-
-    return items.map((item, index) => {
-      const product = item.productId ? byId.get(item.productId) : undefined;
-      const name = item.name ?? product?.name;
-      const unitPriceMinor = item.unitPriceMinor ?? Number(product?.priceMinor ?? 0);
-      const taxPercent = item.taxPercent ?? Number(product?.taxPercent ?? 0);
-      if (!name) {
-        throw AppError.validation('Some details need correcting', [
-          { field: `items.${index}.name`, code: 'NAME_REQUIRED', message: 'Give the line a name.' },
-        ]);
-      }
-
-      const input: LineItemInput = {
-        quantity: item.quantity,
-        unitPriceMinor,
-        discountMinor: item.discountMinor,
-        taxPercent,
-      };
-      let totals;
-      try {
-        totals = lineTotals(input);
-      } catch (error) {
-        // The shared arithmetic refuses impossible lines (a discount larger than the line, a
-        // negative price); its message is already written for a person, so it is passed through
-        // against the field the client sent rather than replaced with a generic one.
-        if (error instanceof LineItemError) {
-          throw AppError.validation('Some details need correcting', [
-            {
-              field: `items.${index}.${error.field}`,
-              code: 'INVALID_LINE_ITEM',
-              message: error.message,
-            },
-          ]);
-        }
-        throw error;
-      }
-
-      return {
-        input,
-        position: index + 1,
-        productId: item.productId ?? null,
-        name,
-        description: item.description ?? null,
-        unit: item.unit ?? product?.unit ?? null,
-        unitPriceMinor,
-        taxPercent,
-        totals,
-      };
-    });
-  }
-
-  private async writeLines(
-    tx: TransactionClient,
-    dealId: string,
-    organizationId: string,
-    lines: Awaited<ReturnType<DealsService['buildLines']>>,
-  ): Promise<void> {
-    await tx.dealItem.createMany({
-      data: lines.map((line) => ({
-        id: newId(),
-        organizationId,
-        dealId,
-        productId: line.productId,
-        position: line.position,
-        name: line.name,
-        description: line.description,
-        quantity: line.input.quantity,
-        unit: line.unit,
-        unitPriceMinor: BigInt(line.unitPriceMinor),
-        discountMinor: BigInt(line.totals.discountMinor),
-        taxPercent: line.taxPercent,
-        grossMinor: BigInt(line.totals.grossMinor),
-        netMinor: BigInt(line.totals.netMinor),
-        taxMinor: BigInt(line.totals.taxMinor),
-        totalMinor: BigInt(line.totals.totalMinor),
-      })),
-    });
-  }
-
-  /**
-   * Writes one entry on the deal **and** one on whichever party it is with (rule 6).
-   *
-   * A deal opened, won or lost is exactly what a business owner wants to see on the lead or the
-   * customer — and a timeline nobody opens is not rule 6 satisfied. The deal's own screen gets the
-   * fuller history, including the stage moves nobody needs on a customer record.
-   */
   private async recordOnAllSubjects(
     tx: TransactionClient,
     entry: {
@@ -942,10 +840,32 @@ export class DealsService {
       actorType: principal?.actorType,
       actorId: principal?.actorId ?? null,
     };
+
+    /**
+     * **One row per party, not one per column.** A converted person's timeline is the union of
+     * their lead's entries and their customer's (`FR-DEAL-4`), so a deal attached to both — the
+     * normal case after conversion — would otherwise write two rows of the same type at the same
+     * instant and the customer's screen would show the win twice. The lead row is the one to keep,
+     * because the union already carries it onto the customer; the customer row is written only
+     * when it would not otherwise appear.
+     */
+    const customerLeadId = entry.subject.customerId
+      ? ((
+          await tx.customer.findFirst({
+            where: { id: entry.subject.customerId },
+            select: { leadId: true },
+          })
+        )?.leadId ?? null)
+      : null;
+    const partyAlreadyCovered =
+      entry.subject.leadId !== null && customerLeadId === entry.subject.leadId;
+
     await this.timeline.recordManyInTransaction(tx, [
       { ...common, dealId: entry.dealId },
       ...(entry.subject.leadId ? [{ ...common, leadId: entry.subject.leadId }] : []),
-      ...(entry.subject.customerId ? [{ ...common, customerId: entry.subject.customerId }] : []),
+      ...(entry.subject.customerId && !partyAlreadyCovered
+        ? [{ ...common, customerId: entry.subject.customerId }]
+        : []),
     ]);
   }
 

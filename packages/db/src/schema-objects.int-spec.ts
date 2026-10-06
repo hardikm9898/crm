@@ -94,6 +94,12 @@ const REQUIRED_INDEXES = [
   'deals_search_vector_gin',
   'deals_custom_values_gin',
   'deals_name_trgm',
+  // Quotations (`FR-DEAL-2`). `quotations_current` is the partial index behind every list — the
+  // current version of each number — and `quotations_superseded_by` is the referencing side of the
+  // version self-FK, the same omission that made lead deletion quadratic.
+  'quotations_current',
+  'quotations_superseded_by',
+  'quotations_awaiting_expiry',
 ];
 
 /**
@@ -226,6 +232,50 @@ const REQUIRED_CONSTRAINTS = [
   'products_price_non_negative',
   'products_tax_percent_range',
   'products_currency_format',
+  // Quotations (`FR-DEAL-2`). The status/timestamp pairs are what make the lifecycle unable to
+  // lie: a `sent_at` with no send, or an "accepted" with no acceptance date, is unrepresentable
+  // rather than merely unlikely.
+  'quotations_has_subject',
+  'quotations_status',
+  'quotations_sent_via',
+  'quotations_number_present',
+  'quotations_version_positive',
+  'quotations_currency_format',
+  'quotations_sent_has_timestamp',
+  'quotations_accepted_has_timestamp',
+  'quotations_rejected_has_timestamp',
+  'quotations_expired_has_timestamp',
+  'quotations_reason_needs_rejection',
+  // A draft cannot carry a rendered PDF: a file of a document that is still being written is a
+  // file somebody sends by mistake.
+  'quotations_pdf_needs_sending',
+  'quotations_superseded_pair',
+  'quotations_not_superseded_by_self',
+  'quotations_money_non_negative',
+  // The same arithmetic as a deal's, enforced rather than trusted (ADR-0018).
+  'quotations_totals_add_up',
+  'quotations_discount_within_gross',
+  'quotations_deal_same_org_fk',
+  'quotations_lead_same_org_fk',
+  'quotations_customer_same_org_fk',
+  'quotations_owner_same_org_fk',
+  'quotations_rejected_reason_same_org_fk',
+  'quotations_pdf_document_same_org_fk',
+  'quotations_superseded_by_same_org_fk',
+  'quotation_items_name_present',
+  'quotation_items_position_positive',
+  'quotation_items_quantity_positive',
+  'quotation_items_tax_percent_range',
+  'quotation_items_money_non_negative',
+  'quotation_items_net_is_gross_less_discount',
+  'quotation_items_total_is_net_plus_tax',
+  'quotation_items_discount_within_gross',
+  'quotation_items_quotation_same_org_fk',
+  'quotation_items_product_same_org_fk',
+  // The number series behind the numbers.
+  'number_series_kind_present',
+  'number_series_next_value_positive',
+  'number_series_padding_range',
 ];
 
 describe('hand-written indexes survive every generated migration', () => {

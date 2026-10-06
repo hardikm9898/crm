@@ -4,7 +4,20 @@ import { can, readAccessToken, requireCurrentUser } from '@/lib/session';
 import { Badge, Card, DefinitionRow, ErrorNotice, PageHeader, StatCard } from '@/components/ui';
 import { Timeline } from '@/components/timeline';
 import { formatDate, formatDateTime, formatMoney } from '@/lib/lead-format';
-import { loadDeal, loadDealTimeline, loadProducts, type DealDetail } from '@/lib/deals';
+import {
+  loadDeal,
+  loadDealTimeline,
+  loadProducts,
+  type DealDetail,
+  type Product,
+} from '@/lib/deals';
+import {
+  QUOTATION_STATUS_CLASSES,
+  QUOTATION_STATUS_LABELS,
+  loadDealQuotations,
+  type QuotationSummary,
+} from '@/lib/quotations';
+import { NewQuotationForm } from '../../quotations/_components/quotation-forms';
 import type { TimelineEntryLike } from '@/lib/timeline-registry';
 import {
   DeleteDealButton,
@@ -40,11 +53,12 @@ export default async function DealPage({ params }: { params: Promise<{ id: strin
     );
   }
 
-  const [timeline, products, stages, lostReasons] = await Promise.all([
+  const [timeline, products, stages, lostReasons, quotations] = await Promise.all([
     loadDealTimeline(id, token).catch(() => [] as TimelineEntryLike[]),
     loadProducts(token),
     loadStages(deal.pipeline.id, token),
     loadLostReasons(token),
+    loadDealQuotations(id, token),
   ]);
 
   const editable = can(user, 'deal:manage') && deal.deletedAt === null;
@@ -117,6 +131,19 @@ export default async function DealPage({ params }: { params: Promise<{ id: strin
             )}
           </Card>
 
+          <Card
+            title="Quotations"
+            description="What the customer was actually sent, and at what price. Every version is kept."
+          >
+            <QuotationPanel
+              quotations={quotations}
+              currency={deal.currency}
+              dealId={deal.id}
+              products={products}
+              canRaise={editable && deal.outcome === 'open'}
+            />
+          </Card>
+
           <Card title="History" description="Every move on this deal, newest first.">
             {timeline.length === 0 ? (
               <p className="text-sm text-[var(--color-text-muted)]">Nothing recorded yet.</p>
@@ -173,6 +200,71 @@ export default async function DealPage({ params }: { params: Promise<{ id: strin
         </aside>
       </div>
     </>
+  );
+}
+
+/**
+ * The quotations raised on this deal, newest first, with the form to raise another.
+ *
+ * Every version, not just the current one: on a deal the history *is* the point — "we quoted 2.5
+ * lakh, then 2.2" is the conversation somebody is having when they open this.
+ */
+function QuotationPanel({
+  quotations,
+  currency,
+  dealId,
+  products,
+  canRaise,
+}: {
+  quotations: QuotationSummary[];
+  currency: string;
+  dealId: string;
+  products: Product[];
+  canRaise: boolean;
+}) {
+  return (
+    <div className="flex flex-col gap-4">
+      {quotations.length === 0 ? (
+        <p className="text-sm text-[var(--color-text-muted)]">Nothing quoted yet.</p>
+      ) : (
+        <ul className="flex flex-col gap-2 text-sm">
+          {quotations.map((quotation) => (
+            <li key={quotation.id} className="flex flex-wrap items-center gap-3">
+              <Link href={`/quotations/${quotation.id}`} className="font-medium underline">
+                {quotation.label}
+              </Link>
+              <span
+                className={`inline-block rounded px-2 py-0.5 text-xs ${QUOTATION_STATUS_CLASSES[quotation.status]}`}
+              >
+                {QUOTATION_STATUS_LABELS[quotation.status]}
+              </span>
+              {quotation.validUntil && (
+                <span className="text-xs text-[var(--color-text-muted)]">
+                  valid until {formatDate(quotation.validUntil)}
+                </span>
+              )}
+              <span className="numeric ml-auto">
+                {formatMoney(quotation.totalMinor, quotation.currency)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {canRaise && (
+        <details className="rounded border border-[var(--color-border)] p-3">
+          <summary className="cursor-pointer text-sm font-medium">Raise a quotation</summary>
+          <div className="mt-3">
+            <NewQuotationForm
+              dealId={dealId}
+              products={products}
+              currency={currency}
+              copiesDealLines
+            />
+          </div>
+        </details>
+      )}
+    </div>
   );
 }
 

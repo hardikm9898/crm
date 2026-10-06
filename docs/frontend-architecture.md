@@ -42,14 +42,15 @@ apps/web/src/app/
 │   │   └── [conversationId]/
 │   ├── customers/                  list · detail (journey + details tabs) · new
 │   ├── deals/                      board (default) · ?view=list · [id] detail · new
-│   ├── quotations/
+│   ├── quotations/                 list (current versions · ?versions=all) · [id]
+│   │                               detail (draft editable, sent frozen) · [id]/pdf relay
 │   ├── reports/                    leads · sources · campaigns · users · pipeline · SLA · conversion
 │   ├── marketing/                  campaigns · attribution · segments · SEO
 │   ├── analytics/                  website · funnel · journeys · realtime
 │   ├── automation/                 workflows · runs · registry-driven editor
 │   ├── websites/                   builder · pages · domains · SEO
 │   ├── settings/                   org · users/roles · fields · pipelines · statuses · sources ·
-│   │                               products
+│   │                               products · quotation numbering
 │   │                               assignment · scoring · duplicates · SLA · tasks config ·
 │   │                               whatsapp · integrations · api keys · webhooks · billing ·
 │   │                               privacy · notifications · audit log

@@ -243,6 +243,67 @@ const DESCRIBERS: Readonly<Record<string, Describer>> = {
     description: 'Deleted. Restorable from the recycle bin.',
     tone: 'danger',
   }),
+  'quotation.created': (payload) => ({
+    label: 'Quotation',
+    description: `${text(payload, 'number') ?? 'A quotation'} drafted${
+      money(payload, 'totalMinor', 'currency')
+        ? ` at ${money(payload, 'totalMinor', 'currency')}`
+        : ''
+    }.`,
+  }),
+  'quotation.sent': (payload) => {
+    const via = text(payload, 'via');
+    const to = text(payload, 'to');
+    const channel =
+      via === 'manual' || via === null
+        ? ''
+        : ` by ${via === 'link' ? 'a link' : via}${to ? ` to ${to}` : ''}`;
+    return {
+      label: 'Quotation',
+      description: `${text(payload, 'number') ?? 'A quotation'} sent${channel}${
+        money(payload, 'totalMinor', 'currency')
+          ? ` — ${money(payload, 'totalMinor', 'currency')}`
+          : ''
+      }${text(payload, 'validUntil') ? `, valid until ${text(payload, 'validUntil')}` : ''}.`,
+    };
+  },
+  'quotation.revised': (payload) => ({
+    label: 'Quotation',
+    description: `${text(payload, 'number') ?? 'A quotation'} revised to version ${
+      number(payload, 'version') ?? '2'
+    }${
+      money(payload, 'fromTotalMinor', 'currency') && money(payload, 'totalMinor', 'currency')
+        ? ` — ${money(payload, 'fromTotalMinor', 'currency')} became ${money(payload, 'totalMinor', 'currency')}`
+        : ''
+    }. What was sent before is unchanged.`,
+  }),
+  'quotation.accepted': (payload) => ({
+    label: 'Accepted',
+    description: `${text(payload, 'number') ?? 'The quotation'} accepted${
+      money(payload, 'totalMinor', 'currency')
+        ? ` at ${money(payload, 'totalMinor', 'currency')}`
+        : ''
+    }${
+      payload['dealValueUpdated'] === true
+        ? '; the deal now carries that figure'
+        : payload['dealClosed'] === true
+          ? '; the deal is already closed, so its value is unchanged — reopen it to carry this figure'
+          : ''
+    }${text(payload, 'note') ? ` — ${text(payload, 'note')}` : ''}.`,
+    tone: 'success',
+  }),
+  'quotation.rejected': (payload) => ({
+    label: 'Rejected',
+    description: `${text(payload, 'number') ?? 'The quotation'} turned down${
+      text(payload, 'note') ? ` — ${text(payload, 'note')}` : ''
+    }.`,
+    tone: 'danger',
+  }),
+  'quotation.expired': (payload) => ({
+    label: 'Expired',
+    description: `${text(payload, 'number') ?? 'The quotation'} passed its validity date. Revise it to re-issue the price.`,
+    tone: 'warning',
+  }),
   'customer.deleted': () => ({
     label: 'Deleted',
     description: 'Moved to the recycle bin. Nothing about the history is gone.',

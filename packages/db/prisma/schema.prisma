@@ -571,6 +571,10 @@ model Organization {
   deals                    Deal[]
   dealItems                DealItem[]
 
+  numberSeries   NumberSeries[]
+  quotations     Quotation[]
+  quotationItems QuotationItem[]
+
   @@index([status])
   @@index([createdAt])
   @@map("organizations")
@@ -600,6 +604,8 @@ model Branch {
   customers    Customer[]
   deals        Deal[]
 
+  quotations Quotation[]
+
   @@unique([organizationId, id], name: "branch_tenant_key")
   @@unique([organizationId, code])
   @@index([organizationId, deletedAt])
@@ -624,6 +630,8 @@ model Team {
   customers    Customer[]
   deals        Deal[]
   savedViews   SavedView[]
+
+  quotations Quotation[]
 
   @@unique([organizationId, id], name: "team_tenant_key")
   @@index([organizationId, deletedAt])
@@ -679,6 +687,8 @@ model Membership {
   ownedDeals              Deal[]                   @relation("deal_owner")
   assignmentPools         AssignmentPoolMember[]
   savedViews              SavedView[]
+
+  ownedQuotations Quotation[] @relation("quotation_owner")
 
   @@unique([organizationId, id], name: "membership_tenant_key")
   @@unique([organizationId, userId])
@@ -1172,6 +1182,8 @@ model LostReason {
   leads        Lead[]
   deals        Deal[]
 
+  rejectedQuotations Quotation[] @relation("quotation_rejected_reason")
+
   @@unique([organizationId, id], name: "lost_reason_tenant_key")
   @@unique([organizationId, name])
   @@index([organizationId, isActive, sortOrder])
@@ -1393,6 +1405,8 @@ model Lead {
   /// At most one, enforced by a partial unique index on `customers (organization_id, lead_id)`.
   convertedCustomers   Customer[]
   deals                Deal[]
+
+  quotations Quotation[]
 
   @@unique([organizationId, id], name: "lead_tenant_key")
   /// The default list.
@@ -1774,26 +1788,26 @@ model RoundRobinState {
 /// applies whatever rules that event triggers. A rule whose trigger no code path emits yet is
 /// refused at configuration time rather than stored inert — see `SCORING_TRIGGERS`.
 model ScoringRule {
-  id             String    @id @db.Uuid
-  organizationId String    @map("organization_id") @db.Uuid
-  name           String
+  id              String    @id @db.Uuid
+  organizationId  String    @map("organization_id") @db.Uuid
+  name            String
   /// The domain event this rule reacts to, or `schedule.decay` for a decay rule.
-  triggerEvent   String    @map("trigger_event")
+  triggerEvent    String    @map("trigger_event")
   /// Flat AND-within-group / OR-across-groups conditions, the same shape assignment rules use.
-  conditions     Json      @default("[]") @db.JsonB
+  conditions      Json      @default("[]") @db.JsonB
   /// Points added when the rule applies. Negative is allowed: a bad signal costs points.
-  points         Int       @default(0)
+  points          Int       @default(0)
   /// How often this rule may apply to one lead. NULL means as often as its trigger fires.
-  maxApplications Int?     @map("max_applications")
+  maxApplications Int?      @map("max_applications")
   /// `{ afterDays, points, everyDays, floor }` for a decay rule; NULL for an additive one.
-  decay          Json?     @db.JsonB
+  decay           Json?     @db.JsonB
   /// Lower runs first. Unlike assignment, **every** matching rule applies — this only orders them
   /// so the breakdown reads in the order a business listed them.
-  priority       Int       @default(0)
-  isActive       Boolean   @default(true) @map("is_active")
-  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
-  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
+  priority        Int       @default(0)
+  isActive        Boolean   @default(true) @map("is_active")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   scoreEvents  LeadScoreEvent[]
@@ -1870,29 +1884,29 @@ model LeadScoreEvent {
 /// conditions may carry a *named window* (`{ window: 'today' }`) rather than a timestamp, which is
 /// what stops "Today's Follow-ups" meaning last Tuesday forever.
 model SavedView {
-  id             String    @id @db.Uuid
-  organizationId String    @map("organization_id") @db.Uuid
+  id               String    @id @db.Uuid
+  organizationId   String    @map("organization_id") @db.Uuid
   /// NULL for a view the system provisioned, which nobody personally owns.
-  ownerId        String?   @map("owner_id") @db.Uuid
-  entityType     String    @map("entity_type")
-  name           String
+  ownerId          String?   @map("owner_id") @db.Uuid
+  entityType       String    @map("entity_type")
+  name             String
   /// `{ conditions: [{ field, operator, value, groupIndex }] }`.
-  filters        Json      @default("{}") @db.JsonB
+  filters          Json      @default("{}") @db.JsonB
   /// Which columns the list shows, in order.
-  columns        Json      @default("[]") @db.JsonB
+  columns          Json      @default("[]") @db.JsonB
   /// `{ field, direction }`.
-  sort           Json      @default("{}") @db.JsonB
-  visibility     String    @default("private")
+  sort             Json      @default("{}") @db.JsonB
+  visibility       String    @default("private")
   /// Required when `visibility` is `team`; ignored otherwise.
-  teamId         String?   @map("team_id") @db.Uuid
+  teamId           String?   @map("team_id") @db.Uuid
   /// When set, this is the view members of that role land on.
-  defaultForRoleId String? @map("default_for_role_id") @db.Uuid
+  defaultForRoleId String?   @map("default_for_role_id") @db.Uuid
   /// True for the views provisioning created, so "reset my views" can tell them apart.
-  isSystem       Boolean   @default(false) @map("is_system")
-  sortOrder      Int       @default(0) @map("sort_order")
-  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
-  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
+  isSystem         Boolean   @default(false) @map("is_system")
+  sortOrder        Int       @default(0) @map("sort_order")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt        DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   owner        Membership?  @relation(fields: [organizationId, ownerId], references: [organizationId, userId], onDelete: Cascade, map: "saved_views_owner_same_org_fk")
@@ -1941,6 +1955,8 @@ model Document {
   importJobs   ImportJob[]
   exportJobs   ExportJob[]
 
+  quotationPdfs Quotation[] @relation("quotation_pdf")
+
   @@unique([organizationId, id], name: "document_tenant_key")
   @@index([organizationId, subject, createdAt])
   @@index([organizationId, expiresAt])
@@ -1953,36 +1969,36 @@ model Document {
 /// tab halfway through finds their mapping where they left it rather than starting again with a
 /// 10 000-row file.
 model ImportJob {
-  id             String    @id @db.Uuid
-  organizationId String    @map("organization_id") @db.Uuid
-  documentId     String    @map("document_id") @db.Uuid
-  entityType     String    @default("lead") @map("entity_type")
+  id              String    @id @db.Uuid
+  organizationId  String    @map("organization_id") @db.Uuid
+  documentId      String    @map("document_id") @db.Uuid
+  entityType      String    @default("lead") @map("entity_type")
   /// `uploaded` → `mapped` → `validated` → `queued` → `running` → `completed` / `failed` /
   /// `cancelled`. `queued` is distinct from `running` on purpose: a queue backlog should not look
   /// like an import that has been running for twenty minutes without touching a row.
-  status         String    @default("uploaded")
+  status          String    @default("uploaded")
   /// Column header → field, as the wizard confirmed it.
-  mapping        Json      @default("{}") @db.JsonB
+  mapping         Json      @default("{}") @db.JsonB
   /// `create_only` | `skip_existing` | `update_existing` (`FR-IO-2`).
-  mode           String    @default("create_only")
+  mode            String    @default("create_only")
   /// The delimiter the file was read with, so the error file is written the same way.
-  delimiter      String    @default(",")
-  totalRows      Int       @default(0) @map("total_rows")
-  processedRows  Int       @default(0) @map("processed_rows")
-  createdCount   Int       @default(0) @map("created_count")
-  updatedCount   Int       @default(0) @map("updated_count")
-  attachedCount  Int       @default(0) @map("attached_count")
-  skippedCount   Int       @default(0) @map("skipped_count")
-  failedCount    Int       @default(0) @map("failed_count")
+  delimiter       String    @default(",")
+  totalRows       Int       @default(0) @map("total_rows")
+  processedRows   Int       @default(0) @map("processed_rows")
+  createdCount    Int       @default(0) @map("created_count")
+  updatedCount    Int       @default(0) @map("updated_count")
+  attachedCount   Int       @default(0) @map("attached_count")
+  skippedCount    Int       @default(0) @map("skipped_count")
+  failedCount     Int       @default(0) @map("failed_count")
   /// Set when the whole run failed rather than individual rows.
-  error          String?
+  error           String?
   /// The failed-rows file, written at the end of a run so a corrected file can be re-imported.
-  errorDocumentId String?  @map("error_document_id") @db.Uuid
-  requestedById  String?   @map("requested_by_id") @db.Uuid
-  startedAt      DateTime? @map("started_at") @db.Timestamptz(6)
-  finishedAt     DateTime? @map("finished_at") @db.Timestamptz(6)
-  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  errorDocumentId String?   @map("error_document_id") @db.Uuid
+  requestedById   String?   @map("requested_by_id") @db.Uuid
+  startedAt       DateTime? @map("started_at") @db.Timestamptz(6)
+  finishedAt      DateTime? @map("finished_at") @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   document     Document     @relation(fields: [organizationId, documentId], references: [organizationId, id], onDelete: Restrict, map: "import_jobs_document_same_org_fk")
@@ -2174,6 +2190,8 @@ model Customer {
   mergedFromThis Customer[] @relation("customer_merge_pointer")
   deals          Deal[]
 
+  quotations Quotation[]
+
   @@unique([organizationId, id], name: "customer_tenant_key")
   /// The default list.
   @@index([organizationId, createdAt(sort: Desc)])
@@ -2224,6 +2242,8 @@ model Product {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   dealItems    DealItem[]
 
+  quotationItems QuotationItem[]
+
   @@unique([organizationId, id], name: "product_tenant_key")
   @@index([organizationId, isActive, name])
   /// `products_sku_key` is a partial unique index written by hand: a SKU is unique where it exists,
@@ -2259,22 +2279,22 @@ model Deal {
   name String
 
   // ── Position ─────────────────────────────────────────────────────────────
-  pipelineId String @map("pipeline_id") @db.Uuid
-  stageId    String @map("stage_id") @db.Uuid
+  pipelineId  String @map("pipeline_id") @db.Uuid
+  stageId     String @map("stage_id") @db.Uuid
   /// Copied from the stage when the deal moves, and overridable per deal: a stage's probability is
   /// the business's rule of thumb, and a particular deal is sometimes known to be better or worse.
-  probability Int   @default(0)
+  probability Int    @default(0)
 
   // ── Money ────────────────────────────────────────────────────────────────
   /// The total, in minor units. **Derived from the line items whenever there are any** — one source
   /// of truth, because a deal whose header disagrees with its own lines is a quotation nobody can
   /// defend. A deal with no items carries the figure somebody typed.
-  valueMinor    BigInt  @default(0) @map("value_minor")
+  valueMinor    BigInt @default(0) @map("value_minor")
   /// The sum before discounts and tax, kept so a pipeline report can show both.
-  grossMinor    BigInt  @default(0) @map("gross_minor")
-  discountMinor BigInt  @default(0) @map("discount_minor")
-  taxMinor      BigInt  @default(0) @map("tax_minor")
-  currency      String  @db.Char(3)
+  grossMinor    BigInt @default(0) @map("gross_minor")
+  discountMinor BigInt @default(0) @map("discount_minor")
+  taxMinor      BigInt @default(0) @map("tax_minor")
+  currency      String @db.Char(3)
 
   expectedCloseDate DateTime? @map("expected_close_date") @db.Date
 
@@ -2306,6 +2326,8 @@ model Deal {
   lostReason   LostReason?   @relation(fields: [organizationId, lostReasonId], references: [organizationId, id], onDelete: Restrict, map: "deals_lost_reason_same_org_fk")
 
   items DealItem[]
+
+  quotations Quotation[]
 
   @@unique([organizationId, id], name: "deal_tenant_key")
   @@index([organizationId, createdAt(sort: Desc)])
@@ -2373,4 +2395,183 @@ model DealItem {
   @@index([organizationId, dealId])
   @@index([organizationId, productId])
   @@map("deal_items")
+}
+
+/// A per-workspace counter for document numbers (`FR-DEAL-2`).
+///
+/// A quotation number is something a customer quotes back at you on the phone, so it has to be
+/// short, sequential and the tenant's own — `QTN-0007`, not a UUID. Neither `MAX(number) + 1` nor a
+/// Postgres sequence can provide that: the first is a read-then-write race that hands two people
+/// the same number, and the second is global, so one workspace's quotations would advance another's
+/// numbering and leak how much business the platform is doing.
+///
+/// So: one row per `(organization, kind)`, read with `SELECT … FOR UPDATE` inside the transaction
+/// that creates the document. The lock is held for the length of one insert. The prefix and the
+/// padding are columns because they are the tenant's choice (`CLAUDE.md` rule 4), and
+/// `nextValue` is what the lock protects.
+model NumberSeries {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+  /// `quotation` today; `invoice` and `payment-receipt` arrive with the ledger.
+  kind           String
+  /// "QTN", "Q/2026/" — whatever the tenant puts in front of the number. May be blank.
+  prefix         String @default("")
+  /// The next number to hand out. Advanced under the row lock, never derived from the documents.
+  nextValue      Int    @default(1) @map("next_value")
+  /// `4` renders 7 as `0007`. Zero means no padding.
+  padding        Int    @default(4)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, id], name: "number_series_tenant_key")
+  @@unique([organizationId, kind])
+  @@map("number_series")
+}
+
+/// A quotation: the priced offer a customer is actually sent (`FR-DEAL-2`).
+///
+/// **A version is immutable, and a revision is a new row.** `number` is the thing a customer refers
+/// to and `version` is which one they are holding; `supersededById` points at the replacement. An
+/// in-place edit would rewrite a document that has already left the building — and the question
+/// "what did we actually send them on the 14th?" would have no answer. See
+/// `docs/decisions/ADR-0019-quotation-versions-are-immutable.md`.
+///
+/// **The money columns are the same four as a deal's**, computed by the same `documentTotals()` in
+/// `@leados/shared` and re-checked by the same shape of CHECK constraint. That is the whole point of
+/// [ADR-0018](../../../docs/decisions/ADR-0018-money-arithmetic-in-one-place.md): a quotation that
+/// disagrees with its own deal by a rupee is a support conversation nobody can win.
+model Quotation {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  // ── What it is for ───────────────────────────────────────────────────────
+  /// Usually a deal. Nullable because a one-off quote for a walk-in is a real thing, and
+  /// `quotations_has_subject` makes "a quotation for nobody" unrepresentable.
+  dealId     String? @map("deal_id") @db.Uuid
+  leadId     String? @map("lead_id") @db.Uuid
+  customerId String? @map("customer_id") @db.Uuid
+
+  // ── Ownership, for the data scope ────────────────────────────────────────
+  branchId    String? @map("branch_id") @db.Uuid
+  teamId      String? @map("team_id") @db.Uuid
+  ownerUserId String? @map("owner_user_id") @db.Uuid
+
+  // ── Identity ─────────────────────────────────────────────────────────────
+  /// The rendered number, `QTN-0007`. Shared by every version of the same quotation.
+  number         String
+  version        Int       @default(1)
+  /// The revision that replaced this version, and when. Set on the old row, never cleared.
+  supersededById String?   @map("superseded_by_id") @db.Uuid
+  supersededAt   DateTime? @map("superseded_at") @db.Timestamptz(6)
+
+  /// `draft | sent | accepted | rejected | expired`, held by `quotations_status` — a protocol, not
+  /// a tenant's vocabulary, which is why this is a CHECK and a lead's status is a row.
+  status String @default("draft")
+
+  title String?
+  /// The terms printed on the document: payment schedule, warranty, whatever the tenant writes.
+  terms String?
+
+  /// The last day the price stands. A date, not a timestamp: "valid until the 20th" means all of it.
+  validUntil DateTime? @map("valid_until") @db.Date
+
+  // ── Money ────────────────────────────────────────────────────────────────
+  grossMinor    BigInt @default(0) @map("gross_minor")
+  discountMinor BigInt @default(0) @map("discount_minor")
+  taxMinor      BigInt @default(0) @map("tax_minor")
+  totalMinor    BigInt @default(0) @map("total_minor")
+  currency      String @db.Char(3)
+
+  // ── Lifecycle ────────────────────────────────────────────────────────────
+  sentAt           DateTime? @map("sent_at") @db.Timestamptz(6)
+  /// `email | whatsapp | link | manual` — how it went out, held by `quotations_sent_via`.
+  sentVia          String?   @map("sent_via")
+  /// The address or number it was sent to, as typed. Evidence, not a contact record.
+  sentTo           String?   @map("sent_to")
+  acceptedAt       DateTime? @map("accepted_at") @db.Timestamptz(6)
+  rejectedAt       DateTime? @map("rejected_at") @db.Timestamptz(6)
+  /// Why it was turned down — the tenant's own `lost_reasons`, the same list a lost deal uses.
+  rejectedReasonId String?   @map("rejected_reason_id") @db.Uuid
+  outcomeNote      String?   @map("outcome_note")
+  expiredAt        DateTime? @map("expired_at") @db.Timestamptz(6)
+
+  /// The rendered PDF, once this version has been frozen. A draft has none: it would be a file of a
+  /// document that is still being written.
+  pdfDocumentId String? @map("pdf_document_id") @db.Uuid
+
+  createdById String?   @map("created_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  deal           Deal?        @relation(fields: [organizationId, dealId], references: [organizationId, id], onDelete: Restrict, map: "quotations_deal_same_org_fk")
+  lead           Lead?        @relation(fields: [organizationId, leadId], references: [organizationId, id], onDelete: Restrict, map: "quotations_lead_same_org_fk")
+  customer       Customer?    @relation(fields: [organizationId, customerId], references: [organizationId, id], onDelete: Restrict, map: "quotations_customer_same_org_fk")
+  branch         Branch?      @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict, map: "quotations_branch_same_org_fk")
+  team           Team?        @relation(fields: [organizationId, teamId], references: [organizationId, id], onDelete: Restrict, map: "quotations_team_same_org_fk")
+  owner          Membership?  @relation("quotation_owner", fields: [organizationId, ownerUserId], references: [organizationId, userId], onDelete: Restrict, map: "quotations_owner_same_org_fk")
+  rejectedReason LostReason?  @relation("quotation_rejected_reason", fields: [organizationId, rejectedReasonId], references: [organizationId, id], onDelete: Restrict, map: "quotations_rejected_reason_same_org_fk")
+  pdfDocument    Document?    @relation("quotation_pdf", fields: [organizationId, pdfDocumentId], references: [organizationId, id], onDelete: Restrict, map: "quotations_pdf_document_same_org_fk")
+  supersededBy   Quotation?   @relation("quotation_versions", fields: [organizationId, supersededById], references: [organizationId, id], onDelete: Restrict, map: "quotations_superseded_by_same_org_fk")
+  supersedes     Quotation[]  @relation("quotation_versions")
+
+  items QuotationItem[]
+
+  @@unique([organizationId, id], name: "quotation_tenant_key")
+  /// One row per version of a number. This is what makes a revision a new row rather than an edit.
+  @@unique([organizationId, number, version])
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([organizationId, dealId])
+  @@index([organizationId, leadId])
+  @@index([organizationId, customerId])
+  @@index([organizationId, status, validUntil])
+  @@index([organizationId, ownerUserId])
+  /// `quotations_superseded_by` (the referencing side of the self-FK), `quotations_current`
+  /// (the partial index behind every list) and the CHECK constraints are hand-written.
+  @@map("quotations")
+}
+
+/// A priced line on a quotation (`FR-DEAL-2`).
+///
+/// A copy of the deal's line at the moment the quotation was raised, not a reference to it: the deal
+/// goes on moving and the document does not. Same columns, same arithmetic, same CHECKs as
+/// `deal_items` — deliberately, so one pure function can produce both and one constraint shape can
+/// check both.
+model QuotationItem {
+  id             String  @id @db.Uuid
+  organizationId String  @map("organization_id") @db.Uuid
+  quotationId    String  @map("quotation_id") @db.Uuid
+  productId      String? @map("product_id") @db.Uuid
+
+  position    Int
+  name        String
+  description String?
+  quantity    Decimal @db.Decimal(12, 3)
+  unit        String?
+
+  unitPriceMinor BigInt  @map("unit_price_minor")
+  discountMinor  BigInt  @default(0) @map("discount_minor")
+  taxPercent     Decimal @default(0) @map("tax_percent") @db.Decimal(5, 2)
+
+  grossMinor BigInt @map("gross_minor")
+  netMinor   BigInt @map("net_minor")
+  taxMinor   BigInt @map("tax_minor")
+  totalMinor BigInt @map("total_minor")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  quotation    Quotation    @relation(fields: [organizationId, quotationId], references: [organizationId, id], onDelete: Cascade, map: "quotation_items_quotation_same_org_fk")
+  product      Product?     @relation(fields: [organizationId, productId], references: [organizationId, id], onDelete: Restrict, map: "quotation_items_product_same_org_fk")
+
+  @@unique([organizationId, id], name: "quotation_item_tenant_key")
+  @@unique([organizationId, quotationId, position])
+  @@index([organizationId, quotationId])
+  @@index([organizationId, productId])
+  @@map("quotation_items")
 }

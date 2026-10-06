@@ -49,6 +49,7 @@ export const JOBS = {
   OUTBOX_REAP: 'maintenance.outbox-reap',
   ACTIVITY_PARTITIONS: 'maintenance.activity-partitions',
   LEAD_RECYCLE: 'maintenance.lead-recycle',
+  QUOTATION_EXPIRY: 'maintenance.quotation-expiry',
 
   LEAD_SCORE: 'lead.score',
   SCORE_DECAY_SWEEP: 'score.decay-sweep',

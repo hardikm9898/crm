@@ -46,11 +46,21 @@ export function StatCard({
   hint?: string;
 }) {
   return (
-    <div className="rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-4 py-3">
+    <div
+      className="rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface-raised)] px-4 py-3"
+      data-stat={label}
+    >
       <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
         {label}
       </p>
-      <p className="numeric mt-1 text-2xl font-semibold">{value}</p>
+      {/*
+        `data-stat-value` is a stable hook for the browser checks. The label above is uppercased by
+        CSS, so reading it back gives "TOTAL" rather than "Total" — which is how three assertions
+        about a figure quietly matched nothing at all and passed.
+      */}
+      <p className="numeric mt-1 text-2xl font-semibold" data-stat-value={label}>
+        {value}
+      </p>
       {hint && <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">{hint}</p>}
     </div>
   );

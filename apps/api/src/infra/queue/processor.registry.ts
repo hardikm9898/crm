@@ -24,6 +24,7 @@ import {
   ScoreDecaySweepProcessor,
 } from '../../modules/scoring/scoring.processor.js';
 import { ExportGenerateProcessor } from '../../modules/exports/exports.processor.js';
+import { QuotationExpiryProcessor } from '../../modules/quotations/quotations.processor.js';
 import { ImportProcessProcessor } from '../../modules/imports/imports.processor.js';
 import type { JobProcessor } from './job-processor.js';
 
@@ -56,6 +57,7 @@ export const PROCESSOR_TYPES: readonly Type<JobProcessor>[] = [
   ActivityPartitionProcessor,
   LeadRecycleProcessor,
   DocumentExpiryProcessor,
+  QuotationExpiryProcessor,
   // scoring
   LeadScoreProcessor,
   ScoreDecaySweepProcessor,

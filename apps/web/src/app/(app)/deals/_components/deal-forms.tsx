@@ -4,6 +4,7 @@ import { useActionState, useState } from 'react';
 import { IDLE, type ActionState } from '@/lib/action-state';
 import { Button, ErrorNotice, Field, controlClassName } from '@/components/ui';
 import type { DealItem, Product } from '@/lib/deals';
+import { rupees } from '@/lib/line-items-form';
 import {
   createDeal,
   deleteDeal,
@@ -20,11 +21,6 @@ function valueOf(state: ActionState, key: string): string | undefined {
 
 function errorOf(state: ActionState, key: string): string | undefined {
   return state.status === 'error' ? state.fieldErrors?.[key] : undefined;
-}
-
-/** Rupees in, rupees out: the action converts to paise, so the box shows what a person wrote. */
-function rupees(minor: number): string {
-  return (minor / 100).toFixed(2).replace(/\.00$/, '');
 }
 
 export function NewDealForm({

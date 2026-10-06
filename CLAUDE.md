@@ -271,6 +271,42 @@ change, or typecheck will fail confusingly.
   twenty cards it loaded tells a business owner their pipeline is worth a fifth of what it is. Each
   column's `count`/`valueMinor`/`weightedMinor` is a separate aggregate over the whole column, and a
   deal list returns `meta.totalValueMinor` for the whole filter.
+- **A copy table that overrides the API's message turns every refusal into a dead end.**
+  `ERROR_COPY` in `apps/web/src/lib/api.ts` mapped `BUSINESS_RULE_VIOLATION` to "That is not
+  allowed." and `describeError` preferred it — so "This deal's value comes from its line items",
+  "Deactivate it instead" and "The counter is already at 3, it can be moved forward but not back"
+  were all discarded, product-wide, in favour of four words that tell nobody anything. The table is
+  now two: `ERROR_OVERRIDES` (session and access codes, where the API's text is for an integrator
+  and must not be shown) wins over the API, and `ERROR_FALLBACKS` is used **only when the API sent
+  no message**. A refusal the API wrote for a person is the one thing not to paraphrase.
+- **A `uppercase` class changes what `innerText` returns.** A browser check asserting
+  `/Total ₹/` against a `StatCard` matched nothing, because the label renders as "TOTAL" — and the
+  assertion that compared two totals for equality passed by comparing `''` to `''`. Stat values
+  carry `data-stat-value="<label>"` for exactly this; and an equality check between two scraped
+  strings needs a non-empty assertion beside it, or it passes hardest when the scrape is broken.
+- **A draft's content is in form inputs, not in `innerText`.** Two checks asserting that a quotation
+  kept its terms and gained a line read the page's text and found neither, because an editable
+  screen renders its values as `value=` attributes. Read them with `inputValue()` or
+  `evaluateAll(n => n.value)`.
+- **`waitForFunction` on a condition that is already true returns immediately.** A browser check
+  saved a prefix and waited for `/BR-\d{5}/`, which the _previous_ run had already left on the
+  page — so the wait returned before the save landed and the next click raced it. Wait for something
+  this run produced (a unique value, a success message), not for a shape the screen might already
+  have.
+- **A cross-tenant sweep that writes a timeline entry must enter each tenant's context.**
+  `withPlatformScope` leaves `tenantContext.organizationId()` unset, and `TimelineService` takes the
+  organization from the context by design — so the quotation expiry sweep threw
+  `TenantContextMissingError` on its first row. Read across tenants under `withPlatformScope`, then
+  write inside `tenantContext.run(systemPrincipal(row.organizationId, newId()), …)`.
+- **The test database needs its own `prisma migrate deploy`.** A new table exists in `leados` and
+  not in `leados_test`, so every integration test reports `The table … does not exist` while the
+  app works perfectly by hand. `DATABASE_URL=$DATABASE_URL_TEST pnpm --filter @leados/db exec
+prisma migrate deploy` after generating a migration.
+- **A PDF's text is not in the file as text.** An embedded TrueType subset writes glyph ids, so
+  grepping a rendered PDF for its own total finds nothing and proves nothing. What a check can
+  assert is the `%PDF-` header, the byte length, and — by inflating the streams and reading the
+  `ToUnicode` CMap's `beginbfrange` array — the set of characters the document actually contains.
+  That is how `₹` (U+20B9) was confirmed to render rather than to be a box.
 
 ## Reporting work
 

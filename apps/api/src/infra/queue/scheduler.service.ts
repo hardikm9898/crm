@@ -78,6 +78,15 @@ export const SCHEDULES: readonly ScheduleDefinition[] = [
     description: 'Drop the bytes of expired exports and import files',
   },
   {
+    queue: QUEUES.MAINTENANCE,
+    jobName: JOBS.QUOTATION_EXPIRY,
+    // Early, and daily, because `valid_until` is a date: a quotation valid "until the 20th" is
+    // valid for all of the 20th, and expiring it at 00:49 on the 21st is exactly on time. A price
+    // from April that still reads "sent" is one somebody honours by accident.
+    cron: '49 0 * * *',
+    description: 'Mark sent quotations expired once their validity has run out',
+  },
+  {
     queue: QUEUES.SCORING,
     jobName: JOBS.SCORE_DECAY_SWEEP,
     // Overnight, before anyone opens the app: a score that decayed at 1am is right when the first

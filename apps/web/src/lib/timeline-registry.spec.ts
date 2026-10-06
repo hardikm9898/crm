@@ -204,3 +204,95 @@ describe('a deal on the timeline', () => {
     expect(entry('deal.won', {}).description).toBe('The deal won.');
   });
 });
+
+describe('the quotation entries', () => {
+  const entry = (type: string, payload: Record<string, unknown>) =>
+    describeEntry({
+      id: 'a',
+      type,
+      module: type.split('.')[0]!,
+      known: true,
+      occurredAt: '2026-10-06T10:00:00.000Z',
+      visibility: 'all',
+      actor: { type: 'user', id: null, name: 'Anita' },
+      payload,
+    });
+
+  it('names the number, because that is what a customer quotes back at you', () => {
+    expect(
+      entry('quotation.sent', { number: 'QTN-0007', totalMinor: 118_000, currency: 'INR' })
+        .description,
+    ).toContain('QTN-0007');
+  });
+
+  it('says how it went out, and to whom', () => {
+    const described = entry('quotation.sent', {
+      number: 'QTN-0007',
+      via: 'email',
+      to: 'buyer@example.test',
+      totalMinor: 118_000,
+      currency: 'INR',
+    });
+    expect(described.description).toContain('by email');
+    expect(described.description).toContain('buyer@example.test');
+    expect(described.description).toContain('1,180');
+  });
+
+  it('does not invent a channel for a quotation handed over in person', () => {
+    const described = entry('quotation.sent', { number: 'QTN-0007', via: 'manual' });
+    expect(described.description).toBe('QTN-0007 sent.');
+  });
+
+  it('shows both figures on a revision, so the change is the sentence', () => {
+    const described = entry('quotation.revised', {
+      number: 'QTN-0007',
+      version: 2,
+      fromTotalMinor: 250_000,
+      totalMinor: 220_000,
+      currency: 'INR',
+    });
+    expect(described.description).toContain('2,500');
+    expect(described.description).toContain('2,200');
+    expect(described.description).toContain('unchanged');
+  });
+
+  it('says when an acceptance moved the deal’s value', () => {
+    expect(
+      entry('quotation.accepted', {
+        number: 'QTN-0007',
+        totalMinor: 118_000,
+        currency: 'INR',
+        dealValueUpdated: true,
+      }).description,
+    ).toContain('the deal now carries that figure');
+  });
+
+  it('says why the deal’s value did not move, rather than silently not moving it', () => {
+    // Found by accepting a quotation on a lost deal: the figure quietly stayed put and nothing on
+    // the screen said so, which reads exactly like the acceptance failing to register.
+    expect(
+      entry('quotation.accepted', {
+        number: 'QTN-0007',
+        totalMinor: 118_000,
+        currency: 'INR',
+        dealValueUpdated: false,
+        dealClosed: true,
+      }).description,
+    ).toContain('reopen it');
+  });
+
+  it('tones the three outcomes apart', () => {
+    expect(entry('quotation.accepted', {}).tone).toBe('success');
+    expect(entry('quotation.rejected', {}).tone).toBe('danger');
+    expect(entry('quotation.expired', {}).tone).toBe('warning');
+  });
+
+  it('tells somebody what to do about an expired quotation', () => {
+    expect(entry('quotation.expired', { number: 'QTN-0007' }).description).toContain('Revise it');
+  });
+
+  it('still reads when the payload is empty', () => {
+    expect(entry('quotation.created', {}).description).toBe('A quotation drafted.');
+    expect(entry('quotation.sent', {}).description).toBe('A quotation sent.');
+  });
+});
