@@ -375,6 +375,56 @@ Adding a type = adding a constant + a renderer in the UI registry. No migration 
 | `quotation_items` | as `deal_items`                                                                                                                                                                                             |
 | `payments`        | org, `deal_id?`, `lead_id?`, `customer_id?`, `amount_minor`, currency, `method`, `status (pending                                                                                                           | succeeded | failed   | refunded)`, `provider`, `provider_payment_id?`, `paid_at?`, `attributed_touchpoint_id?`, `metadata JSONB`. **Revenue for attribution comes from here** (`FR-ATT-4`) |
 
+> **Amendment, 2026-10-06 (implementation).** `products`, `deals` and `deal_items` are built; the
+> `quotations`, `quotation_items` and `payments` rows above remain a sketch. The deviations are
+> deliberate — see [ADR-0018](./decisions/ADR-0018-money-arithmetic-in-one-place.md).
+>
+> - **A deal's money is four columns, not one.** `gross_minor`, `discount_minor`, `tax_minor` and
+>   `value_minor` together, because a header that carries only a total cannot be reconciled against
+>   its lines and "where did the tax go?" becomes a code-reading exercise. `deal_items` carries the
+>   same four per line (`gross_minor`, `discount_minor`, `tax_minor`, `net_minor`, `total_minor`),
+>   all `BIGINT` **minor units** — never a float, never a `Decimal` the application rounds.
+> - **`quantity` is `DECIMAL(12,3)`**, so 2.5 hours and 1.25 kg are expressible, while the
+>   arithmetic stays integral: the quantity is scaled to thousandths and the product divided back
+>   once (`QUANTITY_SCALE` in `@leados/shared/line-items`). `MAX_QUANTITY` is 1 000 000.
+> - **`products.tax_percent` and `products.currency` are nullable defaults, not requirements.** A
+>   catalogue entry is a convenience that pre-fills a line; the line owns its own numbers once
+>   written, so re-pricing a product never silently re-prices a deal that was already agreed.
+> - **`deals` gained `activities.deal_id`**, with its own per-tenant index. A deal's history is its
+>   own rows, and an event that matters to the party (a win, a loss) is written **twice** — once
+>   against the deal and once against the lead or customer — because a business owner reading a
+>   lead must see that it was won without opening anything.
+> - **`deals.lead_id` and `deals.customer_id` are both nullable**, with `deals_has_subject` requiring
+>   at least one. A deal belongs to whoever it is being sold to, and that is a lead before conversion
+>   and a customer after; a converted person's deals point at both.
+>
+> Hand-written objects carrying guarantees the application cannot (all listed in
+> `packages/db/src/schema-objects.int-spec.ts`, which is the only thing stopping Prisma's next diff
+> from dropping them):
+>
+> - **`deals_stage_in_pipeline_fk`**, a three-column FK on `(organization_id, pipeline_id, stage_id)`
+>   — the same device `leads` uses. "A deal in another pipeline's stage" is unrepresentable, which no
+>   application check can guarantee under concurrency.
+> - **`deals_totals_add_up`**, `value_minor = gross_minor - discount_minor + tax_minor`, and the two
+>   per-line twins `deal_items_net_is_gross_less_discount` and `deal_items_total_is_net_plus_tax`.
+>   This is the half of ADR-0018 that the database owns: if a future writer — a quotation, an
+>   invoice, a migration backfill — computes money its own way and gets it wrong, the write fails
+>   rather than persisting a document whose lines do not add up to its own total.
+> - **`deals_discount_within_gross`** and `deal_items_discount_within_gross`, so a discount cannot
+>   exceed what it discounts and a negative total cannot exist.
+> - **`deals_not_won_and_lost`**, `deals_lost_reason_needs_loss`, `deals_lost_note_needs_loss` — an
+>   outcome is one outcome, and a reason for a loss that did not happen is not storable.
+> - **`products_sku_key`**, a partial unique index on `(organization_id, sku) WHERE sku IS NOT NULL
+AND deleted_at IS NULL`. SKUs are unique when present; a product without one is fine, and a
+>   deleted product does not hold its SKU hostage.
+> - **`deals_open_close_date`**, `deals_won` and `deals_live_created_at` — partial indexes, because
+>   every screen that matters asks about _open_ deals (a forecast), _won_ deals (revenue) or _live_
+>   ones (the board), and a full index on a table whose closed rows accumulate forever answers none
+>   of them well.
+> - **`deals_search_vector_trg`** plus the GIN, JSONB and trigram indexes, mirroring `leads` and
+>   `customers`. Same weights, same refresh-on-write trigger; if it is dropped a deal simply stops
+>   appearing in search and nothing else looks broken.
+
 ### 6.7 Customers and conversion
 
 | Table       | Purpose             | Key columns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |

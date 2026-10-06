@@ -6,6 +6,7 @@ import { createUnscopedDbClient } from '../src/client.js';
 import { seedPlatformCatalogue } from '../src/seeding/platform-catalogue.js';
 import {
   seedCrmDefaults,
+  seedDealPipeline,
   seedDefaultAssignmentRule,
   seedDefaultTags,
   seedScoringAndViews,
@@ -94,6 +95,7 @@ async function topUpConfiguration(db: PrismaClient, organizationId: string): Pro
   await db.$transaction(async (tx) => {
     if (await seedCrmDefaults(tx, organizationId)) added.push('CRM vocabulary');
     if ((await seedDefaultTags(tx, organizationId)) > 0) added.push('tags');
+    if (await seedDealPipeline(tx, organizationId)) added.push('deal pipeline');
 
     const executives = await tx.userRole.findMany({
       where: { organizationId, role: { code: 'sales_executive' } },

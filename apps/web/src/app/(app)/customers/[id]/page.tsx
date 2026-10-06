@@ -196,6 +196,17 @@ export default async function CustomerPage({
             </Card>
           )}
 
+          {editable && (
+            <Card title="Money on the table">
+              <Link href={`/deals/new?customerId=${customer.id}`} className="text-sm underline">
+                New deal
+              </Link>
+              <p className="mt-2 text-xs text-[var(--color-text-muted)]">
+                A repeat order is a new deal, not an edit to the last one.
+              </p>
+            </Card>
+          )}
+
           <Card title="Account">
             <dl className="flex flex-col">
               <DefinitionRow label="Account manager">

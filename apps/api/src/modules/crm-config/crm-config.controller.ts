@@ -42,6 +42,18 @@ const listQuerySchema = z
 type ListQuery = z.infer<typeof listQuerySchema>;
 
 /**
+ * Pipelines, which exist for more than one entity.
+ *
+ * `entityType` defaults to `lead`, which is what every caller before deals existed meant — and
+ * leaving the default is what keeps the lead screens working unchanged. A deal board asks for
+ * `?entityType=deal`.
+ */
+const listPipelinesSchema = listQuerySchema.extend({
+  entityType: z.enum(['lead', 'deal']).default('lead'),
+});
+type ListPipelinesQuery = z.infer<typeof listPipelinesSchema>;
+
+/**
  * The tenant's CRM vocabulary.
  *
  * **Reads are gated on `lead:read`, not `settings:read`.** Anyone who can see a lead needs the words
@@ -212,8 +224,8 @@ export class CrmConfigController {
 
   @Get('pipelines')
   @RequirePermission(PERMISSIONS.LEAD_READ)
-  async listPipelines(@Query(new ZodBody(listQuerySchema)) query: ListQuery) {
-    return this.config.listPipelines(query.includeInactive);
+  async listPipelines(@Query(new ZodBody(listPipelinesSchema)) query: ListPipelinesQuery) {
+    return this.config.listPipelines(query.includeInactive, query.entityType);
   }
 
   @Post('pipelines')

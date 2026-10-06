@@ -72,8 +72,12 @@ export const ACTIVITY_TYPES = {
   // commercial (Phase 2 later steps)
   QUOTATION_SENT: 'quotation.sent',
   DEAL_CREATED: 'deal.created',
+  DEAL_UPDATED: 'deal.updated',
+  DEAL_STAGE_CHANGED: 'deal.stage_changed',
   DEAL_WON: 'deal.won',
   DEAL_LOST: 'deal.lost',
+  DEAL_REOPENED: 'deal.reopened',
+  DEAL_DELETED: 'deal.deleted',
   PAYMENT_RECEIVED: 'payment.received',
   // website and marketing (Phases 7–9)
   WEBSITE_SESSION: 'website.session',

@@ -60,6 +60,8 @@ interface Tenant {
   importJobId: string;
   exportJobId: string;
   customerId: string;
+  dealId: string;
+  productId: string;
 }
 
 let orgA: Tenant;
@@ -235,6 +237,23 @@ async function createTenant(label: string): Promise<Tenant> {
     token,
   });
 
+  const product = await call<EnvelopeBody<{ id: string }>>(ctx.app, {
+    method: 'POST',
+    url: '/api/v1/products',
+    payload: {
+      name: `Sweep product ${organizationId.slice(0, 8)}`,
+      priceMinor: 100_000,
+      taxPercent: 18,
+    },
+    token,
+  });
+  const deal = await call<EnvelopeBody<{ id: string }>>(ctx.app, {
+    method: 'POST',
+    url: '/api/v1/deals',
+    payload: { name: 'Sweep deal', leadId: lead.body.data.id, valueMinor: 500_000 },
+    token,
+  });
+
   const [duplicateRule, assignmentRule, scoringRule, savedView] = await Promise.all([
     ctx.db.duplicateRule.findFirstOrThrow({ where: { organizationId, isActive: true } }),
     ctx.db.assignmentRule.findFirstOrThrow({ where: { organizationId } }),
@@ -271,6 +290,8 @@ async function createTenant(label: string): Promise<Tenant> {
     importJobId,
     exportJobId: exported.body.data.id,
     customerId: customer.body.data.id,
+    dealId: deal.body.data.id,
+    productId: product.body.data.id,
   };
 }
 
@@ -421,6 +442,15 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       '/imports/:id/cancel': `/imports/${orgA.importJobId}/cancel`,
       '/imports/:id/rows': `/imports/${orgA.importJobId}/rows`,
       '/imports/:id/errors.csv': `/imports/${orgA.importJobId}/errors.csv`,
+      '/deals/:id': `/deals/${orgA.dealId}`,
+      '/deals/:id/timeline': `/deals/${orgA.dealId}/timeline`,
+      '/deals/:id/items': `/deals/${orgA.dealId}/items`,
+      '/deals/:id/stage': `/deals/${orgA.dealId}/stage`,
+      '/deals/:id/win': `/deals/${orgA.dealId}/win`,
+      '/deals/:id/lose': `/deals/${orgA.dealId}/lose`,
+      '/deals/:id/reopen': `/deals/${orgA.dealId}/reopen`,
+      '/deals/:id/restore': `/deals/${orgA.dealId}/restore`,
+      '/products/:id': `/products/${orgA.productId}`,
       '/customers/:id': `/customers/${orgA.customerId}`,
       '/customers/:id/timeline': `/customers/${orgA.customerId}/timeline`,
       '/customers/:id/restore': `/customers/${orgA.customerId}/restore`,
@@ -741,6 +771,24 @@ function bodyFor(
       return {};
     case '/exports':
       return { filter: { conditions: [] }, columns: ['company'] };
+    // Phase 2, step 7 — deals, products and line items
+    case '/deals':
+      return { name: 'Cross tenant deal', leadId: target.leadId, valueMinor: 1_000 };
+    case '/deals/:id':
+      return { name: 'Renamed by another tenant' };
+    case '/deals/:id/items':
+      return { items: [{ name: 'A line', quantity: 1, unitPriceMinor: 1_000 }] };
+    case '/deals/:id/stage':
+      return { stageId: target.stageId };
+    case '/deals/:id/win':
+    case '/deals/:id/lose':
+    case '/deals/:id/reopen':
+    case '/deals/:id/restore':
+      return {};
+    case '/products':
+      return { name: 'Cross tenant product', priceMinor: 100 };
+    case '/products/:id':
+      return { name: 'Renamed by another tenant' };
     // Phase 2, step 6 — customers and conversion
     case '/customers':
       return { firstName: 'Cross', lastName: 'Tenant', email: 'cross@tenant.test' };

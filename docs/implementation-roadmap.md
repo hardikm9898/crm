@@ -580,6 +580,86 @@ on capture. `lifetime_value_minor`, `first_purchase_at` and `last_purchase_at` a
 **absent** until the payments ledger exists to write them: a money column that is always zero lies to
 every report that reads it.
 
+### Step 7 — deals, products and line items ✅ _(landed 2026-10-06)_
+
+The money. `FR-DEAL-1` (deals on a pipeline), `FR-DEAL-2` (line items and a product catalogue),
+`FR-DEAL-3` (win, lose, reopen, with the tenant's own reasons).
+
+- **Line-item arithmetic lives in exactly one pure function, and the database re-checks it.**
+  `lineTotals` / `documentTotals` in `@leados/shared`, over integers in minor units, with
+  `deals_totals_add_up`, `deal_items_net_is_gross_less_discount` and
+  `deal_items_total_is_net_plus_tax` as the backstop. Five things will eventually compute the same
+  money — a deal, a quotation, its PDF, an invoice, a payment reconciliation — and the way a
+  quotation ends up saying ₹1,18,000 while the invoice says ₹1,17,999 is never a bug in the
+  arithmetic; it is two implementations of it, one rounding the running total and the other each
+  line. The reasoning, the floating-point trap, and the three alternatives rejected are
+  [ADR-0018](./decisions/ADR-0018-money-arithmetic-in-one-place.md).
+- **Quantity is fractional, the arithmetic is not.** `DECIMAL(12,3)` in the database, scaled to
+  thousandths and divided back once in the multiply, so 2.5 hours at ₹1,999.99 is exact. Discount
+  applies **before** tax, per line; tax is broken down by rate so a document can show what it owes
+  at 5 % and what at 18 %; and each line's total is rounded once and the document total is the sum
+  of already-rounded lines — not a re-rounding of an unrounded sum, which is how a total stops
+  equalling its own rows.
+- **A deal with lines will not accept a total.** `PATCH` refuses `valueMinor` with a sentence, and
+  `PUT /deals/:id/items` replaces the whole set and recomputes the header **in the same
+  transaction** — there is no instant at which the lines and the header disagree. A deal with no
+  lines keeps the field, because a single agreed number typed once is a perfectly good deal.
+- **The catalogue pre-fills a line and then lets go.** Name, price and tax come from the product
+  only when the caller omitted them; once written the line owns its numbers, so re-pricing a product
+  never silently re-prices a deal somebody already agreed. A product that has been sold cannot be
+  deleted at all — the refusal says "Deactivate it instead" — because deleting it would take the
+  history of what was sold with it.
+- **A deal is sold to a lead or to a customer, and the outcome is written on both.** `has_subject`
+  requires one; a win or a loss writes one timeline entry on the deal **and** one on the party,
+  because a business owner opening a lead must see that it was won without opening anything else.
+  That is rule 6 of CLAUDE.md applied to a second subject.
+- **Board columns total the column, not the page.** Each column carries `count`, `valueMinor` and
+  `weightedMinor` over the whole filtered column while returning ten cards; the list reports
+  `meta.totalValueMinor` for the whole filter. The board is the default view, because a sales
+  manager opening the screen is asking "what is in play and what is it worth" and a table answers
+  neither at a glance; `?view=list` is the same data for the questions a board is bad at.
+- **Stage probability is the stage's, and it travels.** Moving a deal takes the stage's probability
+  with it, a win sets 100, and the weighted forecast rounds once at the end rather than per deal.
+  Won and lost are `won_at` / `lost_at` (never both, by constraint) plus a move to the pipeline's own
+  won or lost stage by `is_won` / `is_lost` — never by a stage name. A loss reason is a row in the
+  tenant's `lost_reasons`, and `reopen` clears the outcome without erasing the history, because it
+  happened.
+- **Pipelines gained a second entity type.** `?entityType=deal` on the existing resource, so a
+  workspace configures a deal board with the same screens, stages and reorder it already has for
+  leads; `seedDealPipeline()` gives a new workspace six stages so the board is never empty on day
+  one.
+
+**1 095 tests green** (546 unit, 549 integration), including 16 arithmetic tests that attack the
+money directly (fractional quantities, discount-before-tax, the per-rate tax breakdown, the total
+that must equal the sum of its rounded lines) and a 26-case deals suite over real HTTP. Every
+hand-written object in the migration is asserted present in `schema-objects.int-spec.ts`, and five
+new cross-tenant tests cover the three-column stage FK, the deal's lead and owner FKs, and the
+line-item FKs. Then **31 browser checks** against the built app: picking a product and watching the
+price fill, the header total equalling the sum of the lines (₹44,250), the win landing on the lead's
+timeline, the board's per-column value, and the list reporting the whole filter's value
+(2 deals · ₹1,07,450).
+
+**Three defects found by running it, not by testing it:**
+
+1. **The product settings screen said "No products yet" to every workspace, permanently.**
+   `loadProducts` sent `?active=` — an empty string the enum refuses — and its `catch` turned the
+   400 into an empty state. A loader whose failure is indistinguishable from an empty result is a
+   lie on any screen whose job is to list things; it now has a throwing twin.
+2. **A won deal's amount and note never reached the screen.** The activity types were added and the
+   timeline describers were not, so `deal.won` rendered as a bare row — the registry's fallback
+   hides the payload. Adding an activity type is two edits, and the first one alone passes every
+   test.
+3. **The deal timeline labelled every entry as the lead's.** `TimelineReadService.stage` had no idea
+   deals existed, so a deal's own rows were presented as pre-conversion history.
+
+**Deferred, and why:** **quotations, `quotation_items` and the PDF** are the next step, not this one
+— they are a document and a numbering series over arithmetic that now exists in one place, which is
+the whole point of having built it first. **`payments`** follows them, and until it exists
+`lifetime_value_minor`, `first_purchase_at` and `last_purchase_at` stay absent from `customers`
+(step 6's reasoning, unchanged: a money column that is always zero lies to every report that reads
+it). Revenue reporting and attribution therefore read won deals, not payments, and nothing in the
+product claims otherwise yet.
+
 **Exit criteria**
 
 - Creating a custom field of every supported type requires **no migration and no deploy**, and that
@@ -810,8 +890,15 @@ partially landed, with the specific gaps named.
 
 ## Immediate next step
 
-**Phase 1, step 1:** scaffold the monorepo (pnpm + Turborepo + shared tsconfig/eslint/prettier),
-`docker compose` dev stack, the `packages/db` Prisma skeleton for platform/organization/identity
-tables, the `TenantContext` + scoped-Prisma extension with its failing-by-default test, and the CI
-workflow — i.e. the smallest change set that makes the tenancy guarantee testable before any business
-feature exists.
+_This section names the next step only; what each landed step actually did is in the step entries
+above. Last reviewed 2026-10-06, after Phase 2 step 7._
+
+**Phase 2, step 8 — quotations, manual payments, and the documents they produce.** A quotation is a
+numbered, versioned document over the line-item arithmetic that step 7 put in one place
+([ADR-0018](./decisions/ADR-0018-money-arithmetic-in-one-place.md)): `quotations` +
+`quotation_items`, a per-tenant number series, `draft → sent → accepted | rejected | expired`, a
+rendered PDF through the storage port, and `quotation.sent` on the deal's and the party's timelines.
+Manual `payments` follow in the same step, because they are what finally lets `customers` carry
+`lifetime_value_minor`, `first_purchase_at` and `last_purchase_at` — three columns deliberately
+absent since step 6 for want of a writer — and what every revenue and attribution report in Phases 8
+and 9 is specified to read.

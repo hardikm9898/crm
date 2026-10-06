@@ -31,6 +31,7 @@ import { LeadsModule } from './modules/leads/leads.module.js';
 import { ScoringModule } from './modules/scoring/scoring.module.js';
 import { ViewsModule } from './modules/views/views.module.js';
 import { CustomersModule } from './modules/customers/customers.module.js';
+import { DealsModule } from './modules/deals/deals.module.js';
 import { DocumentsModule } from './modules/documents/documents.module.js';
 import { ExportsModule } from './modules/exports/exports.module.js';
 import { ImportsModule } from './modules/imports/imports.module.js';
@@ -71,6 +72,7 @@ import { HealthModule } from './modules/health/health.module.js';
     ViewsModule,
     LeadsModule,
     CustomersModule,
+    DealsModule,
     DocumentsModule,
     ImportsModule,
     ExportsModule,

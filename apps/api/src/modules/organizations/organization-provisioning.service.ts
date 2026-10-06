@@ -6,7 +6,12 @@ import {
   newToken,
   withPlatformScope,
 } from '@leados/shared';
-import { seedCrmDefaults, seedDefaultAssignmentRule, seedScoringAndViews } from '@leados/db';
+import {
+  seedCrmDefaults,
+  seedDealPipeline,
+  seedDefaultAssignmentRule,
+  seedScoringAndViews,
+} from '@leados/db';
 import { DbService } from '../../infra/db/db.service.js';
 import { OutboxService } from '../../infra/outbox/outbox.service.js';
 import { AuditService } from '../../infra/audit/audit.service.js';
@@ -157,6 +162,9 @@ export class OrganizationProvisioningService {
         // as everything else: an organization with no default status is one where lead creation
         // fails, which is exactly the half-provisioned state rule 18 forbids.
         await seedCrmDefaults(tx, organizationId);
+        // A deal pipeline from the first day: a workspace that has to configure one before it can
+        // record a sale is a workspace where the first sale is recorded in a spreadsheet instead.
+        await seedDealPipeline(tx, organizationId);
         // The owner is the only member at signup, so they are the pool. A round-robin of one still
         // exercises the whole path — eligibility, working hours, the fallback — from day one.
         await seedDefaultAssignmentRule(tx, organizationId, [input.ownerUserId]);

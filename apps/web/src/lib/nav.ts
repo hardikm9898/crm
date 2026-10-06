@@ -33,6 +33,7 @@ export const NAV_SECTIONS: readonly NavSection[] = [
       { label: 'Leads', href: '/leads', permissions: ['lead:read'] },
       { label: 'Pipeline', href: '/pipeline', permissions: ['lead:read'] },
       { label: 'Customers', href: '/customers', permissions: ['customer:read'] },
+      { label: 'Deals', href: '/deals', permissions: ['deal:read'] },
       { label: 'Tasks', href: '/tasks', permissions: ['task:read'], phase: 3 },
       { label: 'Inbox', href: '/inbox', permissions: ['conversation:read'], phase: 5 },
     ],
@@ -56,6 +57,8 @@ export const NAV_SECTIONS: readonly NavSection[] = [
       { label: 'Organization', href: '/settings', permissions: ['organization:read'] },
       { label: 'People', href: '/settings/members', permissions: ['user:read'] },
       { label: 'Roles', href: '/settings/roles', permissions: ['role:read'] },
+      // A price list is workspace configuration, like statuses and sources — not a deal screen.
+      { label: 'Products', href: '/settings/products', permissions: ['deal:read'] },
       { label: 'Your security', href: '/settings/security', permissions: [] },
     ],
   },

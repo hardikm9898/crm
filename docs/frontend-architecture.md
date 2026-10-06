@@ -41,13 +41,15 @@ apps/web/src/app/
 │   ├── inbox/                      shared WhatsApp inbox (3-pane → stacked on mobile)
 │   │   └── [conversationId]/
 │   ├── customers/                  list · detail (journey + details tabs) · new
-│   ├── deals/ · quotations/
+│   ├── deals/                      board (default) · ?view=list · [id] detail · new
+│   ├── quotations/
 │   ├── reports/                    leads · sources · campaigns · users · pipeline · SLA · conversion
 │   ├── marketing/                  campaigns · attribution · segments · SEO
 │   ├── analytics/                  website · funnel · journeys · realtime
 │   ├── automation/                 workflows · runs · registry-driven editor
 │   ├── websites/                   builder · pages · domains · SEO
-│   ├── settings/                   org · users/roles · fields · pipelines · statuses · sources
+│   ├── settings/                   org · users/roles · fields · pipelines · statuses · sources ·
+│   │                               products
 │   │                               assignment · scoring · duplicates · SLA · tasks config ·
 │   │                               whatsapp · integrations · api keys · webhooks · billing ·
 │   │                               privacy · notifications · audit log

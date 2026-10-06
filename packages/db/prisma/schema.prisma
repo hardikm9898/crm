@@ -567,6 +567,9 @@ model Organization {
   importRows               ImportRow[]
   exportJobs               ExportJob[]
   customers                Customer[]
+  products                 Product[]
+  deals                    Deal[]
+  dealItems                DealItem[]
 
   @@index([status])
   @@index([createdAt])
@@ -595,6 +598,7 @@ model Branch {
   holidays     Holiday[]
   leads        Lead[]
   customers    Customer[]
+  deals        Deal[]
 
   @@unique([organizationId, id], name: "branch_tenant_key")
   @@unique([organizationId, code])
@@ -618,6 +622,7 @@ model Team {
   members      TeamMember[]
   leads        Lead[]
   customers    Customer[]
+  deals        Deal[]
   savedViews   SavedView[]
 
   @@unique([organizationId, id], name: "team_tenant_key")
@@ -671,6 +676,7 @@ model Membership {
   workingHours            WorkingHours[]
   assignedLeads           Lead[]                   @relation("lead_assignee")
   ownedCustomers          Customer[]               @relation("customer_owner")
+  ownedDeals              Deal[]                   @relation("deal_owner")
   assignmentPools         AssignmentPoolMember[]
   savedViews              SavedView[]
 
@@ -1164,6 +1170,7 @@ model LostReason {
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   leads        Lead[]
+  deals        Deal[]
 
   @@unique([organizationId, id], name: "lost_reason_tenant_key")
   @@unique([organizationId, name])
@@ -1219,6 +1226,7 @@ model Pipeline {
   organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   stages       PipelineStage[]
   leads        Lead[]
+  deals        Deal[]
 
   @@unique([organizationId, id], name: "pipeline_tenant_key")
   @@unique([organizationId, entityType, name])
@@ -1251,6 +1259,7 @@ model PipelineStage {
   organization     Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   pipeline         Pipeline           @relation(fields: [organizationId, pipelineId], references: [organizationId, id], onDelete: Cascade, map: "pipeline_stages_pipeline_same_org_fk")
   leads            Lead[]
+  deals            Deal[]
   stageHistoryFrom LeadStageHistory[] @relation("lead_stage_history_from")
   stageHistoryTo   LeadStageHistory[] @relation("lead_stage_history_to")
 
@@ -1383,6 +1392,7 @@ model Lead {
   importRows           ImportRow[]
   /// At most one, enforced by a partial unique index on `customers (organization_id, lead_id)`.
   convertedCustomers   Customer[]
+  deals                Deal[]
 
   @@unique([organizationId, id], name: "lead_tenant_key")
   /// The default list.
@@ -1524,6 +1534,10 @@ model Activity {
   /// converted person's history is read as the **union** of the two, which is what makes conversion
   /// non-destructive (`FR-DEAL-4`): nothing is copied, re-parented or lost.
   customerId     String?            @map("customer_id") @db.Uuid
+  /// Set on activity that belongs to a deal. A deal's own history is read on its own screen; the
+  /// entries a business owner needs on the lead or the customer are written there as well, because
+  /// a timeline nobody looks at is not rule 6 satisfied.
+  dealId         String?            @map("deal_id") @db.Uuid
   /// A string from `ACTIVITY_TYPES` in `@leados/shared`, not a database enum: adding a type must not
   /// need a migration, and a row written by an older release must still read (`FR-TL-3`).
   type           String
@@ -1547,6 +1561,7 @@ model Activity {
   @@unique([organizationId, sourceEventId, occurredAt], name: "activity_idempotency_key")
   @@index([organizationId, leadId, occurredAt(sort: Desc)])
   @@index([organizationId, customerId, occurredAt(sort: Desc)])
+  @@index([organizationId, dealId, occurredAt(sort: Desc)])
   @@index([organizationId, type, occurredAt(sort: Desc)])
   @@index([organizationId, actorId, occurredAt(sort: Desc)])
   @@map("activities")
@@ -2157,6 +2172,7 @@ model Customer {
 
   mergedInto     Customer?  @relation("customer_merge_pointer", fields: [organizationId, mergedIntoId], references: [organizationId, id], onDelete: Restrict, map: "customers_merged_into_same_org_fk")
   mergedFromThis Customer[] @relation("customer_merge_pointer")
+  deals          Deal[]
 
   @@unique([organizationId, id], name: "customer_tenant_key")
   /// The default list.
@@ -2171,4 +2187,190 @@ model Customer {
   /// indexes written by hand in the migration — Prisma cannot express `WHERE … IS NOT NULL`, and the
   /// second exists because Postgres never indexes the referencing side of a foreign key.
   @@map("customers")
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// PHASE 2, STEP 7 — DEALS, PRODUCTS AND LINE ITEMS
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// What this business sells (`FR-DEAL-1`).
+///
+/// A catalogue, not an enum: a line item may name a product or simply describe itself, because the
+/// first quotation somebody writes is always for something not yet in the catalogue, and a system
+/// that refuses it is a system they stop using. The product is where a price and a tax rate come
+/// *from* by default — never where they are read from at display time, since a line item's price is
+/// what was agreed, and a later price change must not rewrite last quarter's quotations.
+model Product {
+  id             String    @id @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  /// The tenant's own code. Unique per workspace where present, blank where they do not use one.
+  sku            String?
+  name           String
+  description    String?
+  /// Free-form grouping chosen by the tenant, like a lead source's.
+  category       String?
+  /// The default unit price, in minor units. A line item copies it rather than referencing it.
+  priceMinor     BigInt    @default(0) @map("price_minor")
+  currency       String?   @db.Char(3)
+  /// The default tax rate, as a percentage with two decimals (`18`, `2.5`, `0`).
+  taxPercent     Decimal   @default(0) @map("tax_percent") @db.Decimal(5, 2)
+  /// "hour", "kg", "licence" — a label, not an enum: nothing computes with it.
+  unit           String?
+  isActive       Boolean   @default(true) @map("is_active")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  dealItems    DealItem[]
+
+  @@unique([organizationId, id], name: "product_tenant_key")
+  @@index([organizationId, isActive, name])
+  /// `products_sku_key` is a partial unique index written by hand: a SKU is unique where it exists,
+  /// and Prisma cannot express `WHERE sku IS NOT NULL` — without which a workspace could have only
+  /// one product with no SKU at all.
+  @@map("products")
+}
+
+/// A deal: money that is being discussed (`FR-DEAL-1`).
+///
+/// **Separate from the lead on purpose.** One customer can have three deals running, and a lead that
+/// closed in March can come back in September — which a status column on the lead cannot represent.
+/// The deal carries its own pipeline (`pipelines.entity_type = 'deal'`, which the pipeline model has
+/// always supported), its own stage, its own probability and its own won/lost outcome.
+///
+/// **A deal belongs to a lead, a customer, or both.** Both is the normal case after conversion: the
+/// lead is where it came from and the customer is who pays. `deals_has_subject` makes "a deal
+/// attached to nobody" unrepresentable — a figure in a pipeline report with no party to it would be
+/// a forecast of money from nowhere.
+model Deal {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  // ── Who it is with ───────────────────────────────────────────────────────
+  leadId     String? @map("lead_id") @db.Uuid
+  customerId String? @map("customer_id") @db.Uuid
+
+  // ── Ownership ────────────────────────────────────────────────────────────
+  branchId    String? @map("branch_id") @db.Uuid
+  teamId      String? @map("team_id") @db.Uuid
+  ownerUserId String? @map("owner_user_id") @db.Uuid
+
+  name String
+
+  // ── Position ─────────────────────────────────────────────────────────────
+  pipelineId String @map("pipeline_id") @db.Uuid
+  stageId    String @map("stage_id") @db.Uuid
+  /// Copied from the stage when the deal moves, and overridable per deal: a stage's probability is
+  /// the business's rule of thumb, and a particular deal is sometimes known to be better or worse.
+  probability Int   @default(0)
+
+  // ── Money ────────────────────────────────────────────────────────────────
+  /// The total, in minor units. **Derived from the line items whenever there are any** — one source
+  /// of truth, because a deal whose header disagrees with its own lines is a quotation nobody can
+  /// defend. A deal with no items carries the figure somebody typed.
+  valueMinor    BigInt  @default(0) @map("value_minor")
+  /// The sum before discounts and tax, kept so a pipeline report can show both.
+  grossMinor    BigInt  @default(0) @map("gross_minor")
+  discountMinor BigInt  @default(0) @map("discount_minor")
+  taxMinor      BigInt  @default(0) @map("tax_minor")
+  currency      String  @db.Char(3)
+
+  expectedCloseDate DateTime? @map("expected_close_date") @db.Date
+
+  // ── Outcome ──────────────────────────────────────────────────────────────
+  wonAt        DateTime? @map("won_at") @db.Timestamptz(6)
+  lostAt       DateTime? @map("lost_at") @db.Timestamptz(6)
+  lostReasonId String?   @map("lost_reason_id") @db.Uuid
+  lostNote     String?   @map("lost_note")
+
+  customValues     Json                     @default("{}") @map("custom_values") @db.JsonB
+  customSearchText String?                  @map("custom_search_text")
+  searchVector     Unsupported("tsvector")? @map("search_vector")
+
+  lastActivityAt DateTime? @map("last_activity_at") @db.Timestamptz(6)
+  createdById    String?   @map("created_by_id") @db.Uuid
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
+  deletedById    String?   @map("deleted_by_id") @db.Uuid
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lead         Lead?         @relation(fields: [organizationId, leadId], references: [organizationId, id], onDelete: Restrict, map: "deals_lead_same_org_fk")
+  customer     Customer?     @relation(fields: [organizationId, customerId], references: [organizationId, id], onDelete: Restrict, map: "deals_customer_same_org_fk")
+  branch       Branch?       @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict, map: "deals_branch_same_org_fk")
+  team         Team?         @relation(fields: [organizationId, teamId], references: [organizationId, id], onDelete: Restrict, map: "deals_team_same_org_fk")
+  owner        Membership?   @relation("deal_owner", fields: [organizationId, ownerUserId], references: [organizationId, userId], onDelete: Restrict, map: "deals_owner_same_org_fk")
+  pipeline     Pipeline      @relation(fields: [organizationId, pipelineId], references: [organizationId, id], onDelete: Restrict, map: "deals_pipeline_same_org_fk")
+  stage        PipelineStage @relation(fields: [organizationId, stageId], references: [organizationId, id], onDelete: Restrict, map: "deals_stage_same_org_fk")
+  lostReason   LostReason?   @relation(fields: [organizationId, lostReasonId], references: [organizationId, id], onDelete: Restrict, map: "deals_lost_reason_same_org_fk")
+
+  items DealItem[]
+
+  @@unique([organizationId, id], name: "deal_tenant_key")
+  @@index([organizationId, createdAt(sort: Desc)])
+  /// The board: one page per column.
+  @@index([organizationId, stageId, updatedAt(sort: Desc)])
+  @@index([organizationId, ownerUserId, expectedCloseDate])
+  @@index([organizationId, customerId])
+  @@index([organizationId, leadId])
+  @@index([organizationId, deletedAt])
+  /// `deals_stage_in_pipeline_fk` (the three-column FK that makes "a deal in another pipeline's
+  /// stage" unrepresentable), `deals_open_close_date`, the search trigger and the GIN indexes are
+  /// hand-written in the migration.
+  @@map("deals")
+}
+
+/// A priced line on a deal (`FR-DEAL-1`).
+///
+/// **The price, the tax rate and the name are copied from the product, never referenced.** A
+/// quotation is a statement about what was agreed on a date; re-reading today's catalogue price at
+/// display time would rewrite history every time somebody adjusts a price list. `productId` is kept
+/// for reporting — "how much of this did we sell" — and is nullable because the first line anybody
+/// writes is always for something not in the catalogue yet.
+///
+/// Every money column is computed by `lineTotals()` in `@leados/shared`, which is also what the
+/// quotation and the PDF will use. The columns are stored rather than derived at read time because a
+/// pipeline report sums thousands of them, and because a stored total is one a dispute can be
+/// settled against.
+model DealItem {
+  id             String  @id @db.Uuid
+  organizationId String  @map("organization_id") @db.Uuid
+  dealId         String  @map("deal_id") @db.Uuid
+  productId      String? @map("product_id") @db.Uuid
+
+  /// 1-based, and the order the customer reads. Unique per deal.
+  position    Int
+  name        String
+  description String?
+  /// Up to three decimal places: 2.5 hours, 1.75 kg.
+  quantity    Decimal @db.Decimal(12, 3)
+  unit        String?
+
+  unitPriceMinor BigInt  @map("unit_price_minor")
+  /// An absolute amount off this line, never a percentage — a percentage discount is a thing a
+  /// person types and an amount is a thing a document states.
+  discountMinor  BigInt  @default(0) @map("discount_minor")
+  taxPercent     Decimal @default(0) @map("tax_percent") @db.Decimal(5, 2)
+
+  /// `quantity × unitPrice`, rounded once. The remaining three follow from it.
+  grossMinor BigInt @map("gross_minor")
+  netMinor   BigInt @map("net_minor")
+  taxMinor   BigInt @map("tax_minor")
+  totalMinor BigInt @map("total_minor")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  deal         Deal         @relation(fields: [organizationId, dealId], references: [organizationId, id], onDelete: Cascade, map: "deal_items_deal_same_org_fk")
+  /// `Restrict`: a product that has been sold cannot be deleted out from under the record of
+  /// selling it. Deactivating it is what a tenant actually wants, and `is_active` is there for that.
+  product      Product?     @relation(fields: [organizationId, productId], references: [organizationId, id], onDelete: Restrict, map: "deal_items_product_same_org_fk")
+
+  @@unique([organizationId, id], name: "deal_item_tenant_key")
+  @@unique([organizationId, dealId, position])
+  @@index([organizationId, dealId])
+  @@index([organizationId, productId])
+  @@map("deal_items")
 }

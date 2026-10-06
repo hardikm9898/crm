@@ -1,3 +1,5 @@
+import { formatMoney } from './lead-format';
+
 /**
  * The timeline renderer registry (`FR-TL-1`, ADR-0009, docs/frontend-architecture.md §5.2).
  *
@@ -48,6 +50,17 @@ const text = (payload: ActivityPayload, key: string): string | null => {
 const number = (payload: ActivityPayload, key: string): number | null => {
   const value = payload[key];
   return typeof value === 'number' ? value : null;
+};
+/**
+ * A money amount from a payload, formatted.
+ *
+ * Minor units cross the wire, so a timeline that printed the raw number would say a deal was won
+ * for "6320000" — which is the paise, and is the figure nobody means.
+ */
+const money = (payload: ActivityPayload, key: string, currencyKey: string): string | null => {
+  const minor = number(payload, key);
+  if (minor === null) return null;
+  return formatMoney(minor, text(payload, currencyKey) ?? 'INR');
 };
 
 /**
@@ -178,6 +191,58 @@ const DESCRIBERS: Readonly<Record<string, Describer>> = {
           : 'Account details changed.',
     };
   },
+  // Deals (`FR-DEAL-1`). The value and the note are in the payload and were never shown: a timeline
+  // that says only "Deal won" is one a business owner has to ask about.
+  'deal.created': (payload) => ({
+    label: 'Deal',
+    description: `Opened${text(payload, 'name') ? ` — ${text(payload, 'name')}` : ''}${
+      money(payload, 'valueMinor', 'currency')
+        ? ` at ${money(payload, 'valueMinor', 'currency')}`
+        : ''
+    }.`,
+  }),
+  'deal.updated': (payload) => {
+    const fields = payload['fields'];
+    const list = Array.isArray(fields) ? fields.filter((entry) => typeof entry === 'string') : [];
+    return {
+      label: 'Deal',
+      description:
+        list.length > 0
+          ? `Changed ${list.map((entry) => humanise(String(entry))).join(', ')}.`
+          : money(payload, 'valueMinor', 'currency')
+            ? `Line items changed; now ${money(payload, 'valueMinor', 'currency')}.`
+            : 'Deal updated.',
+    };
+  },
+  'deal.stage_changed': (payload) => ({
+    label: 'Deal',
+    description: `Moved to ${text(payload, 'toStageName') ?? 'another stage'}${
+      number(payload, 'probability') === null ? '' : ` (${number(payload, 'probability')}%)`
+    }.`,
+  }),
+  'deal.won': (payload) => ({
+    label: 'Won',
+    description: `${money(payload, 'valueMinor', 'currency') ?? 'The deal'} won${
+      text(payload, 'note') ? ` — ${text(payload, 'note')}` : ''
+    }.`,
+    tone: 'success',
+  }),
+  'deal.lost': (payload) => ({
+    label: 'Lost',
+    description: `${money(payload, 'valueMinor', 'currency') ?? 'The deal'} lost${
+      text(payload, 'note') ? ` — ${text(payload, 'note')}` : ''
+    }.`,
+    tone: 'danger',
+  }),
+  'deal.reopened': () => ({
+    label: 'Deal',
+    description: 'Reopened. The earlier outcome stays above — it happened.',
+  }),
+  'deal.deleted': () => ({
+    label: 'Deal',
+    description: 'Deleted. Restorable from the recycle bin.',
+    tone: 'danger',
+  }),
   'customer.deleted': () => ({
     label: 'Deleted',
     description: 'Moved to the recycle bin. Nothing about the history is gone.',

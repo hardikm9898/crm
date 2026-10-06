@@ -358,6 +358,50 @@ POST /exports                       GET /exports/{id}
 >   parameter to `false` — which is right for `deleted` and wrong for any three-way filter, where
 >   absent means "both".
 
+> **Amendment, 2026-10-06 (implementation).** Deals, line items and the product catalogue:
+>
+> ```
+> GET   /deals                 ?search= ?leadId= ?customerId= ?ownerUserId= ?pipelineId=
+>                              ?stageId= ?outcome=open|won|lost|any ?closingBefore= ?deleted=
+>                              ?limit= ?cursor= ?sort=created_at|updated_at|value|expected_close_date
+>                              → meta.totalValueMinor is the WHOLE filter's value, not the page's
+> GET   /deals/board           ?pipelineId= ?limit=  (per column; each column carries its own
+>                              count, valueMinor and weightedMinor over the whole column)
+> POST  /deals                 a lead, a customer, or both; items optional
+> GET   /deals/{id}            with its items, its stage, its party and its custom-field definitions
+> GET   /deals/{id}/timeline   ?limit= ?cursor=
+> PATCH /deals/{id}            refuses valueMinor when the deal has items
+> PUT   /deals/{id}/items      replaces the whole set and recomputes the header in one transaction
+> POST  /deals/{id}/stage      { stageId, pipelineId? }
+> POST  /deals/{id}/win        { wonAt?, note? }
+> POST  /deals/{id}/lose       { lostReasonId?, lostAt?, note? }
+> POST  /deals/{id}/reopen
+> DELETE /deals/{id}           soft, reversible
+> POST  /deals/{id}/restore
+>
+> GET    /products             ?search= ?category= ?active= ?limit= ?cursor=
+> POST   /products             settings:manage — a price list is configuration
+> GET    /products/{id}
+> PATCH  /products/{id}        settings:manage
+> DELETE /products/{id}        settings:manage; refused once the product has been sold
+>
+> GET    /crm-config/pipelines ?entityType=deal   (the same resource, a second entity type)
+> ```
+>
+> Three conventions this step establishes:
+>
+> - **Money crosses the wire as integer minor units, and only as minor units.** `valueMinor`,
+>   `unitPriceMinor`, `discountMinor`, `taxMinor`, `priceMinor`. The only place a rupee becomes paise
+>   is the screen a person types into; a JSON number of rupees would reintroduce the floating-point
+>   problem that [ADR-0018](./decisions/ADR-0018-money-arithmetic-in-one-place.md) exists to remove.
+>   `quantity` is the one fractional field, three decimal places.
+> - **A per-line validation failure is reported at its line.** `items.2.quantity`, not one sentence
+>   about "a line item" — a twelve-line quotation has to say which line is wrong.
+> - **A list whose rows carry money reports the set's total in `meta`.** The envelope merges a
+>   handler's `meta` (it discards any other sibling of `items`), which is what makes a figure about
+>   the whole filter expressible at all. A screen that sums the page it was given misreports the
+>   pipeline by whatever fraction the page is.
+
 ### Automation, websites, analytics, marketing
 
 ```

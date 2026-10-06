@@ -34,7 +34,7 @@ export interface TimelinePageItem {
   readonly actor: { type: string; id: string | null; name: string };
   readonly payload: unknown;
   /** Which subject the row names, so a customer's screen can mark the handover from the lead. */
-  readonly stage: 'lead' | 'customer';
+  readonly stage: 'lead' | 'customer' | 'deal';
 }
 
 @Injectable()
@@ -83,7 +83,9 @@ export class TimelineReadService {
             (row.actorType === 'user' ? 'Removed user' : row.actorType),
         },
         payload: row.payload,
-        stage: row.customerId ? 'customer' : 'lead',
+        // Most specific subject first: a row written against a deal names the deal, even though its
+        // payload also carries the lead or customer it is about.
+        stage: row.dealId ? 'deal' : row.customerId ? 'customer' : 'lead',
       })),
       pagination: {
         limit: query.limit,

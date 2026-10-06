@@ -246,6 +246,31 @@ change, or typecheck will fail confusingly.
   export row ceiling is 100 000 and the CSV is appended a page at a time (`csvRow`) rather than built
   from a 2D array of every cell. Streaming an object into storage is a port change that belongs with
   the S3 driver — not a limit to raise by editing the constant.
+- **A service method may not share its name with an injected dependency.** `async timeline()` beside
+  `private readonly timeline: TimelineService` type-checks, and then the method shadows the property
+  on `this` — every `this.timeline.record(...)` inside the class calls the method. The symptom is a
+  DI-shaped error on a class whose dependencies are fine. Customers and deals both expose
+  `GET :id/timeline` and both name the service method `journey()`.
+- **A `catch` that renders an empty state hides a 400 forever.** `loadProducts` sent
+  `?active=` (an empty string the enum refuses) and its catch turned the 400 into "No products
+  yet" — a permanent, silent, workspace-wide lie, on a screen whose entire job is to list products.
+  A loader whose failure is indistinguishable from an empty result needs a throwing twin
+  (`loadProductsOrThrow`) on any screen where "none" is itself information.
+- **An activity type with no describer renders nothing.** The timeline registry falls back to the raw
+  type, so `deal.won` appeared as a bare row and the amount and the note in its payload — the two
+  things a business owner opened the page for — never reached the screen. Adding an activity type is
+  two edits (the constant and the describer); the first one alone passes every test.
+- **UUIDv7 ids minted in the same millisecond share their prefix.** A test fixture naming itself
+  `` `Pipeline ${id.slice(0, 4)}` `` collided on a unique index the moment two were created in one
+  tick. Use the tail (`id.slice(-8)`), which is the random half.
+- **The spurious-DROP count grows with every hand-written object.** The deals migration arrived with
+  **ten** `DROP`s at the top — every composite FK, partial index, trigger and GIN index the previous
+  migrations added by hand. Read the generated SQL, delete the drops, and leave the note saying why;
+  `packages/db/src/schema-objects.int-spec.ts` is the only thing that catches the ones you miss.
+- **A board or a filtered list must total the set, not the page.** A pipeline board that sums the
+  twenty cards it loaded tells a business owner their pipeline is worth a fifth of what it is. Each
+  column's `count`/`valueMinor`/`weightedMinor` is a separate aggregate over the whole column, and a
+  deal list returns `meta.totalValueMinor` for the whole filter.
 
 ## Reporting work
 

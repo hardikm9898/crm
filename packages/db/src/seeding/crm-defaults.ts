@@ -119,6 +119,57 @@ export interface CrmDefaultsResult {
  * concern seeded after the first release needs its own absence check, or `pnpm db:seed` silently
  * stops being a way to top up.
  */
+/**
+ * The deal pipeline a workspace starts with (`FR-DEAL-1`).
+ *
+ * Separate from `seedCrmDefaults` and independently idempotent, for the reason step 4 found the hard
+ * way: a seeder that only runs for a brand-new organization never reaches the workspaces that
+ * already exist, and the configuration written in a later step silently never arrives.
+ *
+ * Deliberately shorter than the lead pipeline. A lead pipeline tracks interest; a deal pipeline
+ * tracks a negotiation, and a business that wants more stages adds them — these are rows.
+ */
+const DEAL_STAGE_SEEDS = [
+  { name: 'Qualified', probability: 20, colour: '#64748b' },
+  { name: 'Proposal sent', probability: 40, colour: '#3b82f6' },
+  { name: 'Negotiating', probability: 65, colour: '#f59e0b' },
+  { name: 'Verbal agreement', probability: 85, colour: '#8b5cf6' },
+  { name: 'Won', probability: 100, colour: '#16a34a', isWon: true },
+  { name: 'Lost', probability: 0, colour: '#dc2626', isLost: true },
+] as const;
+
+export async function seedDealPipeline(
+  tx: DbTransactionClient,
+  organizationId: string,
+): Promise<string | null> {
+  const existing = await tx.pipeline.findFirst({
+    where: { organizationId, entityType: 'deal' },
+    select: { id: true },
+  });
+  if (existing) return null;
+
+  const pipelineId = newId();
+  await tx.pipeline.create({
+    data: { id: pipelineId, organizationId, name: 'Deals', entityType: 'deal', isDefault: true },
+  });
+  for (const [index, seed] of DEAL_STAGE_SEEDS.entries()) {
+    await tx.pipelineStage.create({
+      data: {
+        id: newId(),
+        organizationId,
+        pipelineId,
+        name: seed.name,
+        colour: seed.colour,
+        sortOrder: index,
+        probability: seed.probability,
+        isWon: 'isWon' in seed ? seed.isWon : false,
+        isLost: 'isLost' in seed ? seed.isLost : false,
+      },
+    });
+  }
+  return pipelineId;
+}
+
 export async function seedDefaultTags(
   tx: DbTransactionClient,
   organizationId: string,

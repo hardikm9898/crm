@@ -86,6 +86,14 @@ const REQUIRED_INDEXES = [
   'customers_full_name_trgm',
   'customers_email_trgm',
   'customers_live_created_at',
+  // Deals, products and line items (`FR-DEAL-1`).
+  'products_sku_key',
+  'deals_open_close_date',
+  'deals_won',
+  'deals_live_created_at',
+  'deals_search_vector_gin',
+  'deals_custom_values_gin',
+  'deals_name_trgm',
 ];
 
 /**
@@ -180,6 +188,44 @@ const REQUIRED_CONSTRAINTS = [
   'customers_team_same_org_fk',
   'customers_owner_same_org_fk',
   'customers_merged_into_same_org_fk',
+  // Deals. The three-column FK is the one that makes "a deal in another pipeline's stage"
+  // unrepresentable — the same guarantee `leads_stage_in_pipeline_fk` gives, and the same one
+  // Prisma has proposed dropping in every migration since it was written.
+  'deals_stage_in_pipeline_fk',
+  'deals_has_subject',
+  'deals_name_present',
+  'deals_currency_format',
+  'deals_probability_range',
+  'deals_money_non_negative',
+  // The header total must equal its own parts. A deal whose value disagrees with its line items is
+  // a quotation nobody can defend.
+  'deals_totals_add_up',
+  'deals_discount_within_gross',
+  'deals_not_won_and_lost',
+  'deals_lost_reason_needs_loss',
+  'deals_lost_note_needs_loss',
+  'deals_lead_same_org_fk',
+  'deals_customer_same_org_fk',
+  'deals_owner_same_org_fk',
+  'deals_pipeline_same_org_fk',
+  'deals_stage_same_org_fk',
+  'deals_lost_reason_same_org_fk',
+  'deal_items_name_present',
+  'deal_items_position_positive',
+  'deal_items_quantity_positive',
+  'deal_items_tax_percent_range',
+  'deal_items_money_non_negative',
+  // The line's own arithmetic, enforced rather than trusted: `lineTotals()` in `@leados/shared` is
+  // the one implementation, and these catch a second one appearing.
+  'deal_items_net_is_gross_less_discount',
+  'deal_items_total_is_net_plus_tax',
+  'deal_items_discount_within_gross',
+  'deal_items_deal_same_org_fk',
+  'deal_items_product_same_org_fk',
+  'products_name_present',
+  'products_price_non_negative',
+  'products_tax_percent_range',
+  'products_currency_format',
 ];
 
 describe('hand-written indexes survive every generated migration', () => {
@@ -240,6 +286,14 @@ describe('the objects Prisma cannot describe at all', () => {
       WHERE tgrelid = 'customers'::regclass
         AND tgname = 'customers_search_vector_trg'
         AND NOT tgisinternal
+    `;
+    expect(Number(rows[0]?.count ?? 0)).toBe(1);
+  });
+
+  it('keeps the deals search-vector trigger too', async () => {
+    const rows = await h.unscoped.$queryRaw<{ count: bigint }[]>`
+      SELECT count(*) AS count FROM pg_trigger
+      WHERE tgrelid = 'deals'::regclass AND tgname = 'deals_search_vector_trg' AND NOT tgisinternal
     `;
     expect(Number(rows[0]?.count ?? 0)).toBe(1);
   });

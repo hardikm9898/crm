@@ -42,6 +42,15 @@ export interface TimelineEntry {
    * one way to lose a touchpoint, which is exactly what the requirement forbids.
    */
   readonly customerId?: string | null;
+  /**
+   * The deal this entry belongs to.
+   *
+   * A deal's own history (every stage move) lives here; the entries a business owner needs — opened,
+   * won, lost — are *also* written against the lead or the customer, because that is the screen they
+   * open. Three rows for one event, each naming the subject it is being read from, rather than one
+   * row that every reader has to join its way to.
+   */
+  readonly dealId?: string | null;
   /** When it happened. Required — see the class comment. */
   readonly occurredAt: Date;
   readonly payload?: Record<string, unknown>;
@@ -114,6 +123,7 @@ export class TimelineService {
     organizationId: string;
     leadId: string | null;
     customerId: string | null;
+    dealId: string | null;
     type: string;
     actorType: ActorType;
     actorId: string | null;
@@ -129,6 +139,7 @@ export class TimelineService {
       organizationId,
       leadId: entry.leadId ?? null,
       customerId: entry.customerId ?? null,
+      dealId: entry.dealId ?? null,
       type: entry.type,
       actorType: entry.actorType ?? principal?.actorType ?? 'system',
       actorId: entry.actorId ?? principal?.actorId ?? null,

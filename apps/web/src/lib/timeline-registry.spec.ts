@@ -159,3 +159,48 @@ describe('humanising a field name a developer wrote', () => {
     expect(humanise('City')).toBe('City');
   });
 });
+
+describe('a deal on the timeline', () => {
+  const entry = (type: string, payload: Record<string, unknown>) =>
+    describeEntry({
+      id: '1',
+      type,
+      module: type.split('.')[0]!,
+      known: true,
+      occurredAt: '2026-10-06T10:00:00.000Z',
+      visibility: 'all',
+      actor: { type: 'user', id: null, name: 'Anita' },
+      payload,
+    });
+
+  it('shows the money, not the paise', () => {
+    // Minor units cross the wire. A timeline that printed the raw number would say a deal was won
+    // for "6320000", which is the figure nobody means.
+    expect(entry('deal.won', { valueMinor: 6_320_000, currency: 'INR' }).description).toContain(
+      '63,200',
+    );
+  });
+
+  it('shows the note somebody took the trouble to write', () => {
+    expect(
+      entry('deal.won', { valueMinor: 100_000, currency: 'INR', note: 'Booking confirmed' })
+        .description,
+    ).toContain('Booking confirmed');
+  });
+
+  it('names the stage a deal moved to, and its probability', () => {
+    const described = entry('deal.stage_changed', { toStageName: 'Negotiating', probability: 65 });
+    expect(described.description).toContain('Negotiating');
+    expect(described.description).toContain('65%');
+  });
+
+  it('tones a win and a loss differently', () => {
+    expect(entry('deal.won', {}).tone).toBe('success');
+    expect(entry('deal.lost', {}).tone).toBe('danger');
+  });
+
+  it('still reads when the payload is empty', () => {
+    expect(entry('deal.created', {}).description).toBe('Opened.');
+    expect(entry('deal.won', {}).description).toBe('The deal won.');
+  });
+});

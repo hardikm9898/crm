@@ -479,16 +479,18 @@ export class CrmConfigService {
 
   // ── Pipelines and stages ──────────────────────────────────────────────────
 
-  async listPipelines(includeInactive = false) {
+  async listPipelines(includeInactive = false, entityType: 'lead' | 'deal' = 'lead') {
     const pipelines = await this.db.client.pipeline.findMany({
       where: {
         deletedAt: null,
-        entityType: 'lead',
+        entityType,
         ...(includeInactive ? {} : { isActive: true }),
       },
       include: {
         stages: { where: { deletedAt: null }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] },
-        _count: { select: { leads: true } },
+        // Both counts, because the same presenter serves both entity types and a deal pipeline
+        // reporting a lead count of zero would read as "nothing is using this".
+        _count: { select: { leads: true, deals: true } },
       },
       orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
     });
@@ -497,6 +499,9 @@ export class CrmConfigService {
       name: pipeline.name,
       isDefault: pipeline.isDefault,
       isActive: pipeline.isActive,
+      entityType: pipeline.entityType,
+      /** Whichever is meaningful for this pipeline's entity; the other is zero by construction. */
+      usageCount: pipeline.entityType === 'deal' ? pipeline._count.deals : pipeline._count.leads,
       leadCount: pipeline._count.leads,
       stages: pipeline.stages.map((stage) => ({
         id: stage.id,

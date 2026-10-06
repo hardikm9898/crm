@@ -414,6 +414,18 @@ export default async function LeadDetailPage({
               </Card>
             ))}
 
+          {can(user, 'deal:manage') && !lead.deletedAt && (
+            <Card title="Money on the table">
+              <Link href={`/deals/new?leadId=${lead.id}`}>
+                <Button variant="secondary">New deal</Button>
+              </Link>
+              <p className="mt-2 text-xs text-[var(--color-text-muted)]">
+                One lead can have several deals — and a deal that closed last year does not stop
+                this one being open.
+              </p>
+            </Card>
+          )}
+
           {mayUpdate && (
             <Card title="Move this lead">
               <div className="flex flex-col gap-4">

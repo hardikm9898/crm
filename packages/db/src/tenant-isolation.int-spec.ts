@@ -1058,6 +1058,166 @@ describe('layer 2 — the CRM models are scoped like every other tenant table', 
   });
 });
 
+describe('layer 3 — a deal cannot be stitched to another tenant (FR-DEAL-1)', () => {
+  async function dealPipeline(organizationId: string) {
+    const pipelineId = newId();
+    const stageId = newId();
+    await h.unscoped.pipeline.create({
+      // Named from the *end* of the id: `newId()` is a UUIDv7, so ids minted in the same
+      // millisecond share their leading characters and a prefix-based name collides with
+      // `pipelines_organization_id_entity_type_name_key`.
+      data: {
+        id: pipelineId,
+        organizationId,
+        name: `Deals ${pipelineId.slice(-8)}`,
+        entityType: 'deal',
+      },
+    });
+    await h.unscoped.pipelineStage.create({
+      data: { id: stageId, organizationId, pipelineId, name: 'Proposal', probability: 40 },
+    });
+    return { pipelineId, stageId };
+  }
+
+  it('blocks a deal on another tenant’s lead, customer, owner or stage', async () => {
+    const a = await dealPipeline(h.orgA.organizationId);
+    const b = await dealPipeline(h.orgB.organizationId);
+
+    const base = {
+      organizationId: h.orgA.organizationId,
+      name: 'Cross tenant deal',
+      currency: 'INR',
+      pipelineId: a.pipelineId,
+      stageId: a.stageId,
+    };
+
+    await expect(
+      h.unscoped.deal.create({ data: { ...base, id: newId(), leadId: h.orgB.leadId } }),
+    ).rejects.toThrow(/deals_lead_same_org_fk|foreign key/i);
+
+    await expect(
+      h.unscoped.deal.create({
+        data: { ...base, id: newId(), leadId: h.orgA.leadId, ownerUserId: h.orgB.userId },
+      }),
+    ).rejects.toThrow(/deals_owner_same_org_fk|foreign key/i);
+
+    await expect(
+      h.unscoped.deal.create({
+        data: { ...base, id: newId(), leadId: h.orgA.leadId, stageId: b.stageId },
+      }),
+    ).rejects.toThrow(/deals_stage|foreign key/i);
+  });
+
+  it('makes “a deal in another pipeline’s stage” unrepresentable, within one tenant', async () => {
+    // The two-column FK cannot catch this: both the pipeline and the stage belong to org A. Only the
+    // three-column `deals_stage_in_pipeline_fk` knows the stage is not *that* pipeline's — and no
+    // application check can promise it, because it would have to be remembered on every write path.
+    const first = await dealPipeline(h.orgA.organizationId);
+    const second = await dealPipeline(h.orgA.organizationId);
+
+    await expect(
+      h.unscoped.deal.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          name: 'Stage from the other pipeline',
+          currency: 'INR',
+          leadId: h.orgA.leadId,
+          pipelineId: first.pipelineId,
+          stageId: second.stageId,
+        },
+      }),
+    ).rejects.toThrow(/deals_stage_in_pipeline_fk|foreign key/i);
+  });
+
+  it('blocks a line item on another tenant’s deal or product', async () => {
+    const a = await dealPipeline(h.orgA.organizationId);
+    const dealId = newId();
+    await h.unscoped.deal.create({
+      data: {
+        id: dealId,
+        organizationId: h.orgA.organizationId,
+        name: 'Deal with lines',
+        currency: 'INR',
+        leadId: h.orgA.leadId,
+        pipelineId: a.pipelineId,
+        stageId: a.stageId,
+      },
+    });
+    const productId = newId();
+    await h.unscoped.product.create({
+      data: { id: productId, organizationId: h.orgA.organizationId, name: 'A product' },
+    });
+
+    const line = {
+      position: 1,
+      name: 'One hour',
+      quantity: 1,
+      unitPriceMinor: 1_000,
+      grossMinor: 1_000,
+      netMinor: 1_000,
+      taxMinor: 0,
+      totalMinor: 1_000,
+    };
+
+    await expect(
+      h.unscoped.dealItem.create({
+        data: { ...line, id: newId(), organizationId: h.orgB.organizationId, dealId },
+      }),
+    ).rejects.toThrow(/deal_items_deal_same_org_fk|foreign key/i);
+
+    await expect(
+      h.unscoped.dealItem.create({
+        data: {
+          ...line,
+          id: newId(),
+          organizationId: h.orgB.organizationId,
+          dealId,
+          productId,
+        },
+      }),
+    ).rejects.toThrow(/deal_items_(deal|product)_same_org_fk|foreign key/i);
+  });
+
+  it('shows each tenant only its own deals and products', async () => {
+    const a = await dealPipeline(h.orgA.organizationId);
+    const b = await dealPipeline(h.orgB.organizationId);
+    const ids = [newId(), newId()];
+    await h.unscoped.deal.create({
+      data: {
+        id: ids[0]!,
+        organizationId: h.orgA.organizationId,
+        name: 'A deal',
+        currency: 'INR',
+        leadId: h.orgA.leadId,
+        pipelineId: a.pipelineId,
+        stageId: a.stageId,
+      },
+    });
+    await h.unscoped.deal.create({
+      data: {
+        id: ids[1]!,
+        organizationId: h.orgB.organizationId,
+        name: 'B deal',
+        currency: 'INR',
+        leadId: h.orgB.leadId,
+        pipelineId: b.pipelineId,
+        stageId: b.stageId,
+      },
+    });
+
+    const seenByA = await tenantContext.run(h.orgA.principal, async () =>
+      h.db.deal.findMany({ where: { id: { in: ids } } }),
+    );
+    expect(seenByA.map((deal) => deal.id)).toEqual([ids[0]]);
+    expect(
+      await tenantContext.run(h.orgA.principal, async () =>
+        h.db.deal.findUnique({ where: { id: ids[1]! } }),
+      ),
+    ).toBeNull();
+  });
+});
+
 describe('layer 3 — a customer cannot be stitched to another tenant (FR-DEAL-4)', () => {
   it('blocks a customer converted from another tenant’s lead', async () => {
     await expect(

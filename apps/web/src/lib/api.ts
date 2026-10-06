@@ -38,7 +38,8 @@ export interface Envelope<T> {
   success: boolean;
   data: T;
   message?: string;
-  meta?: { requestId?: string; pagination?: Pagination };
+  /** `requestId` and `pagination`, plus whatever the handler merged in. */
+  meta?: { requestId?: string; pagination?: Pagination } & Record<string, unknown>;
   error?: ApiErrorShape;
 }
 
@@ -53,6 +54,14 @@ export interface Page<T> {
   items: T[];
   pagination?: Pagination;
   message?: string;
+  /**
+   * Whatever the handler returned alongside its rows, which the envelope merges into `meta`.
+   *
+   * The envelope drops a paginated payload's sibling keys unless the handler puts them here, so a
+   * screen that needs a set-wide total (a deal list's value, a search's view name) reads it from
+   * this rather than from the rows it happens to have been given.
+   */
+  meta?: Record<string, unknown>;
 }
 
 export function apiBaseUrl(): string {
@@ -110,6 +119,7 @@ export async function request<T>(
     data: envelope.data,
     items: Array.isArray(envelope.data) ? (envelope.data as T[]) : [],
     ...(envelope.meta?.pagination ? { pagination: envelope.meta.pagination } : {}),
+    ...(envelope.meta ? { meta: envelope.meta as Record<string, unknown> } : {}),
     ...(envelope.message ? { message: envelope.message } : {}),
   };
 }
