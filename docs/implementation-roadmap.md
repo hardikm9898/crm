@@ -848,6 +848,81 @@ customer, one join away. **Conversion does not recompute a customer's rollups** 
 derived and are recomputed on write, so a pre-conversion deposit lands in the lifetime value at the
 next payment write; making conversion recompute would mean two modules owning the same four columns.
 
+### Step 10 — industry templates and the onboarding wizard ✅ _(landed 2026-10-06)_
+
+`FR-ONB-1`, `FR-ONB-2` and `FR-ONB-3`: the ten industry templates, a resumable wizard that includes
+choosing one, and a finish state with three things to do.
+
+- **A new workspace is provisioned industry-neutral, and a template replaces that.** The Phase 0
+  sketch said a workspace is seeded "from the chosen industry template"; it cannot be, because the
+  industry is chosen in the wizard and the product has to work on first login — a lead needs a
+  default status to go into. So provisioning seeds the generic set and
+  `POST /organization/industry-template` **replaces** the statuses, lead pipeline stages, sources,
+  lost reasons, tags and custom fields with the industry's. Merging would leave twelve statuses, two
+  of which mean the same thing and none of which anybody chose; an industry "mode" the product reads
+  would break rule 4 and turn ten rows of content into ten code paths. The reasoning and the five
+  alternatives rejected are
+  [ADR-0021](./decisions/ADR-0021-industry-templates-replace.md).
+- **The refusal is the safety property, not a limitation.** Applying a template is refused once the
+  workspace holds a lead, a customer, a deal or a quotation, and the refusal names what it found
+  ("This workspace already has 1 lead… add what you need in Settings instead"). `leads.status_id` is
+  `Restrict`, so deleting a status a lead sits in would fail at the database anyway — refusing up
+  front is the honest version of the same guarantee, and that window is exactly onboarding.
+- **Two sources survive the replacement.** `Manual entry` and `API` are not a tenant's marketing
+  channels — the capture paths look them up by name — and a template that deleted them would break
+  lead creation immediately after onboarding.
+- **The ten are content, and the tests treat them as content.** Thirteen unit assertions hold what
+  must be true for any workspace to function: exactly one default status, one won stage at 100 % and
+  one lost stage at 0 %, open stages in increasing probability order, no repeated name in any list,
+  options on every select and none on anything else, snake_case field keys, six-digit colours, and
+  every saved view filtering on a status the template actually installs. Then an e2e test applies
+  **all ten** and creates a lead in each, which is where a typo in any of them would surface.
+- **Nothing in the product branches on the chosen template.** `industry` and
+  `industry_template_key` are recorded so a screen can say what was installed and a support
+  conversation can start from "you chose Real estate"; every row a template writes is an ordinary
+  editable row. That is rule 4, and it is what makes a template allowed to be wrong about an
+  industry — the business renames two statuses and carries on.
+- **The catalogue is a code constant _and_ a reference table.** `INDUSTRY_TEMPLATES` in
+  `@leados/shared` is the definition, read by the seeder, the picker and the tests;
+  `industry_templates` exists so an organization can reference what it applied and so the Super
+  Admin console has a table to manage without a deploy (`FR-SA`). The API reads the constant, not the
+  row's JSON, so there is one place the ten are defined.
+- **The wizard gained the industry step, and a finish state worth reaching.** Seven steps now, still
+  resumable from the organization's own onboarding state; the picker shows how many statuses, stages
+  and sources each industry installs and names the questions it adds, and warns that it replaces
+  **before** the click. Finishing shows "Your CRM is ready" with three links to screens that exist —
+  add a lead, import the list you already have, invite the people who will use it — because a
+  congratulations screen with nothing to click is where a trial goes to die (`FR-ONB-3`).
+
+**1 316 tests green** (595 unit, 721 integration) — up from 1 276 — including the 13 catalogue
+assertions, a 17-case template suite over real HTTP, 8 new database guarantees, and a new guard that
+asserts every activity type a Phase 2 module writes has a timeline describer (with the eleven that
+nothing writes yet listed explicitly, each against the phase that will). Then **194 browser checks**
+against the built app (26 new, 168 existing and still green): the picker offering all ten, the
+warning before the click, the statuses and the lead's questions actually changing, a lead created in
+the templated workspace landing in the industry's first status, the refusal once that lead exists,
+and the finish state's three links all loading.
+
+**Three defects found by running it, not by testing it:**
+
+1. **The catalogue endpoint answered `data: { items: [...] }`.** The envelope interceptor lifts
+   `items` only when `pagination` is present, so a list returning `{ items }` alone is passed
+   through as the whole `data` object — green in a test that checks the status code, broken in every
+   client.
+2. **A test hard-coded the length of the wizard.** `['done','done','current','todo']` against a
+   four-step list failed the moment the list grew to seven, with nothing about the function having
+   changed. Rewritten against `ONBOARDING_STEPS.length`.
+3. **`prisma migrate dev` refused to run at all**, because an earlier migration had been edited
+   after being applied (the payments constraint fix) and its stored checksum no longer matched. The
+   repair is to re-record the checksum in every database that has the row — not to reset one.
+
+**Deferred, and why:** **task types, starter automations and WhatsApp template drafts are not
+seeded** by a template, because `task_types`, the automation tables and the WhatsApp template table
+arrive in Phases 3, 6 and 5. The template shape is per concern precisely so that adding `taskTypes`
+to the ten definitions is then a content change rather than a redesign. **Switching industry after
+the workspace has records is refused rather than merged**: the relaxation somebody will eventually
+want is a diff-and-confirm screen, which is a feature rather than a loosened constraint.
+
 **Exit criteria**
 
 - Creating a custom field of every supported type requires **no migration and no deploy**, and that
@@ -860,6 +935,45 @@ next payment write; making conversion recompute would mean two modules owning th
 - Timeline shows every Phase 2 event type; a lead's full journey is readable in one screen.
 - Import of 10 000 rows applies duplicate rules, reports per-row errors, and produces a failed-rows file.
 - Tenancy + permission tests extended to every new route.
+
+> **Exit criteria reviewed, 2026-10-06, after step 10.** Phase 2's scope is built. Six of the eight
+> criteria are met; two are met only in part, and saying which is the point of reviewing them.
+>
+> 1. **A custom field of every supported type needs no migration and no deploy, and is immediately
+>    filterable, importable, exportable and usable in a view — _met at the API, not on the web_.**
+>    The registry, the filter catalogue, the import mapper, the export columns and saved views all
+>    work against any field a tenant defines, and the industry templates create fields of seven
+>    types without a migration. **There is no settings screen for fields**: they are created through
+>    the API or by applying a template, and the lead screen shows them read-only. That is the one
+>    piece of Phase 2's UI that is missing, and it is named here rather than ticked.
+> 2. **Duplicate rules verified — met.** `duplicates-assignment.e2e-spec.ts` asserts the exact
+>    sentence: the same phone arriving from three channels produces one lead, three touchpoints in
+>    order with the first intact, and three timeline entries.
+> 3. **Merge unions timelines, tasks, conversations and touchpoints, is reversible and audited —
+>    met**, with the caveat the requirement itself implies: there are no tasks or conversations yet
+>    (Phases 3 and 5), so what is unioned today is timelines and touchpoints, and the unmerge path is
+>    tested.
+> 4. **Assignment: round-robin fairness, capacity cap, outside-working-hours fallback,
+>    unassigned-pool notification, and a rule tester that explains its choice — met.**
+> 5. **Kanban loads one page per column — met. The 100 k-lead latency budget — _not verified at
+>    100 k_.** Both boards return one page per column with per-column aggregates, and the index work
+>    in step 4 (`leads_duplicate_of`, `leads_merged_into`) came out of a large fixture where deletion
+>    had gone quadratic. The largest workspace exercised since is ~9 700 leads; nothing has been
+>    measured against a budget at 100 000, and no budget is written down. Both of those belong with
+>    the Phase 12 performance work, and this line should not read as a tick until then.
+> 6. **The timeline shows every Phase 2 event type — met, and now guarded.** A unit test asserts that
+>    every activity type in a module Phase 2 writes has a describer, with the eleven that nothing
+>    writes yet (tasks, SLA, mentions, documents, consent) listed explicitly against the phase that
+>    will write them. A type with no describer renders as a bare row, which is how `deal.won` once
+>    reached a screen without its amount.
+> 7. **Import of 10 000 rows applies duplicate rules, reports per-row errors and produces a
+>    failed-rows file — _the behaviour is met, the volume is not_.** Every part works and is tested:
+>    the dry run through the mapper, per-row errors, the failed-rows CSV, resumption from recorded
+>    rows, and the duplicate rules applied per row because the import goes through the domain service
+>    (ADR-0016). The largest file actually imported in a test is in the hundreds of rows.
+> 8. **Tenancy and permission tests extended to every new route — met.** The generated sweep asserts
+>    zero unmapped parameterised routes and drives every one of them as a second tenant; it has grown
+>    with each step and currently covers the deal, quotation, payment and template routes.
 
 ---
 
@@ -1079,15 +1193,19 @@ partially landed, with the specific gaps named.
 ## Immediate next step
 
 _This section names the next step only; what each landed step actually did is in the step entries
-above. Last reviewed 2026-10-06, after Phase 2 step 9._
+above. Last reviewed 2026-10-06, after Phase 2 step 10, which closes Phase 2._
 
-**Phase 2, step 10 — industry templates and the onboarding wizard, which is what closes Phase 2.**
-Everything in the Phase 2 scope above is now built except these two, and they are one piece of work:
-the wizard asks a new workspace what kind of business it is, and a template answers by seeding the
-statuses, sources, pipeline stages, lost reasons, task types, custom fields and saved views that
-business actually uses — real estate, education, healthcare, services — instead of the generic set
-`seedCrmDefaults` installs today. The templates are **rows**, defined once at platform level and
-copied into a workspace, so adding an industry is data rather than a deploy (`CLAUDE.md` rule 4);
-the wizard is resumable from the organization's own onboarding state, which Phase 1 step 5 already
-stores. After it, Phase 2's exit criteria can be reviewed honestly and Phase 3 (tasks, follow-ups,
-SLA and the executive workspace) begins.
+**Phase 3, step 1 — tasks and follow-ups.** `task_types`, `tasks` with an owner, a due time and an
+outcome, reschedule with a mandatory reason from the tenant's own list, and the five timeline types
+that have been sitting in the activity registry with nothing writing them (`task.created`,
+`task.completed`, `task.rescheduled`, `task.cancelled`, `task.overdue`) — the describer-coverage test
+lists them against this phase, so the first thing that writes one has to describe it. Reminders ride
+the notifications queue that already exists; the overdue sweep is another `maintenance.*` schedule
+beside quotation expiry. After tasks come the SLA policy and `/today`, which is the screen a sales
+executive lands on and the first screen in the product that is a **queue** rather than a list.
+
+Two Phase 2 items are deliberately carried forward rather than left unsaid, both named in the exit
+criteria review above: there is no settings screen for custom fields (they are created through the
+API or by a template), and nothing has been measured against a latency budget at 100 000 leads —
+that belongs with the Phase 12 performance work, which is where the budget itself should be written
+down.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ONBOARDING_STEPS, nextStepKey, onboardingProgress } from './onboarding';
+import { NEXT_ACTIONS, ONBOARDING_STEPS, nextStepKey, onboardingProgress } from './onboarding';
 
 describe('onboardingProgress', () => {
   it('marks everything done once the API reports the wizard completed', () => {
@@ -8,8 +8,30 @@ describe('onboardingProgress', () => {
   });
 
   it('splits the list into done, current and to-do around the stored step', () => {
-    const progress = onboardingProgress({ completed: false, step: ONBOARDING_STEPS[2]!.key });
-    expect(progress.map((entry) => entry.status)).toEqual(['done', 'done', 'current', 'todo']);
+    // Written against the list's own length rather than a fixed array of four: the steps are
+    // product content and they grew in step 10, which broke this assertion without anything about
+    // the function having changed.
+    const index = 2;
+    const progress = onboardingProgress({ completed: false, step: ONBOARDING_STEPS[index]!.key });
+    expect(progress).toHaveLength(ONBOARDING_STEPS.length);
+    expect(progress.map((entry) => entry.status)).toEqual([
+      ...Array.from({ length: index }, () => 'done'),
+      'current',
+      ...Array.from({ length: ONBOARDING_STEPS.length - index - 1 }, () => 'todo'),
+    ]);
+  });
+
+  it('offers three concrete next actions once setup is finished (FR-ONB-3)', () => {
+    // "Your CRM is ready" with nothing to click is where a trial goes to die.
+    expect(NEXT_ACTIONS).toHaveLength(3);
+    for (const action of NEXT_ACTIONS) {
+      expect(action.href.startsWith('/')).toBe(true);
+      expect(action.description.length).toBeGreaterThan(20);
+    }
+  });
+
+  it('has a step for choosing an industry, which is what a template needs', () => {
+    expect(ONBOARDING_STEPS.map((step) => step.key)).toContain('industry');
   });
 
   it('starts at the beginning when there is no stored state at all', () => {

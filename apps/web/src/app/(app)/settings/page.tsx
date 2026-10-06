@@ -4,6 +4,8 @@ import { onboardingProgress, type OnboardingState } from '@/lib/onboarding';
 import { Badge, Card, DefinitionRow, ErrorNotice, PageHeader } from '@/components/ui';
 import { OrganizationForm } from './organization-form';
 import { OnboardingWizard } from './onboarding-wizard';
+import { IndustryPicker } from './industry-picker';
+import { loadIndustryTemplates, type IndustryTemplateOption } from '@/lib/industry-templates';
 
 /** Workspace settings: the profile that shapes every other screen, plus the setup wizard. */
 interface OrganizationDetail {
@@ -46,6 +48,16 @@ export default async function SettingsPage() {
 
   const editable = can(user, 'organization:manage');
 
+  /**
+   * `null` means the request failed, which the card reports — as opposed to `[]`, which would mean
+   * the catalogue is genuinely empty. A loader whose failure is indistinguishable from an empty
+   * result is the mistake the product catalogue shipped with.
+   */
+  let templates: IndustryTemplateOption[] | null = null;
+  if (editable) {
+    templates = await loadIndustryTemplates(token).catch(() => null);
+  }
+
   return (
     <>
       <PageHeader
@@ -82,6 +94,22 @@ export default async function SettingsPage() {
                 description="Each step is recorded, so you can leave and come back."
               >
                 <OnboardingWizard state={organization.onboarding} />
+              </Card>
+            )}
+
+            {editable && (
+              <Card
+                title="Your industry"
+                description="A template sets up the words your trade uses. Everything it writes stays editable."
+              >
+                {templates === null ? (
+                  <ErrorNotice>
+                    The industry templates could not be loaded. Nothing here is required — set your
+                    statuses, stages and fields up in Settings instead.
+                  </ErrorNotice>
+                ) : (
+                  <IndustryPicker templates={templates} />
+                )}
               </Card>
             )}
           </div>

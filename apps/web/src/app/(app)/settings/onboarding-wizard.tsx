@@ -1,9 +1,10 @@
 'use client';
 
+import Link from 'next/link';
 import { useActionState } from 'react';
 import { Badge, Button, ErrorNotice } from '@/components/ui';
 import { IDLE } from '@/lib/action-state';
-import { onboardingProgress, type OnboardingState } from '@/lib/onboarding';
+import { NEXT_ACTIONS, onboardingProgress, type OnboardingState } from '@/lib/onboarding';
 import { advanceOnboarding } from './actions';
 
 /**
@@ -51,9 +52,29 @@ export function OnboardingWizard({ state }: { state: OnboardingState | null }) {
       </ol>
 
       {complete ? (
-        <p className="text-sm text-[var(--color-text-muted)]">
-          Setup is finished. The rest of the product arrives with the CRM screens.
-        </p>
+        /*
+         * "Your CRM is ready", with three things to click (`FR-ONB-3`).
+         *
+         * A congratulations screen with nothing on it is where a trial goes to die, so each of
+         * these is a link to a screen that exists and the thing somebody in that position actually
+         * does next. The checklist above stays visible rather than disappearing, because the
+         * adoption nudge is "you have not imported anything yet", not a tick.
+         */
+        <div className="flex flex-col gap-3" data-onboarding-complete>
+          <p className="text-sm font-medium text-[var(--color-success)]">
+            Your CRM is ready. Here is what to do next.
+          </p>
+          <ul className="flex flex-col gap-2">
+            {NEXT_ACTIONS.map((action) => (
+              <li key={action.href}>
+                <Link href={action.href} className="text-sm font-medium underline">
+                  {action.label}
+                </Link>
+                <p className="text-sm text-[var(--color-text-muted)]">{action.description}</p>
+              </li>
+            ))}
+          </ul>
+        </div>
       ) : (
         <form action={submit} className="flex flex-wrap items-center gap-2">
           <input type="hidden" name="step" value={current.step.key} />

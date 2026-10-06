@@ -41,3 +41,48 @@ is the shared leaf; neither side imports the other.
 is genuinely un-paginated still produces a pagination block, because the envelope interceptor only
 lifts `items` when `pagination` is present — without it, one endpoint would answer `{ items: [...] }`
 and the rest an array (docs/api-architecture.md §2).
+
+## Industry templates (`FR-ONB-2`)
+
+`industry-templates.service.ts`, behind two routes on the organization: `GET
+organization/industry-templates` (the picker, `organization:read`) and `POST
+organization/industry-template` (`organization:manage`).
+
+**A template replaces, it does not merge.** It deletes the workspace's statuses, lead pipeline
+stages, sources, lost reasons, tags and custom field definitions and writes the template's. Merging
+would leave twelve statuses, two of which mean the same thing and none of which anybody chose. The
+reasoning and the five alternatives rejected are
+[ADR-0021](../../../../../docs/decisions/ADR-0021-industry-templates-replace.md).
+
+**The refusal is the safety property.** `assertWorkspaceIsUntouched` refuses once there is a lead, a
+customer, a deal or a quotation, naming what it found — because `leads.status_id` is `Restrict`, so
+the delete would fail at the database anyway, and failing halfway through a replacement is not an
+outcome worth having. That window is exactly onboarding, which is when somebody picks an industry.
+
+**Nothing branches on the chosen template.** `industry` and `industry_template_key` are recorded so
+a screen can say what was installed; every row a template writes is an ordinary editable row. That
+is rule 4, and it is why a template is allowed to be wrong about an industry.
+
+### Traps
+
+- **Reading the catalogue needs `withPlatformScope`.** `industry_templates` is platform reference
+  data like `permissions`, so a tenant route reading it says why in the scope's reason string.
+- **The definitions come from the code constant, not from the row's JSON.** The table exists so an
+  organization can reference a template and so the Super Admin console has something to manage; the
+  constant in `@leados/shared` is where the ten are defined, and reading the JSON instead would make
+  the picker depend on something nothing type-checks.
+- **The field registry's cache has to be dropped in the same breath.** A template rewrites every
+  definition, and the registry is cached for five minutes — without `invalidateForOrganization` the
+  lead form keeps asking the previous industry's questions, which looks exactly like the template
+  not having been applied.
+- **`Manual entry` and `API` are not replaced.** The capture paths look them up by name; a template
+  that deleted them would break lead creation immediately after onboarding.
+- **The default status is cleared before the delete.** `lead_statuses_one_default_per_org` is a
+  partial unique index: inserting the template's default while the old one still exists is refused,
+  and clearing on the way out also means a failure leaves no default rather than two.
+- **The pipeline is kept and only its stages replaced.** The deal pipeline must not be touched, and
+  `pipelines_one_default_per_org_entity` would refuse a second default lead pipeline.
+- **The wizard's steps are the frontend's, so the API does not advance them.** Applying a template
+  is one server action that calls two endpoints: the template, then `PATCH organization/onboarding`.
+  It advances the step **only if the template landed** — a step ticked over a failure is how
+  somebody reaches "start working" with the generic vocabulary.

@@ -350,3 +350,48 @@ describe('the payment entries', () => {
     expect(entry('payment.received', {}).description).toBe('A payment received.');
   });
 });
+
+describe('every activity type the product writes has a describer', () => {
+  /**
+   * The types no code emits yet, each with the phase that will.
+   *
+   * This list is the point of the test: a type with no describer renders as a bare row, which is
+   * how `deal.won` once reached a screen without its amount or its note. Keeping the gap written
+   * down means "does the timeline show every event we produce?" has an answer that is checked
+   * rather than remembered — and the day a step starts writing one of these, deleting the line is
+   * part of the work.
+   */
+  const NOT_WRITTEN_YET: Readonly<Record<string, number>> = {
+    'task.created': 3,
+    'task.completed': 3,
+    'task.rescheduled': 3,
+    'task.cancelled': 3,
+    'task.overdue': 3,
+    'mention.created': 3,
+    'document.uploaded': 3,
+    'sla.at_risk': 3,
+    'sla.breached': 3,
+    'consent.granted': 13,
+    'consent.revoked': 13,
+  };
+
+  const PHASE_2_MODULES = ['lead', 'customer', 'deal', 'quotation', 'payment', 'note'];
+
+  it('describes every type in a module Phase 2 writes, except the ones nothing writes yet', () => {
+    const undescribed = Object.values(ACTIVITY_TYPES)
+      .filter((type) => PHASE_2_MODULES.includes(type.split('.')[0] ?? ''))
+      .filter((type) => !hasDescriber(type))
+      .filter((type) => !(type in NOT_WRITTEN_YET));
+    expect(undescribed, 'these render as a bare row, losing whatever is in their payload').toEqual(
+      [],
+    );
+  });
+
+  it('keeps the deferred list honest: nothing on it has a describer', () => {
+    // A type that gained a describer but stayed on this list would make the list a lie, and the
+    // list is the only record of what the timeline cannot yet say.
+    for (const type of Object.keys(NOT_WRITTEN_YET)) {
+      expect(hasDescriber(type), `${type} is described; take it off the deferred list`).toBe(false);
+    }
+  });
+});

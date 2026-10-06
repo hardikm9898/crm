@@ -1668,3 +1668,77 @@ describe('layer 3 — a payment cannot be stitched to another tenant (FR-DEAL-3)
     expect(seenByA.length).toBeGreaterThan(0);
   });
 });
+
+describe('layer 3 — the industry template catalogue is platform data, not a tenant table (FR-ONB-2)', () => {
+  it('is populated by the platform catalogue seeder, with the ten industries', async () => {
+    const rows = await h.unscoped.industryTemplate.findMany({ orderBy: { sortOrder: 'asc' } });
+    expect(rows).toHaveLength(10);
+    expect(rows.map((row) => row.key)).toContain('real_estate');
+    // The row is a reference to a definition, not a second copy of one: the key is what an
+    // organization stores, and the JSON is what the Super Admin console will edit.
+    expect(typeof rows[0]?.definition).toBe('object');
+  });
+
+  it('is readable without a tenant context, which is what makes it platform data', async () => {
+    // Every tenant table throws here. This one must not: the catalogue is the same for everybody,
+    // and a route that reads it does so under `withPlatformScope` with a stated reason.
+    await expect(h.db.industryTemplate.findMany({})).resolves.toBeInstanceOf(Array);
+  });
+
+  it('lets a workspace record which template it applied, and survives that template being retired', async () => {
+    await h.unscoped.organization.update({
+      where: { id: h.orgA.organizationId },
+      data: { industryTemplateKey: 'real_estate' },
+    });
+    const before = await h.unscoped.organization.findUniqueOrThrow({
+      where: { id: h.orgA.organizationId },
+      select: { industryTemplateKey: true },
+    });
+    expect(before.industryTemplateKey).toBe('real_estate');
+
+    // `SetNull`, not `Restrict`: retiring a template must not be blocked by the workspaces that
+    // once used it. The reference is a record of a choice, not a dependency.
+    const retired = await h.unscoped.industryTemplate.create({
+      data: {
+        key: `retired_${newId().slice(-8)}`,
+        name: 'Retired industry',
+        description: 'A template created by a test, long enough to satisfy the description check.',
+        definition: {} as never,
+      },
+    });
+    await h.unscoped.organization.update({
+      where: { id: h.orgA.organizationId },
+      data: { industryTemplateKey: retired.key },
+    });
+    await h.unscoped.industryTemplate.delete({ where: { key: retired.key } });
+    const after = await h.unscoped.organization.findUniqueOrThrow({
+      where: { id: h.orgA.organizationId },
+      select: { industryTemplateKey: true },
+    });
+    expect(after.industryTemplateKey).toBeNull();
+  });
+
+  it('refuses a template with a key or a description a picker could not use', async () => {
+    await expect(
+      h.unscoped.industryTemplate.create({
+        data: {
+          key: 'Not A Key',
+          name: 'Bad key',
+          description: 'A description that is comfortably longer than twenty characters.',
+          definition: {} as never,
+        },
+      }),
+    ).rejects.toThrow(/industry_templates_key_format/i);
+
+    await expect(
+      h.unscoped.industryTemplate.create({
+        data: {
+          key: `short_${newId().slice(-6)}`,
+          name: 'Short description',
+          description: 'Too short',
+          definition: {} as never,
+        },
+      }),
+    ).rejects.toThrow(/industry_templates_description_present/i);
+  });
+});

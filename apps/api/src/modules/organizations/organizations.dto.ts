@@ -67,6 +67,17 @@ export const teamMemberSchema = z
 
 export type UpdateOrganizationInput = z.infer<typeof updateOrganizationSchema>;
 export type UpdateOnboardingInput = z.infer<typeof updateOnboardingSchema>;
+
+/**
+ * Choosing an industry (`FR-ONB-2`).
+ *
+ * The key is validated against the catalogue by the service, not by an enum here: the ten templates
+ * are rows, and a schema that listed them would be the third place they are defined.
+ */
+export const applyIndustryTemplateSchema = z
+  .object({ key: z.string().trim().min(1).max(60) })
+  .strict();
+export type ApplyIndustryTemplateInput = z.infer<typeof applyIndustryTemplateSchema>;
 export type CreateBranchInput = z.infer<typeof createBranchSchema>;
 export type UpdateBranchInput = z.infer<typeof updateBranchSchema>;
 export type CreateTeamInput = z.infer<typeof createTeamSchema>;

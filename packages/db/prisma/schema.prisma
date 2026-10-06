@@ -575,8 +575,18 @@ model Organization {
   quotations     Quotation[]
   quotationItems QuotationItem[]
 
-  paymentMethods PaymentMethod[]
-  payments       Payment[]
+  paymentMethods      PaymentMethod[]
+  payments            Payment[]
+  /// Which industry template this workspace applied, if any (`FR-ONB-2`).
+  ///
+  /// Recorded so the onboarding screen can say what was installed, and so a support conversation
+  /// can start from "you chose Real estate". **Nothing in the product branches on it** — everything
+  /// a template writes is an ordinary editable row, which is what rule 4 requires. `SetNull` rather
+  /// than `Restrict` because retiring a template from the catalogue must not be blocked by the
+  /// workspaces that once used it; this is a simple FK, not one of the composite ones where
+  /// `SetNull` would null a NOT NULL `organization_id`.
+  industryTemplate    IndustryTemplate? @relation(fields: [industryTemplateKey], references: [key], onDelete: SetNull)
+  industryTemplateKey String?           @map("industry_template_key")
 
   @@index([status])
   @@index([createdAt])
@@ -2719,4 +2729,33 @@ model Payment {
   /// `payments_provider_payment_key` (the partial unique index that makes a provider webhook
   /// idempotent) and the CHECK constraints are hand-written in the migration.
   @@map("payments")
+}
+
+/// An industry template, as platform reference data (`FR-ONB-2`).
+///
+/// **Not tenant-scoped.** Like `permissions` and `plans`, this is a catalogue the platform owns and
+/// every workspace reads. The definitions live in `INDUSTRY_TEMPLATES` in `@leados/shared` — one
+/// source of truth, read by the seeder and by the API — and these rows exist for two reasons the
+/// code constant cannot serve: an organization records **which** template it applied
+/// (`organizations.industry_template_key`), and the Super Admin console gets a table to manage
+/// (`FR-SA`) without a deploy.
+///
+/// `definition` is the whole template as JSON. A column per concern would be eleven columns that
+/// change every time the template format gains a field, and nothing joins on any of them.
+model IndustryTemplate {
+  key         String  @id
+  name        String
+  description String
+  sortOrder   Int     @default(0) @map("sort_order")
+  isActive    Boolean @default(true) @map("is_active")
+  /// Statuses, stages, sources, lost reasons, tags, custom fields and saved views.
+  definition  Json    @db.JsonB
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organizations Organization[]
+
+  @@index([isActive, sortOrder])
+  @@map("industry_templates")
 }

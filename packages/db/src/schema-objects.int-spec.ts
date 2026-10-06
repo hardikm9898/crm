@@ -307,6 +307,12 @@ const REQUIRED_CONSTRAINTS = [
   'customers_lifetime_value_non_negative',
   'customers_purchase_dates_pair',
   'customers_purchase_dates_ordered',
+  // Industry templates (`FR-ONB-2`). The description check is not pedantry: a picker whose entries
+  // have no sentence of description is a picker nobody can choose from.
+  'industry_templates_key_format',
+  'industry_templates_name_present',
+  'industry_templates_description_present',
+  'industry_templates_definition_is_object',
 ];
 
 describe('hand-written indexes survive every generated migration', () => {

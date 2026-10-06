@@ -29,6 +29,11 @@ export {
   type CrmDefaultsResult,
   type ScoringDefaultsResult,
 } from './seeding/crm-defaults.js';
+export {
+  applyIndustryTemplate,
+  seedIndustryTemplates,
+  type AppliedTemplate,
+} from './seeding/industry-templates.js';
 
 // Model types and enums, so application modules never import @prisma/client directly.
 export * from '../generated/prisma/models.js';

@@ -344,6 +344,36 @@ prisma migrate deploy` after generating a migration.
   `name="note"` input broke a deal browser check that had been filling `input[name="note"]` for two
   steps — it resolved to two elements and waited forever on the hidden one. Scope a field selector to
   its form (`form:has(button:text("Confirm won")) input[name="note"]`).
+- **A test that hard-codes the length of a product list breaks when the product grows.**
+  `onboarding.spec.ts` asserted `['done','done','current','todo']` against a four-step wizard; step
+  10 added three steps and the assertion failed with nothing about the function having changed.
+  Assert against the list's own length (`ONBOARDING_STEPS.length`) when the list is content.
+- **`prisma migrate dev` refuses to run after a migration file is edited post-apply.** It compares a
+  stored checksum, so fixing a constraint in an already-applied migration (and applying the fix by
+  hand) leaves "the migration was modified after it was applied" and a demand to reset. The repair
+  is to re-record the checksum — `sha256sum` of the file into `_prisma_migrations.checksum`, in every
+  database that has it — not to reset anything.
+- **`prisma format` writes the back-relation for you, without the `@map` or the `onDelete`.**
+  Declaring `organizations Organization[]` on a new platform model made Prisma add
+  `industryTemplateKey String?` to `Organization` with no `@map("industry_template_key")` and no
+  referential action. Read what `format` added before generating the migration.
+- **A service that returns `{ items }` without `pagination` is passed through as the whole `data`.**
+  The envelope interceptor lifts `items` only when `pagination` is present, so the catalogue endpoint
+  answered `data: { items: [...] }` — which a test checking only the status code reports as green and
+  every client reports as broken. Return `{ items, pagination }` from a list, always.
+- **A `<label>`-wrapped controlled radio needs a moment before its button re-renders.** A browser
+  check that `.check()`ed an option and immediately clicked "Set up <industry>" raced React: the
+  button still carried the previous selection's name. Wait for the text the new selection produces.
+- **`Detail` and `StatCard` labels are CSS-uppercased, and `innerText` returns the uppercase.** A
+  check asserting `/Configuration/` against the custom-fields card found nothing while the card
+  rendered perfectly — the second time this exact trap has cost a debugging session. Compare
+  case-insensitively, or read a `data-` attribute.
+- **The web app has no self-serve registration screen.** Sign-up is an API call; the screens begin at
+  sign-in. A browser check that needs a fresh workspace registers over HTTP and then signs in through
+  the form.
+- **A browser check must use `localhost`, not `127.0.0.1`.** Against `127.0.0.1:3000` the login form
+  submitted as a native GET with the password in the query string — the client bundle had not
+  hydrated — and the check failed with a URL that explains itself only if you read it closely.
 
 ## Reporting work
 

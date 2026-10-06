@@ -92,6 +92,7 @@ export const PLATFORM_MODELS = [
   'PlatformSetting',
   'PlatformUser',
   'Permission',
+  'IndustryTemplate',
   'User',
   'Session',
   'PasswordReset',

@@ -843,3 +843,38 @@ field registry makes that match a WhatsApp number carrying the same digits, on e
 seeded `match_on` is one set rather than two); one assignment rule (round-robin over
 the default team); a default SLA policy (first response 60 working minutes); starter automation
 (welcome WhatsApp draft + day-1 call task) left **inactive** until WhatsApp is connected.
+
+> **Amendment, 2026-10-06 (implementation, step 10).** The sentence above says "from the chosen
+> industry template", and that is not when it happens. The reasoning is
+> [ADR-0021](./decisions/ADR-0021-industry-templates-replace.md).
+>
+> - **Provisioning seeds the industry-neutral set**, because a workspace has to work on first login
+>   — a lead needs a default status to go into and a pipeline to go on — and the industry is chosen
+>   in the wizard, which is after signup.
+> - **A template is applied later, and it replaces.** `POST /organization/industry-template` deletes
+>   the statuses, lead pipeline stages, sources, lost reasons, tags and custom field definitions and
+>   writes the template's. Merging would leave twelve statuses, two of which mean the same thing.
+> - **It is refused once the workspace holds a lead, a customer, a deal or a quotation**, naming
+>   what it found. `leads.status_id` is `Restrict`, so the delete would fail at the database anyway;
+>   refusing up front with a sentence that says what to do instead is the honest version of the same
+>   guarantee.
+> - **`Manual entry` and `API` survive the replacement.** They are not marketing channels — the
+>   capture paths look them up by name — and deleting them would break lead creation right after
+>   onboarding.
+> - **`industry_templates` is a new platform table** (not tenant-scoped), one row per industry,
+>   upserted from `INDUSTRY_TEMPLATES` in `@leados/shared` by `seedPlatformCatalogue`. The constant
+>   is the definition; the table exists so `organizations.industry_template_key` can reference it and
+>   so the Super Admin console can manage templates without a deploy. Its `definition` JSONB carries
+>   the whole template, because a column per concern would be eleven columns nothing joins on.
+> - **`organizations.industry_template_key`** records which one was applied, with `SetNull` on
+>   delete: retiring a template must not be blocked by the workspaces that once used it. **Nothing
+>   in the product branches on it** — every row a template writes is an ordinary editable row, which
+>   is what rule 4 requires.
+> - **Task types, starter automations and WhatsApp drafts are not seeded by a template**, because
+>   those tables arrive in Phases 3, 6 and 5. The template shape is per concern precisely so adding
+>   `taskTypes` is then a content change.
+>
+> Hand-written objects: `industry_templates_key_format` (a key is a slug, because it is stored on
+> every organization that applied it), `industry_templates_name_present`,
+> `industry_templates_description_present` (longer than twenty characters — a picker whose entries
+> have no sentence is one nobody can choose from) and `industry_templates_definition_is_object`.

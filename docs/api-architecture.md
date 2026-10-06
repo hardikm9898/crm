@@ -484,6 +484,30 @@ POST /exports                       GET /exports/{id}
 >   feature's read permission.** `payment:read` can list the methods so a form can offer the
 >   dropdown; `settings:manage` is needed to change them. The same split a price list uses.
 
+> **Amendment, 2026-10-06 (implementation).** Industry templates (`FR-ONB-2`):
+>
+> ```
+> GET  /organization/industry-templates   organization:read, allowed in restricted mode
+>                                         → ten summaries: name, description, how many statuses,
+>                                           stages, sources and fields each installs, the field
+>                                           labels, and which one this workspace applied
+> POST /organization/industry-template    organization:manage, allowed in restricted mode
+>                                         { key } — REPLACES the statuses, lead pipeline stages,
+>                                         sources, lost reasons, tags and custom fields;
+>                                         422 once the workspace holds a lead, customer, deal or
+>                                         quotation, naming what it found
+> ```
+>
+> Two conventions this step establishes:
+>
+> - **Onboarding routes are allowed in restricted mode.** A tenant whose trial lapsed mid-setup must
+>   still be able to finish setting up; blocking the wizard traps them on a screen with no way out.
+> - **The wizard's steps belong to the frontend, so the API never advances them.** Applying a
+>   template is one server action calling two endpoints — the template, then `PATCH
+organization/onboarding` — and it advances the step **only if the template landed**. An API that
+>   advanced the wizard would be deciding what the steps are, which `PATCH
+organization/onboarding` deliberately does not.
+
 ### Automation, websites, analytics, marketing
 
 ```

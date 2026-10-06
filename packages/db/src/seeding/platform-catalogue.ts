@@ -1,4 +1,5 @@
 import { PERMISSION_CATALOGUE, newId } from '@leados/shared';
+import { seedIndustryTemplates } from './industry-templates.js';
 import type { UnscopedDbClient } from '../client.js';
 
 /**
@@ -131,6 +132,11 @@ export const PLAN_SEEDS: readonly PlanSeed[] = [
 export const DEFAULT_PLAN_SETTING_KEY = 'signup.default_plan_code';
 
 export async function seedPlatformCatalogue(db: UnscopedDbClient): Promise<Map<string, string>> {
+  // The industry templates are catalogue data too (`FR-ONB-2`), and for the same reason: a
+  // workspace cannot apply a template that is not in the table, and the table must not be a second
+  // definition of one that already lives in `@leados/shared`.
+  await seedIndustryTemplates(db);
+
   for (const permission of PERMISSION_CATALOGUE) {
     await db.permission.upsert({
       where: { key: permission.key },

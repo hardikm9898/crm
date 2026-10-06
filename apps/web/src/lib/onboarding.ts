@@ -38,10 +38,20 @@ export const ONBOARDING_STEPS: readonly OnboardingStep[] = [
     description: 'Each person gets a role, and each role decides what they may do.',
   },
   {
+    key: 'industry',
+    label: 'Pick your industry',
+    description:
+      'A template sets up the statuses, stages, sources and questions your trade actually uses — all editable afterwards.',
+  },
+  {
     key: 'pipeline',
-    label: 'Design your pipeline',
-    description: 'Statuses, sources and stages, in your own words.',
-    phase: 2,
+    label: 'Check your pipeline',
+    description: 'Rename a stage, add a source, remove a question. It is all rows.',
+  },
+  {
+    key: 'finish',
+    label: 'Start working',
+    description: 'Add your first lead, and the rest follows from it.',
   },
 ];
 
@@ -64,6 +74,37 @@ export function onboardingProgress(
     status: index < resolved ? 'done' : index === resolved ? 'current' : 'todo',
   }));
 }
+
+/**
+ * Three things worth doing next, once setup is finished (`FR-ONB-3`).
+ *
+ * Not a congratulations screen: "your CRM is ready" with nothing to click is where a trial goes to
+ * die. Each of these is a link to a screen that exists, and each is the thing somebody in that
+ * position actually does next.
+ */
+export interface NextAction {
+  readonly label: string;
+  readonly description: string;
+  readonly href: string;
+}
+
+export const NEXT_ACTIONS: readonly NextAction[] = [
+  {
+    label: 'Add your first lead',
+    description: 'One enquiry, typed in. Everything else on the screen follows from having one.',
+    href: '/leads/new',
+  },
+  {
+    label: 'Import the list you already have',
+    description: 'A spreadsheet of enquiries, mapped column by column, with a dry run first.',
+    href: '/leads/import',
+  },
+  {
+    label: 'Invite the people who will use it',
+    description: 'Each one gets a role, and the role decides what they can see.',
+    href: '/settings/members',
+  },
+];
 
 export function nextStepKey(current: string | undefined): string | null {
   const index = ONBOARDING_STEPS.findIndex((step) => step.key === current);

@@ -51,7 +51,8 @@ apps/web/src/app/
 │   ├── automation/                 workflows · runs · registry-driven editor
 │   ├── websites/                   builder · pages · domains · SEO
 │   ├── settings/                   org · users/roles · fields · pipelines · statuses · sources ·
-│   │                               products · quotation numbering · payment methods
+│   │                               products · quotation numbering · payment methods ·
+│   │                               industry (the picker lives on the organization screen)
 │   │                               assignment · scoring · duplicates · SLA · tasks config ·
 │   │                               whatsapp · integrations · api keys · webhooks · billing ·
 │   │                               privacy · notifications · audit log

@@ -5,11 +5,13 @@ import { AllowWhenRestricted } from '../../infra/entitlements/subscription.guard
 import { zodBody } from '../../infra/http/zod-validation.pipe.js';
 import { withMessage } from '../../infra/http/envelope.interceptor.js';
 import { OrganizationsService } from './organizations.service.js';
+import { IndustryTemplatesService } from './industry-templates.service.js';
 import {
   createBranchSchema,
   createTeamSchema,
   teamMemberSchema,
   updateBranchSchema,
+  applyIndustryTemplateSchema,
   updateOnboardingSchema,
   updateOrganizationSchema,
   updateTeamSchema,
@@ -17,7 +19,10 @@ import {
 
 @Controller()
 export class OrganizationsController {
-  constructor(private readonly organizations: OrganizationsService) {}
+  constructor(
+    private readonly organizations: OrganizationsService,
+    private readonly templates: IndustryTemplatesService,
+  ) {}
 
   // ── Organization ──────────────────────────────────────────────────────────
 
@@ -48,6 +53,37 @@ export class OrganizationsController {
       body as Parameters<OrganizationsService['updateOnboarding']>[0],
     );
     return { onboarding: state };
+  }
+
+  /**
+   * The industry templates on offer (`FR-ONB-2`).
+   *
+   * `organization:read`, and available in restricted mode for the same reason the wizard is: a
+   * tenant whose trial lapsed mid-setup must still be able to finish setting up.
+   */
+  @Get('organization/industry-templates')
+  @RequirePermission(PERMISSIONS.ORGANIZATION_READ)
+  @AllowWhenRestricted()
+  async listIndustryTemplates() {
+    return this.templates.list();
+  }
+
+  /**
+   * Applies one, **replacing** this workspace's vocabulary.
+   *
+   * `organization:manage`, because it rewrites the statuses, stages, sources, lost reasons, tags
+   * and custom fields of the whole workspace — and it is refused once there is anything to lose.
+   */
+  @Post('organization/industry-template')
+  @HttpCode(200)
+  @RequirePermission(PERMISSIONS.ORGANIZATION_MANAGE)
+  @AllowWhenRestricted()
+  async applyIndustryTemplate(@Body(zodBody(applyIndustryTemplateSchema)) body: unknown) {
+    const applied = await this.templates.apply((body as { key: string }).key);
+    return withMessage(
+      applied,
+      `${applied.name} set up — ${applied.statuses} statuses, ${applied.stages} stages and ${applied.fields} fields`,
+    );
   }
 
   // ── Branches ──────────────────────────────────────────────────────────────

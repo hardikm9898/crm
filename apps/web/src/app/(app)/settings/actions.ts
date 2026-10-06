@@ -62,6 +62,39 @@ export async function advanceOnboarding(
   return result;
 }
 
+/**
+ * Applies an industry template, and advances the wizard past the industry step (`FR-ONB-2`).
+ *
+ * One action rather than two, because choosing an industry **is** that step: making somebody pick a
+ * template and then separately tick a box is a form arguing with itself. The API refuses the whole
+ * thing if the workspace already has records, and its refusal says what to do instead — which is
+ * the sentence this returns.
+ */
+export async function applyIndustryTemplate(
+  _previous: ActionState,
+  form: FormData,
+): Promise<ActionState> {
+  const key = text(form, 'key');
+  if (!key) return { status: 'error', message: 'Choose an industry first.' };
+
+  const applied = await callApi<{ name: string }>(
+    '/organization/industry-template',
+    { method: 'POST', body: { key } },
+    'Industry set up.',
+  );
+  if (applied.status !== 'success') return applied;
+
+  // Only advance the wizard if the template actually landed: a step marked done over a failure is
+  // how somebody ends up on "start working" with the generic vocabulary.
+  await callApi('/organization/onboarding', { method: 'PATCH', body: { step: 'pipeline' } }, 'ok');
+
+  revalidatePath('/settings');
+  revalidatePath('/dashboard');
+  revalidatePath('/leads');
+  revalidatePath('/settings/fields');
+  return applied;
+}
+
 // ── People ──────────────────────────────────────────────────────────────────
 
 export async function inviteMember(_previous: ActionState, form: FormData): Promise<ActionState> {
