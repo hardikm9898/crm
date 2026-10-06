@@ -1,14 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import {
-  ACTIVITY_TYPES,
-  AppError,
-  PERMISSIONS,
-  activityModule,
-  isKnownActivityType,
-  withPlatformScope,
-} from '@leados/shared';
+import { ACTIVITY_TYPES, AppError, PERMISSIONS } from '@leados/shared';
 import { DbService } from '../../infra/db/db.service.js';
 import { DataScopeService } from '../../infra/authz/data-scope.service.js';
+import { TimelineReadService } from '../../infra/timeline/timeline-read.service.js';
 import type { TimelineQuery } from './leads.dto.js';
 
 /**
@@ -32,6 +26,7 @@ export class LeadTimelineService {
   constructor(
     private readonly db: DbService,
     private readonly scopes: DataScopeService,
+    private readonly reader: TimelineReadService,
   ) {}
 
   async forLead(leadId: string, query: TimelineQuery) {
@@ -48,89 +43,16 @@ export class LeadTimelineService {
     });
     if (!allowed) throw AppError.notFound('Lead');
 
-    const where: Record<string, unknown> = {
-      leadId,
-      ...(query.type ? { type: query.type } : {}),
-      ...(query.module ? { type: { startsWith: `${query.module}.` } } : {}),
-      ...(query.includeInternal === false ? { visibility: 'all' } : {}),
-    };
-
-    // Ordered by the partition key first, so the planner prunes partitions instead of scanning all
-    // of them; `id` breaks ties so cursor pagination is stable.
-    const rows = await this.db.client.activity.findMany({
-      where,
-      orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
-      take: query.limit + 1,
-      ...(query.cursor ? { cursor: this.decodeCursor(query.cursor), skip: 1 } : {}),
-    });
-
-    const page = rows.slice(0, query.limit);
-    const hasMore = rows.length > query.limit;
-    const actors = await this.resolveActors(page.map((row) => row.actorId));
-
-    return {
-      items: page.map((row) => ({
-        id: row.id,
-        type: row.type,
-        module: activityModule(row.type),
-        /** False for a row written by a newer release; the client renders the raw type. */
-        known: isKnownActivityType(row.type),
-        occurredAt: row.occurredAt,
-        visibility: row.visibility,
-        actor: {
-          type: row.actorType,
-          id: row.actorId,
-          name:
-            (row.actorId ? actors.get(row.actorId) : null) ??
-            row.actorLabel ??
-            (row.actorType === 'user' ? 'Removed user' : row.actorType),
-        },
-        payload: row.payload,
-      })),
-      pagination: {
+    return this.reader.page(
+      { leadId },
+      {
         limit: query.limit,
-        nextCursor: hasMore ? this.encodeCursor(page[page.length - 1]) : null,
-        hasMore,
+        ...(query.cursor ? { cursor: query.cursor } : {}),
+        ...(query.type ? { type: query.type } : {}),
+        ...(query.module ? { module: query.module } : {}),
+        ...(query.includeInternal === false ? { includeInternal: false } : {}),
       },
-    };
-  }
-
-  /**
-   * Names for the people who acted on this page.
-   *
-   * Under `withPlatformScope` because `users` is the global identity table — a tenant row references
-   * a person through `Membership`, but the person's *name* lives outside the tenant. The ids come
-   * from this organization's own activities, so nothing widens.
-   */
-  private async resolveActors(actorIds: readonly (string | null)[]): Promise<Map<string, string>> {
-    const ids = [...new Set(actorIds.filter((id): id is string => id !== null))];
-    if (ids.length === 0) return new Map();
-    const users = await withPlatformScope('timeline: name the actors', async () =>
-      this.db.client.user.findMany({
-        where: { id: { in: ids } },
-        select: { id: true, name: true },
-      }),
     );
-    return new Map(users.map((user) => [user.id, user.name]));
-  }
-
-  /**
-   * The cursor carries both halves of the composite primary key.
-   *
-   * `activities` is partitioned, so its key is `(id, occurred_at)` — an id alone does not identify a
-   * row, and Prisma's cursor needs the whole key.
-   */
-  private encodeCursor(row: { id: string; occurredAt: Date } | undefined): string | null {
-    if (!row) return null;
-    return Buffer.from(`${row.id}|${row.occurredAt.toISOString()}`).toString('base64url');
-  }
-
-  private decodeCursor(cursor: string): { id_occurredAt: { id: string; occurredAt: Date } } {
-    const [id, occurredAt] = Buffer.from(cursor, 'base64url').toString('utf8').split('|');
-    if (!id || !occurredAt) throw AppError.validation('That page cursor is not valid');
-    const parsed = new Date(occurredAt);
-    if (Number.isNaN(parsed.getTime())) throw AppError.validation('That page cursor is not valid');
-    return { id_occurredAt: { id, occurredAt: parsed } };
   }
 }
 

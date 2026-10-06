@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { CustomFieldsModule } from '../custom-fields/custom-fields.module.js';
+import { CustomersModule } from '../customers/customers.module.js';
 import { DuplicatesModule } from '../duplicates/duplicates.module.js';
 import { AssignmentModule } from '../assignment/assignment.module.js';
 import { ScoringModule } from '../scoring/scoring.module.js';
@@ -21,7 +22,17 @@ import { LeadsService } from './leads.service.js';
  * surface, which is where a person goes looking for them.
  */
 @Module({
-  imports: [CustomFieldsModule, DuplicatesModule, AssignmentModule, ScoringModule, ViewsModule],
+  imports: [
+    CustomFieldsModule,
+    DuplicatesModule,
+    AssignmentModule,
+    ScoringModule,
+    ViewsModule,
+    // For `POST /leads/:id/convert`. The dependency points this way on purpose: conversion writes
+    // the customer and the lead's status history in one transaction, so it belongs to the module
+    // that owns the customer, and the lead surface merely exposes it.
+    CustomersModule,
+  ],
   controllers: [LeadsController],
   providers: [LeadsService, LeadTimelineService],
   exports: [LeadsService],

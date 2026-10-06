@@ -30,6 +30,7 @@ import { AssignmentModule } from './modules/assignment/assignment.module.js';
 import { LeadsModule } from './modules/leads/leads.module.js';
 import { ScoringModule } from './modules/scoring/scoring.module.js';
 import { ViewsModule } from './modules/views/views.module.js';
+import { CustomersModule } from './modules/customers/customers.module.js';
 import { DocumentsModule } from './modules/documents/documents.module.js';
 import { ExportsModule } from './modules/exports/exports.module.js';
 import { ImportsModule } from './modules/imports/imports.module.js';
@@ -69,6 +70,7 @@ import { HealthModule } from './modules/health/health.module.js';
     ScoringModule,
     ViewsModule,
     LeadsModule,
+    CustomersModule,
     DocumentsModule,
     ImportsModule,
     ExportsModule,

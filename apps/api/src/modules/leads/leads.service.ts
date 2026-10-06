@@ -3,9 +3,9 @@ import {
   ACTIVITY_TYPES,
   AppError,
   PERMISSIONS,
+  buildDisplayName,
+  normalizeContactNumbers,
   newId,
-  normalizePhone,
-  PhoneNormalizationError,
   searchTextFor,
   tenantContext,
   validateCustomValues,
@@ -1488,6 +1488,7 @@ export class LeadsService {
     touchCount: number;
     nextActionAt: Date | null;
     lastActivityAt: Date | null;
+    convertedAt: Date | null;
     createdAt: Date;
     updatedAt: Date;
     status?: { id: string; name: string; colour: string | null; category: string };
@@ -1522,6 +1523,11 @@ export class LeadsService {
       touchCount: lead.touchCount,
       nextActionAt: lead.nextActionAt,
       lastActivityAt: lead.lastActivityAt,
+      /**
+       * On the summary, not only the detail: a list that cannot show which leads are already
+       * customers invites somebody to work a sale that closed last month.
+       */
+      convertedAt: lead.convertedAt,
       tags: (lead.tags ?? []).map((entry) => entry.tag),
       createdAt: lead.createdAt,
       updatedAt: lead.updatedAt,
@@ -1727,37 +1733,12 @@ export class LeadsService {
     }
   }
 
+  /** Delegates to `@leados/shared`, which customers use too — see `normalizeContactNumbers`. */
   private normalizeContact(
     input: { phone?: string | null; whatsapp?: string | null },
     defaultCountry: CountryCode,
   ): { phoneE164: string | null; phoneRaw: string | null; whatsappE164: string | null } {
-    const errors: { field: string; code: string; message: string }[] = [];
-
-    const toE164 = (value: string | null | undefined, field: string): string | null => {
-      if (value === null || value === undefined || value.trim() === '') return null;
-      try {
-        return normalizePhone(value, defaultCountry).e164;
-      } catch (error) {
-        const reason = error instanceof PhoneNormalizationError ? error.reason : 'invalid';
-        errors.push({
-          field,
-          code: 'INVALID_PHONE',
-          message: `That does not look like a phone number (${reason}).`,
-        });
-        return null;
-      }
-    };
-
-    const phoneE164 = toE164(input.phone, 'phone');
-    const whatsappE164 = toE164(input.whatsapp, 'whatsapp');
-    if (errors.length > 0) throw AppError.validation('Some details need correcting', errors);
-
-    return {
-      phoneE164,
-      // The raw form is kept for support conversations: "the number I was given was 98765 43210".
-      phoneRaw: input.phone?.trim() ?? null,
-      whatsappE164,
-    };
+    return normalizeContactNumbers(input, defaultCountry);
   }
 
   private async assertWithinLeadLimit(): Promise<void> {
@@ -1818,6 +1799,11 @@ export class LeadsService {
  * name, the company, then whatever contact detail we do have — an unnamed enquiry from a phone number
  * is still a lead, and "Unknown" in a list helps nobody.
  */
+/**
+ * Kept as a thin adapter over `buildDisplayName` in `@leados/shared`: customers derive their name
+ * the same way, and two implementations of "what is this record called" would drift the first time
+ * one of them learned about a new field.
+ */
 function buildFullName(
   firstName: string | null | undefined,
   lastName: string | null | undefined,
@@ -1825,16 +1811,7 @@ function buildFullName(
   contact: { phoneE164: string | null; phoneRaw: string | null; whatsappE164: string | null },
   email?: string | null,
 ): string {
-  const name = [firstName, lastName]
-    .map((part) => part?.trim())
-    .filter((part): part is string => Boolean(part))
-    .join(' ');
-  if (name) return name;
-  if (company?.trim()) return company.trim();
-  if (email?.trim()) return email.trim();
-  if (contact.phoneE164) return contact.phoneE164;
-  if (contact.whatsappE164) return contact.whatsappE164;
-  return '';
+  return buildDisplayName({ firstName, lastName, company, email, ...contact });
 }
 
 function touchpointChannelFor(createdVia: string): TouchpointChannel {

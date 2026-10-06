@@ -16,6 +16,13 @@ export async function callApi<T>(
   path: string,
   options: Omit<RequestOptions, 'token'>,
   successMessage: string,
+  /**
+   * The submission, echoed back on a refusal.
+   *
+   * A server action re-renders the server tree and the client form remounts, so without this a
+   * refused submission comes back empty and every field has to be retyped.
+   */
+  form?: FormData,
 ): Promise<ActionState> {
   const token = await readAccessToken();
   if (!token) return { status: 'error', message: 'Please sign in again.' };
@@ -26,7 +33,12 @@ export async function callApi<T>(
     // second vocabulary for the same event.
     return { status: 'success', message: response.message ?? successMessage };
   } catch (error) {
-    return { status: 'error', message: describeError(error), ...fieldErrorsOf(error) };
+    return {
+      status: 'error',
+      message: describeError(error),
+      ...fieldErrorsOf(error),
+      ...(form ? { values: submittedValues(form) } : {}),
+    };
   }
 }
 

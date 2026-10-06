@@ -510,6 +510,76 @@ rather than pretending; streaming a generated file into storage, which is a port
 the export ceiling is 100 000 rows because the finished file is held in memory. Customers, deals and
 quotations remain later steps.
 
+### Step 6 — customers and conversion ✅ _(landed 2026-10-06)_
+
+The moment a sale closes, and the record that outlives it.
+
+- **Conversion is non-destructive, and that is the whole design.** `FR-DEAL-4` asks for "lead →
+  customer, preserving the full timeline and all touchpoints (never a fresh record)", so the lead
+  keeps its row, its touchpoints, its score and its history, gains a `converted_at` and a `won`
+  status, and the customer points back at it. A customer's timeline is the **union** of the lead's
+  entries and the customer's own, computed at read time — nothing is copied, re-parented or
+  renumbered, so there is no step at which a touchpoint can go missing. The reasoning, and the three
+  designs rejected (one table with a type column, copying the history, re-parenting the activities),
+  is [ADR-0017](./decisions/ADR-0017-customer-is-a-second-record.md).
+- **A lead converts at most once, enforced by a partial unique index**, so two clicks or a retried
+  request cannot produce two customers — while a workspace full of walk-ins, all with a null
+  `lead_id`, stays representable. A plain unique index would have allowed exactly one walk-in per
+  workspace.
+- **The two subjects get different activity types** — `lead.converted` and `customer.created`, at the
+  same instant. Both appear in the union, and the same sentence twice reads as a duplicated row
+  rather than as a handover. It also keeps the direct-creation case honest: somebody who was never a
+  lead did not convert, and their screen shows no origin panel rather than a fictional capture.
+- **Consent travels with the person**, copied at conversion and authoritative from then on, with the
+  carried-over values written into the timeline — a silent copy of a permission is the thing that
+  most needs evidencing.
+- **The customer screen is the journey.** The ad, the form, the round-robin assignment, the score
+  change, the three follow-ups and the conversion in one list, with the pre-conversion half marked;
+  plus an origin panel naming the original lead, its capture date, its source and its score at
+  conversion, and a link back to a lead that is still there. A details tab edits the account, where a
+  blank box clears a field — which is how a tax id somebody typed wrong gets removed.
+- **Custom fields work against the `customer` entity**, which is the first use of the field registry
+  for anything but leads: `custom.account_tier` on a customer validates against the tenant's customer
+  definitions, with no migration and no deploy.
+- **`TimelineReadService` was extracted** so the lead screen and the customer screen share one
+  presentation, one actor-name resolution and one cursor — the cursor being the part that bites,
+  since `activities` is partitioned and an id alone does not identify a row. Deals and conversations
+  will each want the same page over a different predicate.
+- **Search mirrors leads exactly** — the same trigger, the same weights, the same digits-only phone
+  handling — so "the last four digits" finds a customer as readily as a lead and one search box can
+  rank both tables consistently.
+
+**1 005 tests green** (525 unit, 480 integration), including an 18-case conversion suite that tries
+to break `FR-DEAL-4` — converting twice, converting another tenant's lead, reading a journey and
+finding a half missing, hard-deleting the lead the history hangs from — and 19 database guarantees
+verified against real PostgreSQL. Then **28 browser checks** against the built app: converting from
+the lead screen, the journey's two halves, the origin panel's link back, an edit appearing on the
+timeline, the list filter, a directly-entered customer, delete and restore.
+
+**Four defects found by running it, not by testing it:**
+
+1. **Every `:id` route answered 500 for a malformed id.** `GET /leads/not-a-uuid` reached Prisma and
+   came back as `invalid input syntax for type uuid` — across the whole API, so a crawler or a stale
+   bookmark filled the log with internal errors and hid the real ones. Fixed with a **global** pipe
+   that answers 404 (not 400: the shape of an id must not become an oracle).
+2. **The timeline showed developer field names.** An edit read "Changed JobTitle" and "Changed
+   billingLine1", because `humanise` split snake_case and dots but not camelCase — and the `fields`
+   list carries the API's property names. Found by asserting the sentence a person reads rather than
+   the type behind it.
+3. **Two timeline entries said the same thing at the same instant.** Both sides of the conversion
+   were written as `lead.converted`, so the union showed it twice; and a customer who was never a
+   lead was recorded as having converted. Split into `lead.converted` and `customer.created`.
+4. **A three-way query filter could only ever answer two ways.** The repository's convention for
+   `?flag=true` folds an absent parameter to `false`, which is right for `deleted` and wrong for
+   `converted` — where absent means "both" and `false` silently returned half the list.
+
+**Deferred, and why:** `FR-DUP-5` (duplicate detection and merge for customers) is not built —
+`customers.merged_into_id` exists so it needs no migration, and lead-level matching already prevents
+most duplicate customers because almost every customer arrives through a lead that was deduplicated
+on capture. `lifetime_value_minor`, `first_purchase_at` and `last_purchase_at` are deliberately
+**absent** until the payments ledger exists to write them: a money column that is always zero lies to
+every report that reads it.
+
 **Exit criteria**
 
 - Creating a custom field of every supported type requires **no migration and no deploy**, and that

@@ -98,6 +98,14 @@ export function relativeTime(
   return 'just now';
 }
 
+/** Just the date, for a column where the time of day adds nothing. */
+export function formatDate(value: string | Date | null | undefined): string {
+  if (!value) return '—';
+  const at = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(at.getTime())) return '—';
+  return at.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
 /** A date and time in the viewer's locale, for the places a relative time is too vague. */
 export function formatDateTime(value: string | Date | null | undefined): string {
   if (!value) return '—';

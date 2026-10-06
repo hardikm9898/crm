@@ -277,8 +277,7 @@ Partial: (organization_id, assigned_user_id) WHERE next_action_at IS NULL AND st
 | `lead_duplicates`                           | Detected candidates     | org, `lead_id`, `duplicate_lead_id`, `rule_id`, `match_fields JSONB`, `confidence`, `status (open                                                                                                                                                                                                             | merged | dismissed)`                                 |
 | `lead_merges`                               | Merge record            | org, `surviving_lead_id`, `merged_lead_id`, `field_choices JSONB`, `performed_by_id`, `undone_at?`, snapshot for reversal (`FR-DUP-4`)                                                                                                                                                                        |
 | `duplicate_rules`                           | Matching config         | org, name, `match_on JSONB` (fields/composites), `lookback_days`, `action`, `priority`, `is_active`                                                                                                                                                                                                           |
-| `customers`                                 | Converted               | org, `lead_id?`, name, phones, email, billing info, `lifetime_value_minor`, `first_purchase_at`, `segment_ids`, custom_values, deleted_at                                                                                                                                                                     |
-| `customer_merges`                           | As per leads            | —                                                                                                                                                                                                                                                                                                             |
+| `customers`                                 | Converted               | Moved to [§6.7](#67-customers-and-conversion), with the conversion rules it is inseparable from                                                                                                                                                                                                               |
 | `saved_views`                               | Filters/views           | org, owner_id?, `entity_type`, name, `filters JSONB`, `columns JSONB`, `sort JSONB`, `visibility (private                                                                                                                                                                                                     | team   | org)`, `is_default_for_role?` (`FR-VIEW-3`) |
 
 > **Amendment, 2026-09-30 (implementation).** `saved_views` also carries `team_id` and
@@ -341,7 +340,7 @@ source_event_id) WHERE source_event_id IS NOT NULL`, and `delta <> 0` keeps rows
 | `notes`              | org, subject, `body`, `is_internal`, `mentions UUID[]`, author, deleted_at                                                                                                                                                                   |
 | `mentions`           | org, note_id/message_id, `mentioned_user_id`, `read_at?`                                                                                                                                                                                     |
 
-`documents` moved to [§6.7](#67-files-imports-and-exports), where it sits with the import and export
+`documents` moved to [§6.8](#68-files-imports-and-exports), where it sits with the import and export
 jobs that are its only writers today.
 
 `activities` indexes: `(organization_id, lead_id, occurred_at DESC)`,
@@ -376,7 +375,45 @@ Adding a type = adding a constant + a renderer in the UI registry. No migration 
 | `quotation_items` | as `deal_items`                                                                                                                                                                                             |
 | `payments`        | org, `deal_id?`, `lead_id?`, `customer_id?`, `amount_minor`, currency, `method`, `status (pending                                                                                                           | succeeded | failed   | refunded)`, `provider`, `provider_payment_id?`, `paid_at?`, `attributed_touchpoint_id?`, `metadata JSONB`. **Revenue for attribution comes from here** (`FR-ATT-4`) |
 
-### 6.7 Files, imports and exports
+### 6.7 Customers and conversion
+
+| Table       | Purpose             | Key columns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ----------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `customers` | Somebody who bought | org, `lead_id?` + `converted_at?` (the two are null or set together), `branch_id?`, `team_id?`, `owner_user_id?` (through `Membership`), identity (`first_name`, `last_name`, `full_name`, `company`, `job_title`), contact (`phone_e164`, `phone_raw`, `whatsapp_e164`, `email`, `timezone`), billing (`billing_line1/2`, `city`, `state`, `country`, `postal_code`, `tax_id`), `custom_values JSONB` + `custom_search_text` + `search_vector`, three consent flags, `last_activity_at?`, `merged_into_id?`, `created_by_id?`, `deleted_at?` |
+
+> **Amendment, 2026-10-06 (implementation).** Three deviations from the Phase 0 sketch, each
+> deliberate — see [ADR-0017](./decisions/ADR-0017-customer-is-a-second-record.md).
+>
+> - **`activities` gained `customer_id`**, with its own per-tenant index. A converted person's
+>   history is read as the **union** of their lead's entries and their customer's, so an entry names
+>   whichever subject it actually happened to. Nothing is copied or re-parented: that is what makes
+>   conversion unable to lose a touchpoint, and it is why the two subjects get _different_ activity
+>   types (`lead.converted` and `customer.created`) at the same instant.
+> - **`lifetime_value_minor`, `first_purchase_at` and `last_purchase_at` are absent.** Their only
+>   writer is the payments ledger, which arrives with deals and quotations. A money column that is
+>   always zero lies to every report that reads it, and the schema's own principle — a column nothing
+>   can trust does not exist yet — applies to more than foreign keys.
+> - **`customer_merges` is not created.** `FR-DUP-5` wants the lead merge machinery for customers;
+>   `customers.merged_into_id` exists so that arrives without a migration, and
+>   `customers_not_merged_into_self` already makes a one-cycle unrepresentable.
+>
+> Four hand-written objects carry guarantees the application cannot:
+>
+> - **`customers_lead_unique`**, a partial unique index on `(organization_id, lead_id) WHERE lead_id
+IS NOT NULL`. A lead converts at most once — two clicks or a retried request cannot produce two
+>   customers — while any number of customers who were never leads remain representable. A plain
+>   unique index would have allowed exactly one walk-in per workspace.
+> - **`customers_converted_has_lead`**, `(lead_id IS NULL) = (converted_at IS NULL)`. Neither half of
+>   a provenance claim can be made without the other: a conversion date with no lead is a claim about
+>   a capture that never happened.
+> - **`customers_merged_into`**, the referencing side of the self-FK. Postgres indexes only the
+>   referenced side, and the same omission on `leads` made deletion quadratic.
+> - **`customers_search_vector_trg`** plus the GIN and trigram indexes, mirroring `leads` exactly —
+>   same weights, same digits-only phone handling — so one search box ranks both tables consistently.
+>   If this trigger is ever dropped, a converted customer simply stops appearing in search and
+>   nothing else looks broken.
+
+### 6.8 Files, imports and exports
 
 | Table         | Purpose                     | Key columns                                                                                                                                                                                                                                                                                                          |
 | ------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -564,7 +601,7 @@ affected day, not by mutating counters).
 | `ai_requests` / `ai_outputs` / `ai_usage` | org, feature, `entity`, `prompt_hash`, model, `tokens_in/out`, `cost_minor`, latency, `output JSONB`, `accepted_by_user_id?`, `edited BOOL` (`FR-AI-4`)                             |
 
 `import_jobs`, `import_rows`, `export_jobs` and `documents` are defined in
-[§6.7](#67-files-imports-and-exports). A DSR export (`dsr_requests.result_document_id`) will be a
+[§6.8](#68-files-imports-and-exports). A DSR export (`dsr_requests.result_document_id`) will be a
 `documents` row like any other, which is the reason that table is not private to the import module.
 
 ---

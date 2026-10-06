@@ -8,6 +8,10 @@ import { formatDateTime, relativeTime } from '@/lib/lead-format';
  * Every row is phrased by the renderer registry, which means a type this build has never heard of
  * still reads as a sentence instead of appearing blank. That is the property that lets the API ship
  * new activity types ahead of this app.
+ *
+ * Shared by the lead and the customer screens — a converted customer's history is the union of the
+ * two (`FR-DEAL-4`), and it would be a strange product where the same entry read differently
+ * depending on which side of the conversion you opened it from.
  */
 export function Timeline({ entries, now }: { entries: TimelineEntryLike[]; now: string }) {
   const at = new Date(now);

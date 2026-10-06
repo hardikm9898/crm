@@ -1,4 +1,5 @@
 import { Global, Module } from '@nestjs/common';
+import { TimelineReadService } from './timeline-read.service.js';
 import { TimelineService } from './timeline.service.js';
 
 /**
@@ -8,7 +9,7 @@ import { TimelineService } from './timeline.service.js';
  */
 @Global()
 @Module({
-  providers: [TimelineService],
-  exports: [TimelineService],
+  providers: [TimelineService, TimelineReadService],
+  exports: [TimelineService, TimelineReadService],
 })
 export class TimelineModule {}

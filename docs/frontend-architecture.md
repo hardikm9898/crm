@@ -40,7 +40,8 @@ apps/web/src/app/
 │   ├── tasks/                      buckets: due now / today / overdue / upcoming / done
 │   ├── inbox/                      shared WhatsApp inbox (3-pane → stacked on mobile)
 │   │   └── [conversationId]/
-│   ├── customers/ · deals/ · quotations/
+│   ├── customers/                  list · detail (journey + details tabs) · new
+│   ├── deals/ · quotations/
 │   ├── reports/                    leads · sources · campaigns · users · pipeline · SLA · conversion
 │   ├── marketing/                  campaigns · attribution · segments · SEO
 │   ├── analytics/                  website · funnel · journeys · realtime

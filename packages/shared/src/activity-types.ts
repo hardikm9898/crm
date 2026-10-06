@@ -54,6 +54,17 @@ export const ACTIVITY_TYPES = {
   CONVERSATION_TRANSFERRED: 'conversation.transferred',
   CONVERSATION_CLOSED: 'conversation.closed',
   CONVERSATION_REOPENED: 'conversation.reopened',
+  // customers (`FR-DEAL-4`)
+  /**
+   * The account's own first entry. Distinct from `lead.converted`, which is written on the *lead*
+   * at the same instant: a converted person's history is the union of both subjects, so two entries
+   * saying the same sentence would read as a duplicate rather than as a handover. And a customer who
+   * was never a lead did not convert — this is the only type that is true for both.
+   */
+  CUSTOMER_CREATED: 'customer.created',
+  CUSTOMER_UPDATED: 'customer.updated',
+  CUSTOMER_DELETED: 'customer.deleted',
+  CUSTOMER_RESTORED: 'customer.restored',
   // collaboration
   NOTE_ADDED: 'note.added',
   MENTION_CREATED: 'mention.created',

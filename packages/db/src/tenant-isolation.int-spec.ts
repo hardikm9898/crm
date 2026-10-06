@@ -1057,3 +1057,93 @@ describe('layer 2 — the CRM models are scoped like every other tenant table', 
     await expect(h.db.lead.findMany({})).rejects.toThrow(/No tenant context/);
   });
 });
+
+describe('layer 3 — a customer cannot be stitched to another tenant (FR-DEAL-4)', () => {
+  it('blocks a customer converted from another tenant’s lead', async () => {
+    await expect(
+      h.unscoped.customer.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgB.organizationId,
+          fullName: 'Stolen Conversion',
+          leadId: h.orgA.leadId,
+          convertedAt: new Date(),
+        },
+      }),
+    ).rejects.toThrow(/customers_lead_same_org_fk|foreign key/i);
+  });
+
+  it('blocks a customer owned by a member of another tenant', async () => {
+    await expect(
+      h.unscoped.customer.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgB.organizationId,
+          fullName: 'Stolen Owner',
+          ownerUserId: h.orgA.userId,
+        },
+      }),
+    ).rejects.toThrow(/customers_owner_same_org_fk|foreign key/i);
+  });
+
+  it('lets a lead convert exactly once, and a second attempt is the database’s refusal', async () => {
+    // Not the service's: two clicks on Convert, or a retried request, must not be able to produce
+    // two customers for one lead, and an application check cannot promise that under concurrency.
+    const first = newId();
+    await h.unscoped.customer.create({
+      data: {
+        id: first,
+        organizationId: h.orgA.organizationId,
+        fullName: 'First Conversion',
+        leadId: h.orgA.leadId,
+        convertedAt: new Date(),
+      },
+    });
+
+    await expect(
+      h.unscoped.customer.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          fullName: 'Second Conversion',
+          leadId: h.orgA.leadId,
+          convertedAt: new Date(),
+        },
+      }),
+    ).rejects.toThrow(/customers_lead_unique|unique/i);
+
+    // Two customers who were never leads are fine: the unique index is partial, so a workspace full
+    // of walk-ins is not one conversion's worth of customers.
+    const walkIns = [newId(), newId()];
+    for (const id of walkIns) {
+      await h.unscoped.customer.create({
+        data: { id, organizationId: h.orgA.organizationId, fullName: `Walk In ${id.slice(0, 4)}` },
+      });
+    }
+
+    await h.unscoped.customer.deleteMany({ where: { id: { in: [first, ...walkIns] } } });
+  });
+
+  it('shows each tenant only its own customers', async () => {
+    const ids = [newId(), newId()];
+    await h.unscoped.customer.create({
+      data: { id: ids[0]!, organizationId: h.orgA.organizationId, fullName: 'A Customer' },
+    });
+    await h.unscoped.customer.create({
+      data: { id: ids[1]!, organizationId: h.orgB.organizationId, fullName: 'B Customer' },
+    });
+
+    const seenByA = await tenantContext.run(h.orgA.principal, async () =>
+      h.db.customer.findMany({ where: { id: { in: ids } } }),
+    );
+    expect(seenByA.map((customer) => customer.id)).toEqual([ids[0]]);
+
+    // Knowing the id is never sufficient, which is the whole point of layer 2.
+    const byKey = await tenantContext.run(h.orgA.principal, async () =>
+      h.db.customer.findUnique({ where: { id: ids[1]! } }),
+    );
+    expect(byKey).toBeNull();
+
+    await h.unscoped.customer.deleteMany({ where: { id: { in: ids } } });
+  });
+});

@@ -75,6 +75,17 @@ const REQUIRED_INDEXES = [
   // Imports and exports. `documents_expiring` is what the hourly sweep scans; without it the sweep
   // reads every document a workspace has ever stored to find the handful that expired.
   'documents_expiring',
+  // Customers. `customers_lead_unique` is partial, which is what makes a lead convert at most once
+  // while still allowing any number of customers who were never leads; `customers_merged_into` is
+  // the referencing side of the self-FK, the same omission that made lead deletion quadratic.
+  'customers_lead_unique',
+  'customers_merged_into',
+  'customers_search_vector_gin',
+  'customers_custom_values_gin',
+  'customers_phone_e164_trgm',
+  'customers_full_name_trgm',
+  'customers_email_trgm',
+  'customers_live_created_at',
 ];
 
 /**
@@ -156,6 +167,19 @@ const REQUIRED_CONSTRAINTS = [
   'export_jobs_row_count_non_negative',
   'export_jobs_completed_has_document',
   'export_jobs_document_same_org_fk',
+  // Customers and conversion (`FR-DEAL-4`).
+  'customers_name_present',
+  'customers_country_code',
+  'customers_tax_id_length',
+  'customers_not_merged_into_self',
+  // The pair that keeps provenance honest: a customer converted from a lead has a conversion date,
+  // and a conversion date without a lead would be a claim about a capture that never happened.
+  'customers_converted_has_lead',
+  'customers_lead_same_org_fk',
+  'customers_branch_same_org_fk',
+  'customers_team_same_org_fk',
+  'customers_owner_same_org_fk',
+  'customers_merged_into_same_org_fk',
 ];
 
 describe('hand-written indexes survive every generated migration', () => {
@@ -204,6 +228,18 @@ describe('the objects Prisma cannot describe at all', () => {
     const rows = await h.unscoped.$queryRaw<{ count: bigint }[]>`
       SELECT count(*) AS count FROM pg_trigger
       WHERE tgrelid = 'leads'::regclass AND tgname = 'leads_search_vector_trg' AND NOT tgisinternal
+    `;
+    expect(Number(rows[0]?.count ?? 0)).toBe(1);
+  });
+
+  it('keeps the customers search-vector trigger too', async () => {
+    // Two tables, two triggers, one search box. If this one goes, a converted customer is simply
+    // absent from search results — and nothing else about the product looks broken.
+    const rows = await h.unscoped.$queryRaw<{ count: bigint }[]>`
+      SELECT count(*) AS count FROM pg_trigger
+      WHERE tgrelid = 'customers'::regclass
+        AND tgname = 'customers_search_vector_trg'
+        AND NOT tgisinternal
     `;
     expect(Number(rows[0]?.count ?? 0)).toBe(1);
   });

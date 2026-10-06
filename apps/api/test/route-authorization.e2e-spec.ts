@@ -59,6 +59,7 @@ interface Tenant {
   // tenancy and the sweep would record a refusal it never earned.
   importJobId: string;
   exportJobId: string;
+  customerId: string;
 }
 
 let orgA: Tenant;
@@ -220,6 +221,20 @@ async function createTenant(label: string): Promise<Tenant> {
     token,
   });
 
+  // A customer created directly rather than by conversion: the lead fixture above is the one every
+  // other lead route in this sweep uses, and converting it would move its status and add a
+  // `converted_at` that a later assertion would then have to know about.
+  const customer = await call<EnvelopeBody<{ id: string }>>(ctx.app, {
+    method: 'POST',
+    url: '/api/v1/customers',
+    payload: {
+      firstName: 'Sweep',
+      lastName: 'Customer',
+      email: `sweep-${organizationId.slice(0, 8)}@customer.test`,
+    },
+    token,
+  });
+
   const [duplicateRule, assignmentRule, scoringRule, savedView] = await Promise.all([
     ctx.db.duplicateRule.findFirstOrThrow({ where: { organizationId, isActive: true } }),
     ctx.db.assignmentRule.findFirstOrThrow({ where: { organizationId } }),
@@ -255,6 +270,7 @@ async function createTenant(label: string): Promise<Tenant> {
     savedViewId: savedView.id,
     importJobId,
     exportJobId: exported.body.data.id,
+    customerId: customer.body.data.id,
   };
 }
 
@@ -405,6 +421,10 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       '/imports/:id/cancel': `/imports/${orgA.importJobId}/cancel`,
       '/imports/:id/rows': `/imports/${orgA.importJobId}/rows`,
       '/imports/:id/errors.csv': `/imports/${orgA.importJobId}/errors.csv`,
+      '/customers/:id': `/customers/${orgA.customerId}`,
+      '/customers/:id/timeline': `/customers/${orgA.customerId}/timeline`,
+      '/customers/:id/restore': `/customers/${orgA.customerId}/restore`,
+      '/leads/:id/convert': `/leads/${orgA.leadId}/convert`,
       '/exports/:id': `/exports/${orgA.exportJobId}`,
       '/exports/:id/download': `/exports/${orgA.exportJobId}/download`,
     };
@@ -721,6 +741,14 @@ function bodyFor(
       return {};
     case '/exports':
       return { filter: { conditions: [] }, columns: ['company'] };
+    // Phase 2, step 6 — customers and conversion
+    case '/customers':
+      return { firstName: 'Cross', lastName: 'Tenant', email: 'cross@tenant.test' };
+    case '/customers/:id':
+      return { company: 'Renamed By Another Tenant' };
+    case '/customers/:id/restore':
+    case '/leads/:id/convert':
+      return {};
     case '/auth/switch-org':
       return { organizationId: target.organizationId };
     case '/auth/mfa/confirm':

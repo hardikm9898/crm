@@ -32,6 +32,7 @@ export const NAV_SECTIONS: readonly NavSection[] = [
       { label: 'Dashboard', href: '/dashboard', permissions: [] },
       { label: 'Leads', href: '/leads', permissions: ['lead:read'] },
       { label: 'Pipeline', href: '/pipeline', permissions: ['lead:read'] },
+      { label: 'Customers', href: '/customers', permissions: ['customer:read'] },
       { label: 'Tasks', href: '/tasks', permissions: ['task:read'], phase: 3 },
       { label: 'Inbox', href: '/inbox', permissions: ['conversation:read'], phase: 5 },
     ],

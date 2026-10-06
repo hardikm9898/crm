@@ -64,6 +64,7 @@ export const TENANT_MODELS = [
   'ImportJob',
   'ImportRow',
   'ExportJob',
+  'Customer',
 ] as const;
 
 export type TenantModel = (typeof TENANT_MODELS)[number];

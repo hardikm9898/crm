@@ -14,6 +14,8 @@ import { PERMISSIONS } from '@leados/shared';
 import { RequirePermission } from '../../infra/authz/permission.decorator.js';
 import { zodBody, ZodBody } from '../../infra/http/zod-validation.pipe.js';
 import { withMessage } from '../../infra/http/envelope.interceptor.js';
+import { CustomersService } from '../customers/customers.service.js';
+import { convertLeadSchema, type ConvertLeadInput } from '../customers/customers.dto.js';
 import { LeadsService } from './leads.service.js';
 import { LeadTimelineService } from './lead-timeline.service.js';
 import {
@@ -44,6 +46,7 @@ export class LeadsController {
   constructor(
     private readonly leads: LeadsService,
     private readonly timeline: LeadTimelineService,
+    private readonly customers: CustomersService,
   ) {}
 
   @Get()
@@ -114,6 +117,25 @@ export class LeadsController {
     return withMessage(
       await this.leads.changeStage(id, body as Parameters<LeadsService['changeStage']>[1]),
       'Stage updated',
+    );
+  }
+
+  /**
+   * Converting a lead into a customer (`FR-DEAL-4`).
+   *
+   * On the lead rather than on `/customers`, because this is a lead transition that happens to
+   * produce a customer: a client holding a lead should not have to know a second resource exists to
+   * finish the sale. `customer:manage` is the permission — creating a customer is what it does —
+   * and the service additionally requires the lead to be inside the caller's `lead:update` scope,
+   * so converting another branch's lead is not something a customer permission can grant.
+   */
+  @Post(':id/convert')
+  @HttpCode(201)
+  @RequirePermission(PERMISSIONS.CUSTOMER_MANAGE)
+  async convert(@Param('id') id: string, @Body(zodBody(convertLeadSchema)) body: unknown) {
+    return withMessage(
+      await this.customers.convert(id, body as ConvertLeadInput),
+      'Converted. Their whole history came with them',
     );
   }
 

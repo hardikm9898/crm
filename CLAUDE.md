@@ -211,6 +211,37 @@ change, or typecheck will fail confusingly.
   re-import does not move every date; that function had to learn to drop a trailing time, because
   `14/02/2026 10:30` previously fell through to `new Date()`, which reads a day-first date as invalid
   and failed every dated row of a file a spreadsheet had written.
+- **A non-UUID `:id` reached Prisma and came back as a 500.** `GET /leads/not-a-uuid` answered
+  `invalid input syntax for type uuid` — on every `:id` route in the product, so a crawler or a stale
+  bookmark filled the log with internal errors and hid the real ones. `UuidParamPipe` is a **global**
+  pipe (not seventy-two `@Param('id', ParseUUIDPipe)` edits, so a route added later is covered) and
+  it answers **404**: a malformed id and another tenant's id must be indistinguishable, or the shape
+  of an id becomes an oracle.
+- **A `?flag=true` query parameter cannot be `z.boolean()`.** A query string carries strings. The
+  existing convention, `z.enum(['true','false']).optional().transform(v => v === 'true')`, also folds
+  an absent parameter to `false` — right for `deleted`, wrong for any three-way filter, where absent
+  means "both" and `false` silently returned only half the list. Keep `undefined` as `undefined`.
+- **Two timeline entries written at the same instant need different types.** A converted person's
+  history is the union of their lead's entries and their customer's (`FR-DEAL-4`), so
+  `lead.converted` on one side and `customer.created` on the other — the same type twice reads as a
+  duplicated row rather than as a handover. It also keeps the direct-creation case honest: somebody
+  who was never a lead did not convert. Borrowing the lead vocabulary for customer edits
+  (`lead.field_updated` on a customer) is the same mistake in a quieter form.
+- **`humanise` has to split camelCase, not only snake_case.** An edit entry's `fields` list carries
+  the API's property names, so a timeline read "Changed JobTitle" and "Changed billingLine1" — the
+  field name a developer wrote, shown to a business owner. Found by asserting the sentence rather
+  than the type.
+- **A Playwright `waitForURL('**/customers/**')` also matches `/customers/new`.** The wait resolved
+  before the form had been submitted, and every assertion after it read the form instead of the
+  record it was supposed to have created — three checks passing for the wrong reason. Match the shape
+  that distinguishes them (`/\/customers\/[0-9a-f]{8}-/`).
+- **A Playwright locator handle goes stale the moment the page navigates.** `locator(...).all()` then
+  iterating with `getAttribute` inside the loop times out on the second item. Collect the values
+  first (`evaluateAll((nodes) => nodes.map(...))`), then navigate.
+- **Subscription state and entitlements are cached in Redis for five minutes.** Editing
+  `subscriptions` directly — which is the only way to un-expire a dev trial — changes nothing until
+  `org:<id>:subscription-state` and `org:<id>:entitlements` are deleted. Writes answer
+  `TRIAL_EXPIRED` in the meantime, which looks like a product bug and is the cache doing its job.
 - **The storage port takes a `Buffer`, so a generated file is held in memory.** That is why the
   export row ceiling is 100 000 and the CSV is appended a page at a time (`csvRow`) rather than built
   from a 2D array of every cell. Streaming an object into storage is a port change that belongs with

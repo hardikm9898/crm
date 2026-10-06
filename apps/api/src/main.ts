@@ -5,6 +5,7 @@ import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { allowCsvUpload } from './infra/http/csv-body.js';
 import { allowEmptyJsonBody } from './infra/http/empty-json-body.js';
+import { UuidParamPipe } from './infra/http/uuid-param.pipe.js';
 import { installValidationCopy } from './infra/http/validation-copy.js';
 import type { Logger } from 'pino';
 import { AppModule } from './app.module.js';
@@ -77,6 +78,8 @@ async function bootstrapHttp(): Promise<void> {
   // A CSV upload is the one body that may exceed the global limit, and only on the import routes.
   allowCsvUpload(app, config.UPLOAD_MAX_BYTES, [`${API_PREFIX}/imports`]);
   app.useLogger(new PinoLoggerService(logger));
+  // Before anything reaches the database: a non-UUID `:id` is a 404, not a Prisma 500.
+  app.useGlobalPipes(new UuidParamPipe());
   app.useGlobalInterceptors(new EnvelopeInterceptor());
   app.useGlobalFilters(new AppExceptionFilter(logger));
   app.enableShutdownHooks();

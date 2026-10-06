@@ -33,6 +33,15 @@ import type { TransactionClient } from '../outbox/outbox.service.js';
 export interface TimelineEntry {
   readonly type: ActivityType;
   readonly leadId?: string | null;
+  /**
+   * The customer this entry belongs to, for activity after a conversion.
+   *
+   * A converted person's history is read as the union of their lead's entries and their customer's
+   * (`FR-DEAL-4`), so an entry names whichever subject it actually happened to — never both, and
+   * never the lead retrospectively. Re-parenting the lead's entries onto the customer would be the
+   * one way to lose a touchpoint, which is exactly what the requirement forbids.
+   */
+  readonly customerId?: string | null;
   /** When it happened. Required — see the class comment. */
   readonly occurredAt: Date;
   readonly payload?: Record<string, unknown>;
@@ -104,6 +113,7 @@ export class TimelineService {
     id: string;
     organizationId: string;
     leadId: string | null;
+    customerId: string | null;
     type: string;
     actorType: ActorType;
     actorId: string | null;
@@ -118,6 +128,7 @@ export class TimelineService {
       id: newId(),
       organizationId,
       leadId: entry.leadId ?? null,
+      customerId: entry.customerId ?? null,
       type: entry.type,
       actorType: entry.actorType ?? principal?.actorType ?? 'system',
       actorId: entry.actorId ?? principal?.actorId ?? null,

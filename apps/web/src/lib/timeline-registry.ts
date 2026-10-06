@@ -151,11 +151,39 @@ const DESCRIBERS: Readonly<Record<string, Describer>> = {
     } days with no activity.`,
     tone: 'warning',
   }),
-  'lead.converted': () => ({
+  'lead.converted': (payload) => ({
     label: 'Converted',
-    description: 'Became a customer.',
+    description: text(payload, 'customerName')
+      ? `Became a customer — ${text(payload, 'customerName')}.`
+      : 'Became a customer.',
     tone: 'success',
   }),
+  // The customer side of the same moment. Phrased differently on purpose: both entries appear in a
+  // converted person's journey, and two identical sentences would read as a duplicated row.
+  'customer.created': (payload) => ({
+    label: 'Customer',
+    description: text(payload, 'leadName')
+      ? `Account opened, carried over from ${text(payload, 'leadName')}.`
+      : 'Account opened.',
+    tone: 'success',
+  }),
+  'customer.updated': (payload) => {
+    const fields = payload['fields'];
+    const list = Array.isArray(fields) ? fields.filter((entry) => typeof entry === 'string') : [];
+    return {
+      label: 'Updated',
+      description:
+        list.length > 0
+          ? `Changed ${list.map((entry) => humanise(String(entry))).join(', ')}.`
+          : 'Account details changed.',
+    };
+  },
+  'customer.deleted': () => ({
+    label: 'Deleted',
+    description: 'Moved to the recycle bin. Nothing about the history is gone.',
+    tone: 'danger',
+  }),
+  'customer.restored': () => ({ label: 'Restored', description: 'Brought back from the bin.' }),
   'lead.lost': (payload) => ({
     label: 'Lost',
     description: `Marked lost${text(payload, 'reason') ? ` — ${text(payload, 'reason')}` : ''}.`,
@@ -204,10 +232,26 @@ function namesFrom(payload: ActivityPayload, key: string): string | null {
   return names.length > 0 ? names.join(', ') : null;
 }
 
-/** `meta_ads` → `Meta ads`. Used for channels and field keys, which are snake_case on the wire. */
+/**
+ * `meta_ads` → `Meta ads`, and `jobTitle` → `Job title`.
+ *
+ * Both cases turn up in the same place: a channel or an activity type arrives snake_cased or
+ * dotted, while the `fields` list on an edit entry carries the API's **camelCase** property names.
+ * Without the camelCase split a timeline read "Changed JobTitle" and "Changed billingLine1" — which
+ * is the field name a developer uses, shown to a business owner.
+ */
 export function humanise(value: string): string {
-  const spaced = value.replace(/[_.]/g, ' ').trim();
-  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+  const spaced = value
+    .replace(/[_.]/g, ' ')
+    // Split camelCase, and keep an acronym together: `taxId` → `tax Id`, `GSTIN` stays `GSTIN`.
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .trim();
+  const lowered = spaced.charAt(0).toUpperCase() + spaced.slice(1);
+  // Only the first word is capitalised: "Job title", not "Job Title" — a sentence, not a heading.
+  return lowered.replace(
+    /\s+([A-Z])(?=[a-z])/g,
+    (_match, letter: string) => ` ${letter.toLowerCase()}`,
+  );
 }
 
 /**

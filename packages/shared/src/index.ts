@@ -4,6 +4,8 @@ export * from './money.js';
 export * from './time.js';
 export * from './tenant-context.js';
 export * from './errors.js';
+export * from './display-name.js';
+export * from './contact.js';
 export * from './result.js';
 export * from './rbac.js';
 export * from './activity-types.js';

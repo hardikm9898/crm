@@ -139,3 +139,23 @@ describe('actors and wording', () => {
     expect(humanise('lead.stage_changed')).toBe('Lead stage changed');
   });
 });
+
+describe('humanising a field name a developer wrote', () => {
+  it('splits camelCase into a sentence', () => {
+    // The `fields` list on an edit entry carries the API's property names. Showing them raw put
+    // "Changed JobTitle" and "Changed billingLine1" in front of business owners.
+    expect(humanise('jobTitle')).toBe('Job title');
+    expect(humanise('billingLine1')).toBe('Billing line1');
+    expect(humanise('taxId')).toBe('Tax id');
+  });
+
+  it('still handles snake_case and dotted names', () => {
+    expect(humanise('meta_ads')).toBe('Meta ads');
+    expect(humanise('whatsapp.template_sent')).toBe('Whatsapp template sent');
+  });
+
+  it('leaves a single word alone but capitalised', () => {
+    expect(humanise('company')).toBe('Company');
+    expect(humanise('City')).toBe('City');
+  });
+});

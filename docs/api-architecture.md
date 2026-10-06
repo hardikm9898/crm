@@ -333,6 +333,31 @@ POST /exports                       GET /exports/{id}
 >   `{ success, data }` is not a download, and a CSV a browser decides is HTML is a stored XSS
 >   vector.
 
+> **Amendment, 2026-10-06 (implementation).** Customers and conversion:
+>
+> ```
+> POST /leads/{id}/convert           on the LEAD: a transition that produces a customer
+> GET  /customers                    ?search= ?converted= ?deleted= ?cursor= ?sort= ?direction=
+> POST /customers                    somebody who was never a lead
+> GET  /customers/{id}               with its origin panel and its custom-field definitions
+> GET  /customers/{id}/timeline      the union of the lead's history and the customer's
+> PATCH /customers/{id}              blank clears a field; the display name is always derived
+> DELETE /customers/{id}             soft, reversible
+> POST /customers/{id}/restore
+> ```
+>
+> Two conventions this step established for the whole API:
+>
+> - **A non-UUID `:id` is a 404, from a global pipe.** It used to reach Prisma and come back as a
+>   **500** — on every `:id` route in the product. 404 rather than 400, because a malformed id and
+>   another tenant's id must be indistinguishable from outside; 400 would make the shape of an id an
+>   oracle. Registered globally rather than on seventy-two call sites, so a route added next week is
+>   covered without anybody remembering.
+> - **A `?flag=true` query parameter keeps `undefined` as `undefined`.** A query string carries
+>   strings, and the earlier `z.enum(['true','false']).transform(v => v === 'true')` folded an absent
+>   parameter to `false` — which is right for `deleted` and wrong for any three-way filter, where
+>   absent means "both".
+
 ### Automation, websites, analytics, marketing
 
 ```

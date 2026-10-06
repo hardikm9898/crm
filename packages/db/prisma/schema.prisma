@@ -566,6 +566,7 @@ model Organization {
   importJobs               ImportJob[]
   importRows               ImportRow[]
   exportJobs               ExportJob[]
+  customers                Customer[]
 
   @@index([status])
   @@index([createdAt])
@@ -593,6 +594,7 @@ model Branch {
   workingHours WorkingHours[]
   holidays     Holiday[]
   leads        Lead[]
+  customers    Customer[]
 
   @@unique([organizationId, id], name: "branch_tenant_key")
   @@unique([organizationId, code])
@@ -615,6 +617,7 @@ model Team {
   branch       Branch?      @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict, map: "teams_branch_same_org_fk")
   members      TeamMember[]
   leads        Lead[]
+  customers    Customer[]
   savedViews   SavedView[]
 
   @@unique([organizationId, id], name: "team_tenant_key")
@@ -667,6 +670,7 @@ model Membership {
   availability            UserAvailability[]
   workingHours            WorkingHours[]
   assignedLeads           Lead[]                   @relation("lead_assignee")
+  ownedCustomers          Customer[]               @relation("customer_owner")
   assignmentPools         AssignmentPoolMember[]
   savedViews              SavedView[]
 
@@ -1377,6 +1381,8 @@ model Lead {
   mergesAsAbsorbed     LeadMerge[]         @relation("merge_absorbed")
   scoreEvents          LeadScoreEvent[]
   importRows           ImportRow[]
+  /// At most one, enforced by a partial unique index on `customers (organization_id, lead_id)`.
+  convertedCustomers   Customer[]
 
   @@unique([organizationId, id], name: "lead_tenant_key")
   /// The default list.
@@ -1514,6 +1520,10 @@ model Activity {
   id             String             @db.Uuid
   organizationId String             @map("organization_id") @db.Uuid
   leadId         String?            @map("lead_id") @db.Uuid
+  /// Set on activity that belongs to the customer rather than to the lead they came from. A
+  /// converted person's history is read as the **union** of the two, which is what makes conversion
+  /// non-destructive (`FR-DEAL-4`): nothing is copied, re-parented or lost.
+  customerId     String?            @map("customer_id") @db.Uuid
   /// A string from `ACTIVITY_TYPES` in `@leados/shared`, not a database enum: adding a type must not
   /// need a migration, and a row written by an older release must still read (`FR-TL-3`).
   type           String
@@ -1536,6 +1546,7 @@ model Activity {
   @@unique([organizationId, id, occurredAt], name: "activity_tenant_key")
   @@unique([organizationId, sourceEventId, occurredAt], name: "activity_idempotency_key")
   @@index([organizationId, leadId, occurredAt(sort: Desc)])
+  @@index([organizationId, customerId, occurredAt(sort: Desc)])
   @@index([organizationId, type, occurredAt(sort: Desc)])
   @@index([organizationId, actorId, occurredAt(sort: Desc)])
   @@map("activities")
@@ -2035,4 +2046,129 @@ model ExportJob {
   @@unique([organizationId, id], name: "export_job_tenant_key")
   @@index([organizationId, status, createdAt])
   @@map("export_jobs")
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// PHASE 2, STEP 6 — CUSTOMERS AND CONVERSION
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// Somebody who bought (`FR-DEAL-4`).
+///
+/// **A customer is a second record, and the lead is not destroyed.** `FR-DEAL-4` says conversion
+/// must preserve the full timeline and all touchpoints — "never a fresh record" — and this is how
+/// that is kept: `leadId` points back at the lead, the lead keeps its own history, and a customer's
+/// timeline is read as the **union** of `activities.lead_id = <its lead>` and
+/// `activities.customer_id = <this customer>`. Nothing is copied, re-parented or renumbered, so
+/// conversion cannot lose a touchpoint and un-converting is a soft delete rather than a migration.
+///
+/// The alternative — turning the lead row into a customer, or copying its history across — was
+/// rejected for a reason that shows up on the second day: a lead has a pipeline, a stage, a score
+/// and a lost reason, and a customer has an account, an address and a tax id. One table carrying
+/// both would need half its columns to be null for half its rows, and every query would start by
+/// asking which kind of row it was looking at.
+///
+/// Three columns from the Phase 0 sketch are deliberately **absent**: `lifetime_value_minor`,
+/// `first_purchase_at` and `last_purchase_at`. Their only writer is the payments ledger, which
+/// arrives with deals and quotations in the next step, and a money column that is always zero is a
+/// column that lies to every report that reads it.
+model Customer {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  // ── Provenance ───────────────────────────────────────────────────────────
+  /// The lead this customer was converted from, when there was one. Null for a customer entered
+  /// directly — a walk-in who paid on the spot was never a lead, and pretending otherwise would put
+  /// a fictional capture at the top of their timeline.
+  leadId      String?   @map("lead_id") @db.Uuid
+  /// When the conversion happened. Mirrors `leads.converted_at` for the lead it came from.
+  convertedAt DateTime? @map("converted_at") @db.Timestamptz(6)
+
+  // ── Ownership ────────────────────────────────────────────────────────────
+  branchId    String? @map("branch_id") @db.Uuid
+  teamId      String? @map("team_id") @db.Uuid
+  /// The account manager. Named `owner` rather than `assignee`: a customer is held, not worked.
+  ownerUserId String? @map("owner_user_id") @db.Uuid
+
+  // ── Identity ─────────────────────────────────────────────────────────────
+  firstName String? @map("first_name")
+  lastName  String? @map("last_name")
+  /// Maintained by the application, exactly as on `leads` and for the same reason.
+  fullName  String  @map("full_name")
+  company   String?
+  jobTitle  String? @map("job_title")
+
+  // ── Contact ──────────────────────────────────────────────────────────────
+  phoneE164    String? @map("phone_e164")
+  phoneRaw     String? @map("phone_raw")
+  whatsappE164 String? @map("whatsapp_e164")
+  email        String?
+  timezone     String?
+
+  // ── Billing address ──────────────────────────────────────────────────────
+  /// Separate from a lead's `city`/`state`: where an invoice goes is not where somebody enquired
+  /// from, and a business that gets those two confused sends the invoice to the site visit.
+  billingLine1 String? @map("billing_line1")
+  billingLine2 String? @map("billing_line2")
+  city         String?
+  state        String?
+  country      String? @db.Char(2)
+  postalCode   String? @map("postal_code")
+  /// GSTIN in India, VAT number elsewhere. Free text with a length bound, not a format check: the
+  /// format differs per country and refusing a valid foreign id would be worse than storing a typo.
+  taxId        String? @map("tax_id")
+
+  // ── Custom fields (ADR-0005) ─────────────────────────────────────────────
+  /// Against the `customer` entity type, which the field engine has always supported.
+  customValues     Json                     @default("{}") @map("custom_values") @db.JsonB
+  customSearchText String?                  @map("custom_search_text")
+  /// Maintained by a trigger, like the lead's, so an import cannot forget it.
+  searchVector     Unsupported("tsvector")? @map("search_vector")
+
+  // ── Consent (docs/security.md §8) ────────────────────────────────────────
+  /// Copied from the lead at conversion and authoritative from then on. Consent belongs to the
+  /// person, so re-asking a customer for permission they already gave as a lead would be absurd —
+  /// and the transfer is written to the timeline, so the copy is evidenced rather than assumed.
+  consentWhatsapp Boolean @default(false) @map("consent_whatsapp")
+  consentEmail    Boolean @default(false) @map("consent_email")
+  consentCalls    Boolean @default(false) @map("consent_calls")
+
+  // ── Engagement ───────────────────────────────────────────────────────────
+  lastActivityAt DateTime? @map("last_activity_at") @db.Timestamptz(6)
+
+  /// Set when this customer was absorbed by a merge (`FR-DUP-5`, next step). The column exists now
+  /// so the merge arrives without a migration, and nothing reads it yet.
+  mergedIntoId String? @map("merged_into_id") @db.Uuid
+
+  createdById String?   @map("created_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(6)
+  deletedById String?   @map("deleted_by_id") @db.Uuid
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// `Restrict`, like every composite FK here: `SetNull` would try to clear `organization_id`. The
+  /// consequence is intended — a lead that became a customer cannot be purged while that customer
+  /// exists, because deleting it would orphan the history the customer's timeline is built from.
+  lead         Lead?        @relation(fields: [organizationId, leadId], references: [organizationId, id], onDelete: Restrict, map: "customers_lead_same_org_fk")
+  branch       Branch?      @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict, map: "customers_branch_same_org_fk")
+  team         Team?        @relation(fields: [organizationId, teamId], references: [organizationId, id], onDelete: Restrict, map: "customers_team_same_org_fk")
+  /// Through Membership, not User, so "owned by somebody in another tenant" is unrepresentable.
+  owner        Membership?  @relation("customer_owner", fields: [organizationId, ownerUserId], references: [organizationId, userId], onDelete: Restrict, map: "customers_owner_same_org_fk")
+
+  mergedInto     Customer?  @relation("customer_merge_pointer", fields: [organizationId, mergedIntoId], references: [organizationId, id], onDelete: Restrict, map: "customers_merged_into_same_org_fk")
+  mergedFromThis Customer[] @relation("customer_merge_pointer")
+
+  @@unique([organizationId, id], name: "customer_tenant_key")
+  /// The default list.
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([organizationId, ownerUserId, createdAt(sort: Desc)])
+  @@index([organizationId, phoneE164])
+  @@index([organizationId, email])
+  @@index([organizationId, lastActivityAt])
+  /// The recycle bin.
+  @@index([organizationId, deletedAt])
+  /// `customers_lead_unique` (a lead converts at most once) and `customers_merged_into` are partial
+  /// indexes written by hand in the migration — Prisma cannot express `WHERE … IS NOT NULL`, and the
+  /// second exists because Postgres never indexes the referencing side of a foreign key.
+  @@map("customers")
 }

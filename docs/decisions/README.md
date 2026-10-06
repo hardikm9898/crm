@@ -21,3 +21,4 @@ A decision is changed by writing a **new** ADR that supersedes the old one, neve
 | [0014](./ADR-0014-duplicate-matching.md)                | Duplicate rules as field sets; first rule wins; phone aliases    | Accepted |
 | [0015](./ADR-0015-score-as-event-sum.md)                | A lead's score is the sum of its score events                    | Accepted |
 | [0016](./ADR-0016-import-through-the-domain-service.md) | Imports create leads through the domain service, not bulk insert | Accepted |
+| [0017](./ADR-0017-customer-is-a-second-record.md)       | A customer is a second record; the timeline is a union           | Accepted |

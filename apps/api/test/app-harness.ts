@@ -13,6 +13,7 @@ import { RedisService } from '../src/infra/redis/redis.service.js';
 import { EnvelopeInterceptor } from '../src/infra/http/envelope.interceptor.js';
 import { allowCsvUpload } from '../src/infra/http/csv-body.js';
 import { allowEmptyJsonBody } from '../src/infra/http/empty-json-body.js';
+import { UuidParamPipe } from '../src/infra/http/uuid-param.pipe.js';
 import { installValidationCopy } from '../src/infra/http/validation-copy.js';
 import { AppExceptionFilter } from '../src/infra/http/app-exception.filter.js';
 
@@ -40,6 +41,7 @@ export async function bootTestApp(): Promise<TestApp> {
   installValidationCopy();
   allowEmptyJsonBody(app, 256 * 1024);
   allowCsvUpload(app, 20 * 1024 * 1024, ['/api/v1/imports']);
+  app.useGlobalPipes(new UuidParamPipe());
   app.useGlobalInterceptors(new EnvelopeInterceptor());
   app.useGlobalFilters(new AppExceptionFilter(logger));
   await app.init();
@@ -144,4 +146,10 @@ export interface EnvelopeBody<T> {
   data: T;
   message?: string;
   error?: { code: string; message: string; details?: unknown };
+  /**
+   * `requestId`, and `pagination` for a paginated handler — plus whatever `meta` the handler
+   * returned, which the envelope merges in. Typed loosely because its contents are per-endpoint,
+   * and a test that reads a cursor from it should say so by narrowing at the call site.
+   */
+  meta?: Record<string, unknown>;
 }

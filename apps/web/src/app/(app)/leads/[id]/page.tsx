@@ -6,6 +6,7 @@ import { Badge, Button, Card, EmptyState, ErrorNotice } from '@/components/ui';
 import {
   bandFor,
   bandTone,
+  formatDate,
   formatDateTime,
   formatMoney,
   formatPhone,
@@ -26,7 +27,8 @@ import {
   type PipelineSummary,
   type ScoreBreakdown,
 } from '@/lib/leads';
-import { Timeline } from './_components/timeline';
+import { Timeline } from '@/components/timeline';
+import { ConvertForm } from '../../customers/_components/convert-form';
 import {
   OwnerControl,
   RecomputeScoreButton,
@@ -391,6 +393,26 @@ export default async function LeadDetailPage({
               </div>
             </div>
           </Card>
+
+          {/* Conversion is `customer:manage`, not `lead:update`: creating a customer is what it
+              does, and a workspace may well let somebody work leads without opening accounts. */}
+          {can(user, 'customer:manage') &&
+            !lead.deletedAt &&
+            (lead.convertedAt ? (
+              <Card title="Already a customer">
+                <p className="text-sm">
+                  Converted on {formatDate(lead.convertedAt)}.{' '}
+                  <Link href="/customers" className="underline">
+                    Find them in customers
+                  </Link>
+                  .
+                </p>
+              </Card>
+            ) : (
+              <Card title="Won the sale?">
+                <ConvertForm leadId={lead.id} />
+              </Card>
+            ))}
 
           {mayUpdate && (
             <Card title="Move this lead">
