@@ -9,6 +9,7 @@ import {
 import {
   seedCrmDefaults,
   seedDealPipeline,
+  seedPaymentMethods,
   seedDefaultAssignmentRule,
   seedScoringAndViews,
 } from '@leados/db';
@@ -165,6 +166,7 @@ export class OrganizationProvisioningService {
         // A deal pipeline from the first day: a workspace that has to configure one before it can
         // record a sale is a workspace where the first sale is recorded in a spreadsheet instead.
         await seedDealPipeline(tx, organizationId);
+        await seedPaymentMethods(tx, organizationId);
         // The owner is the only member at signup, so they are the pool. A round-robin of one still
         // exercises the whole path — eligibility, working hours, the fallback — from day one.
         await seedDefaultAssignmentRule(tx, organizationId, [input.ownerUserId]);

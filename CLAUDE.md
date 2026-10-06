@@ -307,6 +307,43 @@ prisma migrate deploy` after generating a migration.
   assert is the `%PDF-` header, the byte length, and — by inflating the streams and reading the
   `ToUnicode` CMap's `beginbfrange` array — the set of characters the document actually contains.
   That is how `₹` (U+20B9) was confirmed to render rather than to be a box.
+- **Two CHECK constraints can contradict each other, and the database will let you install both.**
+  `payments_received_has_timestamp` as `(status = 'succeeded') = (paid_at IS NOT NULL)` and
+  `payments_refund_was_received` as `refunded_at IS NULL OR paid_at IS NOT NULL` are each sensible
+  and together make refunding **impossible** — every refund fails with a constraint name. Nothing
+  catches that until something exercises the transition, because neither constraint is wrong on its
+  own. A status/timestamp rule over more than two statuses wants a `CASE`, not a biconditional.
+- **Adding a permission to the catalogue does not grant it to an existing workspace.**
+  `SYSTEM_ROLE_TEMPLATES` is read when a workspace is **created**, so a new key reaches new
+  workspaces and nothing else: `payment:read` answered 403 for the owner of a seeded workspace five
+  minutes after being written. Every step that adds a permission ends with a data migration that
+  inserts the grant for roles still marked `is_system`, matching the template's code and scope, only
+  where it is absent. And then `PrincipalService` caches grants for five minutes, so the 403
+  continues after the migration until the cache expires.
+- **`prisma migrate reset` is not available unattended, and it is not needed.** A migration that
+  half-applied leaves its tables created and an unfinished `_prisma_migrations` row; dropping the
+  objects it created and deleting that row by hand restores the state without touching the seeded
+  data. Resetting a development database is still a destructive action that needs the user's consent.
+- **Prisma puts `AlterTable … ADD COLUMN` in the same region as the spurious `DROP`s.** Cutting
+  "everything before the first `-- CreateTable`" deleted the two `ADD COLUMN` statements along with
+  the drops, and the migration failed on `column "paid_minor" does not exist`. Remove the
+  `-- DropForeignKey` and `-- DropIndex` sections **only**.
+- **A `<select>` does not come back from a refused submission.** `state.values` restores text boxes
+  through `defaultValue`, and restores a select through nothing: a controlled `value={methodId}` with
+  `useState('')` lost the method somebody had picked, and because the method decides whether a
+  reference is required, the commonest path through the form recorded the payment with **no method
+  at all**, silently. A controlled `value` did not fix it either — React re-created the options in
+  the same commit and the DOM kept `selectedIndex: 0`, so the screen said "Not recorded" while the
+  component thought otherwise. What works is `key={`method-${echoed}`}` with `defaultValue={echoed}`:
+  the select remounts exactly when the echo changes, and is left alone while somebody is typing.
+- **A settings list whose values live only in inputs is unreadable and unassertable.** Seven editable
+  rows rendered as seven identical "Name" labels, and a browser check asserting `/Cheque/` against
+  the page passed off the page's own description sentence. Each row now prints its name as text
+  (`data-method-name`) above the editor — better to read, and the only thing a check can trust.
+- **Adding a form to a page makes other forms' field selectors ambiguous.** A payments panel with a
+  `name="note"` input broke a deal browser check that had been filling `input[name="note"]` for two
+  steps — it resolved to two elements and waited forever on the hidden one. Scope a field selector to
+  its form (`form:has(button:text("Confirm won")) input[name="note"]`).
 
 ## Reporting work
 

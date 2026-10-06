@@ -4,7 +4,7 @@ import { DbService } from '../../infra/db/db.service.js';
 import type { TransactionClient } from '../../infra/outbox/outbox.service.js';
 import type { UpdateNumberSeriesInput } from './quotations.dto.js';
 
-export const NUMBER_SERIES_KINDS = { QUOTATION: 'quotation' } as const;
+export const NUMBER_SERIES_KINDS = { QUOTATION: 'quotation', PAYMENT: 'payment' } as const;
 
 /**
  * Handing out the next document number for a workspace (`FR-DEAL-2`).
@@ -125,5 +125,9 @@ export class NumberSeriesService {
 }
 
 function defaultPrefixFor(kind: string): string {
-  return kind === NUMBER_SERIES_KINDS.QUOTATION ? 'QTN-' : `${kind.toUpperCase()}-`;
+  if (kind === NUMBER_SERIES_KINDS.QUOTATION) return 'QTN-';
+  // A receipt number is what a customer is given for money handed over, so it gets its own series
+  // rather than sharing the quotation counter — the two are counted and quoted independently.
+  if (kind === NUMBER_SERIES_KINDS.PAYMENT) return 'RCPT-';
+  return `${kind.toUpperCase()}-`;
 }

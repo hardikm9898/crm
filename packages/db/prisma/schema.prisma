@@ -575,6 +575,9 @@ model Organization {
   quotations     Quotation[]
   quotationItems QuotationItem[]
 
+  paymentMethods PaymentMethod[]
+  payments       Payment[]
+
   @@index([status])
   @@index([createdAt])
   @@map("organizations")
@@ -606,6 +609,8 @@ model Branch {
 
   quotations Quotation[]
 
+  payments Payment[]
+
   @@unique([organizationId, id], name: "branch_tenant_key")
   @@unique([organizationId, code])
   @@index([organizationId, deletedAt])
@@ -632,6 +637,8 @@ model Team {
   savedViews   SavedView[]
 
   quotations Quotation[]
+
+  payments Payment[]
 
   @@unique([organizationId, id], name: "team_tenant_key")
   @@index([organizationId, deletedAt])
@@ -689,6 +696,8 @@ model Membership {
   savedViews              SavedView[]
 
   ownedQuotations Quotation[] @relation("quotation_owner")
+
+  recordedPayments Payment[] @relation("payment_owner")
 
   @@unique([organizationId, id], name: "membership_tenant_key")
   @@unique([organizationId, userId])
@@ -1407,6 +1416,8 @@ model Lead {
   deals                Deal[]
 
   quotations Quotation[]
+
+  payments Payment[]
 
   @@unique([organizationId, id], name: "lead_tenant_key")
   /// The default list.
@@ -2164,6 +2175,15 @@ model Customer {
   consentCalls    Boolean @default(false) @map("consent_calls")
 
   // ── Engagement ───────────────────────────────────────────────────────────
+  /// Everything this customer has ever paid, in minor units, plus the first and last dates.
+  ///
+  /// **Derived from `payments`, and absent until step 9 built the ledger that writes them.** A money
+  /// column with no writer reads as zero and lies to every report that touches it, which is why
+  /// these three waited three steps rather than shipping empty.
+  lifetimeValueMinor BigInt    @default(0) @map("lifetime_value_minor")
+  firstPurchaseAt    DateTime? @map("first_purchase_at") @db.Timestamptz(6)
+  lastPurchaseAt     DateTime? @map("last_purchase_at") @db.Timestamptz(6)
+
   lastActivityAt DateTime? @map("last_activity_at") @db.Timestamptz(6)
 
   /// Set when this customer was absorbed by a merge (`FR-DUP-5`, next step). The column exists now
@@ -2191,6 +2211,8 @@ model Customer {
   deals          Deal[]
 
   quotations Quotation[]
+
+  payments Payment[]
 
   @@unique([organizationId, id], name: "customer_tenant_key")
   /// The default list.
@@ -2296,6 +2318,12 @@ model Deal {
   taxMinor      BigInt @default(0) @map("tax_minor")
   currency      String @db.Char(3)
 
+  /// What has actually been received against this deal, in minor units. **Derived from
+  /// `payments`** and recomputed from that table rather than incremented — a running total that is
+  /// incremented drifts the first time two writers read it at once. `value_minor - paid_minor` is
+  /// what a collections call is about.
+  paidMinor BigInt @default(0) @map("paid_minor")
+
   expectedCloseDate DateTime? @map("expected_close_date") @db.Date
 
   // ── Outcome ──────────────────────────────────────────────────────────────
@@ -2328,6 +2356,8 @@ model Deal {
   items DealItem[]
 
   quotations Quotation[]
+
+  payments Payment[]
 
   @@unique([organizationId, id], name: "deal_tenant_key")
   @@index([organizationId, createdAt(sort: Desc)])
@@ -2521,6 +2551,8 @@ model Quotation {
 
   items QuotationItem[]
 
+  payments Payment[]
+
   @@unique([organizationId, id], name: "quotation_tenant_key")
   /// One row per version of a number. This is what makes a revision a new row rather than an edit.
   @@unique([organizationId, number, version])
@@ -2574,4 +2606,117 @@ model QuotationItem {
   @@index([organizationId, quotationId])
   @@index([organizationId, productId])
   @@map("quotation_items")
+}
+
+/// How money arrives, as the tenant's own list (`FR-DEAL-3`).
+///
+/// A table and not a CHECK, for the same reason `lost_reasons` is one: a reconciliation report
+/// groups by it, a dropdown offers it, and the right answers differ per business — cash and UPI for
+/// a retailer, cheque and NEFT for a builder, a card terminal for a clinic. Code never checks a
+/// method's name; it checks that the row belongs to this workspace.
+model PaymentMethod {
+  id                String    @id @db.Uuid
+  organizationId    String    @map("organization_id") @db.Uuid
+  name              String
+  sortOrder         Int       @default(0) @map("sort_order")
+  /// Cheque numbers and UPI transaction ids: when true, a payment must carry `reference`.
+  requiresReference Boolean   @default(false) @map("requires_reference")
+  isActive          Boolean   @default(true) @map("is_active")
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt         DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  payments     Payment[]
+
+  @@unique([organizationId, id], name: "payment_method_tenant_key")
+  @@unique([organizationId, name])
+  @@index([organizationId, isActive, sortOrder])
+  @@map("payment_methods")
+}
+
+/// Money that actually arrived (`FR-DEAL-3`).
+///
+/// **The ledger, and the only legitimate writer of every revenue figure in the product.** A deal's
+/// value is what was agreed; a payment is what was received, and the two are different numbers that
+/// a business owner needs separately — "₹1,15,050 agreed, ₹50,000 received" is the sentence a
+/// collections call starts from.
+///
+/// **Partial payments are rows, not a column.** Three instalments against one deal are three rows,
+/// which is what makes "when did each one arrive, by what method, against which reference" a
+/// question with an answer. `deals.paid_minor` and the three `customers` rollup columns are derived
+/// from this table and recomputed from it — never incremented — because a running total that is
+/// incremented drifts the first time two jobs read it at once.
+///
+/// **A refund is a status, not a negative row.** `amount_minor` is non-negative by constraint, so a
+/// negative payment cannot exist; reversing one sets `refunded_at` and takes it out of every total.
+/// Partial refunds are deliberately not representable yet (see the module README).
+model Payment {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  // ── What it is against ───────────────────────────────────────────────────
+  /// `payments_has_subject` requires one of these four. Money from nobody is not a receipt.
+  dealId      String? @map("deal_id") @db.Uuid
+  quotationId String? @map("quotation_id") @db.Uuid
+  leadId      String? @map("lead_id") @db.Uuid
+  customerId  String? @map("customer_id") @db.Uuid
+
+  // ── Ownership, for the data scope ────────────────────────────────────────
+  branchId    String? @map("branch_id") @db.Uuid
+  teamId      String? @map("team_id") @db.Uuid
+  ownerUserId String? @map("owner_user_id") @db.Uuid
+
+  /// The receipt number, from the tenant's `payment` series. Unique per workspace.
+  number String
+
+  amountMinor BigInt @map("amount_minor")
+  currency    String @db.Char(3)
+
+  methodId  String? @map("method_id") @db.Uuid
+  /// A cheque number, a UPI transaction id, a bank reference — as the tenant typed it.
+  reference String?
+
+  /// `pending | succeeded | failed | refunded`, held by `payments_status`.
+  status      String    @default("succeeded")
+  /// When the money arrived. Backdating is normal: the bank statement follows the cheque.
+  paidAt      DateTime? @map("paid_at") @db.Timestamptz(6)
+  failedAt    DateTime? @map("failed_at") @db.Timestamptz(6)
+  refundedAt  DateTime? @map("refunded_at") @db.Timestamptz(6)
+  outcomeNote String?   @map("outcome_note")
+
+  /// The provider adapter's own identifiers, for the phase that adds one. A webhook has to be
+  /// idempotent (`CLAUDE.md` rule 12), and `payments_provider_payment_key` is what makes it so.
+  provider          String?
+  providerPaymentId String? @map("provider_payment_id")
+
+  metadata Json @default("{}") @db.JsonB
+
+  createdById String?   @map("created_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  deal         Deal?          @relation(fields: [organizationId, dealId], references: [organizationId, id], onDelete: Restrict, map: "payments_deal_same_org_fk")
+  quotation    Quotation?     @relation(fields: [organizationId, quotationId], references: [organizationId, id], onDelete: Restrict, map: "payments_quotation_same_org_fk")
+  lead         Lead?          @relation(fields: [organizationId, leadId], references: [organizationId, id], onDelete: Restrict, map: "payments_lead_same_org_fk")
+  customer     Customer?      @relation(fields: [organizationId, customerId], references: [organizationId, id], onDelete: Restrict, map: "payments_customer_same_org_fk")
+  branch       Branch?        @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict, map: "payments_branch_same_org_fk")
+  team         Team?          @relation(fields: [organizationId, teamId], references: [organizationId, id], onDelete: Restrict, map: "payments_team_same_org_fk")
+  owner        Membership?    @relation("payment_owner", fields: [organizationId, ownerUserId], references: [organizationId, userId], onDelete: Restrict, map: "payments_owner_same_org_fk")
+  method       PaymentMethod? @relation(fields: [organizationId, methodId], references: [organizationId, id], onDelete: Restrict, map: "payments_method_same_org_fk")
+
+  @@unique([organizationId, id], name: "payment_tenant_key")
+  @@unique([organizationId, number])
+  @@index([organizationId, paidAt(sort: Desc)])
+  @@index([organizationId, dealId])
+  @@index([organizationId, customerId])
+  @@index([organizationId, leadId])
+  @@index([organizationId, quotationId])
+  @@index([organizationId, status, paidAt(sort: Desc)])
+  @@index([organizationId, methodId])
+  /// `payments_provider_payment_key` (the partial unique index that makes a provider webhook
+  /// idempotent) and the CHECK constraints are hand-written in the migration.
+  @@map("payments")
 }

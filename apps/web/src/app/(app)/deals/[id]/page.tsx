@@ -18,6 +18,15 @@ import {
   type QuotationSummary,
 } from '@/lib/quotations';
 import { NewQuotationForm } from '../../quotations/_components/quotation-forms';
+import {
+  PAYMENT_STATUS_CLASSES,
+  PAYMENT_STATUS_LABELS,
+  loadDealPayments,
+  loadPaymentMethods,
+  type PaymentMethod,
+  type PaymentSummary,
+} from '@/lib/payments';
+import { RecordPaymentForm } from '../../payments/_components/payment-forms';
 import type { TimelineEntryLike } from '@/lib/timeline-registry';
 import {
   DeleteDealButton,
@@ -53,15 +62,19 @@ export default async function DealPage({ params }: { params: Promise<{ id: strin
     );
   }
 
-  const [timeline, products, stages, lostReasons, quotations] = await Promise.all([
-    loadDealTimeline(id, token).catch(() => [] as TimelineEntryLike[]),
-    loadProducts(token),
-    loadStages(deal.pipeline.id, token),
-    loadLostReasons(token),
-    loadDealQuotations(id, token),
-  ]);
+  const [timeline, products, stages, lostReasons, quotations, payments, methods] =
+    await Promise.all([
+      loadDealTimeline(id, token).catch(() => [] as TimelineEntryLike[]),
+      loadProducts(token),
+      loadStages(deal.pipeline.id, token),
+      loadLostReasons(token),
+      loadDealQuotations(id, token),
+      loadDealPayments(id, token),
+      loadPaymentMethods(token),
+    ]);
 
   const editable = can(user, 'deal:manage') && deal.deletedAt === null;
+  const canRecordPayments = can(user, 'payment:record');
   const party = deal.customer ?? deal.lead;
   const partyHref = deal.customer
     ? `/customers/${deal.customer.id}`
@@ -105,10 +118,13 @@ export default async function DealPage({ params }: { params: Promise<{ id: strin
           value={formatMoney(deal.weightedMinor, deal.currency)}
           hint={`${deal.probability}% at this stage`}
         />
-        <StatCard label="Tax" value={formatMoney(deal.taxMinor, deal.currency)} />
+        <StatCard label="Received" value={formatMoney(deal.paidMinor, deal.currency)} />
         <StatCard
-          label="Closing"
-          value={deal.expectedCloseDate ? formatDate(deal.expectedCloseDate) : '—'}
+          label="Outstanding"
+          value={formatMoney(deal.outstandingMinor, deal.currency)}
+          hint={
+            deal.expectedCloseDate ? `Closing ${formatDate(deal.expectedCloseDate)}` : undefined
+          }
         />
       </div>
 
@@ -141,6 +157,20 @@ export default async function DealPage({ params }: { params: Promise<{ id: strin
               dealId={deal.id}
               products={products}
               canRaise={editable && deal.outcome === 'open'}
+            />
+          </Card>
+
+          <Card
+            title="Payments"
+            description="What has actually arrived. A deal's value is what was agreed; this is what is in the bank."
+          >
+            <PaymentPanel
+              payments={payments}
+              methods={methods}
+              dealId={deal.id}
+              currency={deal.currency}
+              outstandingMinor={deal.outstandingMinor}
+              canRecord={canRecordPayments && deal.deletedAt === null}
             />
           </Card>
 
@@ -260,6 +290,79 @@ function QuotationPanel({
               products={products}
               currency={currency}
               copiesDealLines
+            />
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The payments against this deal, with the form to record another.
+ *
+ * The amount box is pre-filled with what is outstanding, because that is the figure somebody is
+ * about to type nine times out of ten — and getting it wrong is the one data-entry error that moves
+ * a revenue report.
+ */
+function PaymentPanel({
+  payments,
+  methods,
+  dealId,
+  currency,
+  outstandingMinor,
+  canRecord,
+}: {
+  payments: PaymentSummary[];
+  methods: PaymentMethod[];
+  dealId: string;
+  currency: string;
+  outstandingMinor: number;
+  canRecord: boolean;
+}) {
+  return (
+    <div className="flex flex-col gap-4">
+      {payments.length === 0 ? (
+        <p className="text-sm text-[var(--color-text-muted)]">Nothing received yet.</p>
+      ) : (
+        <ul className="flex flex-col gap-2 text-sm">
+          {payments.map((payment) => (
+            <li key={payment.id} className="flex flex-wrap items-center gap-3">
+              <Link href={`/payments/${payment.id}`} className="font-medium underline">
+                {payment.number}
+              </Link>
+              <span
+                className={`inline-block rounded px-2 py-0.5 text-xs ${PAYMENT_STATUS_CLASSES[payment.status]}`}
+              >
+                {PAYMENT_STATUS_LABELS[payment.status]}
+              </span>
+              {payment.method && (
+                <span className="text-xs text-[var(--color-text-muted)]">
+                  {payment.method.name}
+                </span>
+              )}
+              {payment.paidAt && (
+                <span className="text-xs text-[var(--color-text-muted)]">
+                  {formatDate(payment.paidAt)}
+                </span>
+              )}
+              <span className="numeric ml-auto">
+                {formatMoney(payment.amountMinor, payment.currency)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {canRecord && (
+        <details className="rounded border border-[var(--color-border)] p-3">
+          <summary className="cursor-pointer text-sm font-medium">Record a payment</summary>
+          <div className="mt-3">
+            <RecordPaymentForm
+              methods={methods}
+              dealId={dealId}
+              outstandingMinor={outstandingMinor}
+              currency={currency}
             />
           </div>
         </details>

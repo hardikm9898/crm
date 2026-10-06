@@ -12,6 +12,9 @@ export interface DealSummary {
   grossMinor: number;
   discountMinor: number;
   taxMinor: number;
+  /** What has arrived, and what is still owed. Derived from the payments ledger. */
+  paidMinor: number;
+  outstandingMinor: number;
   weightedMinor: number;
   currency: string;
   expectedCloseDate: string | null;

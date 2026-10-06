@@ -1463,3 +1463,208 @@ describe('layer 3 — a quotation cannot be stitched to another tenant (FR-DEAL-
     expect(seenByA.length).toBeGreaterThan(0);
   });
 });
+
+describe('layer 3 — a payment cannot be stitched to another tenant (FR-DEAL-3)', () => {
+  async function method(organizationId: string) {
+    const id = newId();
+    await h.unscoped.paymentMethod.create({
+      data: { id, organizationId, name: `Cash ${id.slice(-8)}` },
+    });
+    return id;
+  }
+
+  it('blocks a payment against another tenant’s lead, customer, owner or method', async () => {
+    const base = {
+      organizationId: h.orgA.organizationId,
+      amountMinor: 1_000,
+      currency: 'INR',
+      status: 'succeeded',
+      paidAt: new Date(),
+    };
+
+    await expect(
+      h.unscoped.payment.create({
+        data: { ...base, id: newId(), number: `RCPT-${newId().slice(-8)}`, leadId: h.orgB.leadId },
+      }),
+    ).rejects.toThrow(/payments_lead_same_org_fk|foreign key/i);
+
+    await expect(
+      h.unscoped.payment.create({
+        data: {
+          ...base,
+          id: newId(),
+          number: `RCPT-${newId().slice(-8)}`,
+          leadId: h.orgA.leadId,
+          ownerUserId: h.orgB.userId,
+        },
+      }),
+    ).rejects.toThrow(/payments_owner_same_org_fk|foreign key/i);
+
+    const theirMethod = await method(h.orgB.organizationId);
+    await expect(
+      h.unscoped.payment.create({
+        data: {
+          ...base,
+          id: newId(),
+          number: `RCPT-${newId().slice(-8)}`,
+          leadId: h.orgA.leadId,
+          methodId: theirMethod,
+        },
+      }),
+    ).rejects.toThrow(/payments_method_same_org_fk|foreign key/i);
+  });
+
+  it('makes a receipt for nobody, and a receipt for nothing, unrepresentable', async () => {
+    await expect(
+      h.unscoped.payment.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          number: `RCPT-${newId().slice(-8)}`,
+          amountMinor: 1_000,
+          currency: 'INR',
+          status: 'succeeded',
+          paidAt: new Date(),
+        },
+      }),
+    ).rejects.toThrow(/payments_has_subject/i);
+
+    await expect(
+      h.unscoped.payment.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          number: `RCPT-${newId().slice(-8)}`,
+          leadId: h.orgA.leadId,
+          amountMinor: 0,
+          currency: 'INR',
+          status: 'succeeded',
+          paidAt: new Date(),
+        },
+      }),
+    ).rejects.toThrow(/payments_amount_positive/i);
+  });
+
+  it('refuses money that arrived with no date, and a pending payment that has one', async () => {
+    const base = {
+      organizationId: h.orgA.organizationId,
+      leadId: h.orgA.leadId,
+      amountMinor: 1_000,
+      currency: 'INR',
+    };
+    await expect(
+      h.unscoped.payment.create({
+        data: { ...base, id: newId(), number: `RCPT-${newId().slice(-8)}`, status: 'succeeded' },
+      }),
+    ).rejects.toThrow(/payments_received_has_timestamp/i);
+
+    await expect(
+      h.unscoped.payment.create({
+        data: {
+          ...base,
+          id: newId(),
+          number: `RCPT-${newId().slice(-8)}`,
+          status: 'pending',
+          paidAt: new Date(),
+        },
+      }),
+    ).rejects.toThrow(/payments_received_has_timestamp/i);
+  });
+
+  it('lets a refunded payment keep the date the money arrived on', async () => {
+    // The two constraints `payments_received_has_timestamp` and `payments_refund_was_received`
+    // contradicted each other when the first was written as a biconditional on `succeeded`, which
+    // made refunding anything impossible. This is the test that keeps them compatible.
+    const id = newId();
+    await h.unscoped.payment.create({
+      data: {
+        id,
+        organizationId: h.orgA.organizationId,
+        leadId: h.orgA.leadId,
+        number: `RCPT-${id.slice(-8)}`,
+        amountMinor: 1_000,
+        currency: 'INR',
+        status: 'refunded',
+        paidAt: new Date('2026-03-01T10:00:00.000Z'),
+        refundedAt: new Date('2026-03-08T10:00:00.000Z'),
+      },
+    });
+    const row = await h.unscoped.payment.findUniqueOrThrow({ where: { id } });
+    expect(row.paidAt).not.toBeNull();
+    expect(row.refundedAt).not.toBeNull();
+  });
+
+  it('keeps a receipt number unique per workspace and free across workspaces', async () => {
+    const number = 'RCPT-0001';
+    for (const org of [h.orgA, h.orgB]) {
+      await h.unscoped.payment.create({
+        data: {
+          id: newId(),
+          organizationId: org.organizationId,
+          leadId: org.leadId,
+          number,
+          amountMinor: 1_000,
+          currency: 'INR',
+          status: 'succeeded',
+          paidAt: new Date(),
+        },
+      });
+    }
+    await expect(
+      h.unscoped.payment.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          leadId: h.orgA.leadId,
+          number,
+          amountMinor: 1_000,
+          currency: 'INR',
+          status: 'succeeded',
+          paidAt: new Date(),
+        },
+      }),
+    ).rejects.toThrow(/unique|duplicate key/i);
+
+    const seenByA = await tenantContext.run(h.orgA.principal, async () =>
+      h.db.payment.findMany({ where: { number } }),
+    );
+    expect(seenByA).toHaveLength(1);
+  });
+
+  it('refuses a customer whose purchase dates are out of order, or half set', async () => {
+    const customerId = newId();
+    await h.unscoped.customer.create({
+      data: {
+        id: customerId,
+        organizationId: h.orgA.organizationId,
+        fullName: 'Rollup Guard',
+      },
+    });
+    await expect(
+      h.unscoped.customer.update({
+        where: { id: customerId },
+        data: { firstPurchaseAt: new Date('2026-05-01T00:00:00.000Z') },
+      }),
+    ).rejects.toThrow(/customers_purchase_dates_pair/i);
+    await expect(
+      h.unscoped.customer.update({
+        where: { id: customerId },
+        data: {
+          firstPurchaseAt: new Date('2026-05-01T00:00:00.000Z'),
+          lastPurchaseAt: new Date('2026-01-01T00:00:00.000Z'),
+        },
+      }),
+    ).rejects.toThrow(/customers_purchase_dates_ordered/i);
+  });
+
+  it('shows each tenant only its own payments and methods', async () => {
+    for (const org of [h.orgA, h.orgB]) {
+      await method(org.organizationId);
+    }
+    const seenByA = await tenantContext.run(h.orgA.principal, async () =>
+      h.db.paymentMethod.findMany({}),
+    );
+    expect(seenByA.every((row) => row.organizationId === h.orgA.organizationId)).toBe(true);
+    expect(seenByA.length).toBeGreaterThan(0);
+  });
+});

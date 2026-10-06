@@ -201,17 +201,30 @@ const CONTROL_CLASS =
 export function Field({
   label,
   hint,
+  error,
   children,
 }: {
   label: string;
   hint?: string;
+  /**
+   * The message for this one input.
+   *
+   * Optional and additive: the older forms render their own span after the control, which is the
+   * same markup by hand. When it is set it replaces the hint, because showing "enter an amount like
+   * 50,000" underneath "that is not an amount" is two sentences competing for one line.
+   */
+  error?: string;
   children: ReactNode;
 }) {
   return (
     <label className="flex flex-col gap-1.5 text-sm">
       <span className="font-medium">{label}</span>
       {children}
-      {hint && <span className="text-xs text-[var(--color-text-muted)]">{hint}</span>}
+      {error ? (
+        <span className="text-xs text-[var(--color-danger)]">{error}</span>
+      ) : (
+        hint && <span className="text-xs text-[var(--color-text-muted)]">{hint}</span>
+      )}
     </label>
   );
 }

@@ -479,6 +479,66 @@ AND deleted_at IS NULL`. SKUs are unique when present; a product without one is 
 > - **`quotations_reason_needs_rejection`**, so a rejection reason for a rejection that did not
 >   happen is not storable.
 
+> **Amendment, 2026-10-06 (implementation, step 9).** `payments` is built, and `payment_methods` is
+> new. The reasoning is
+> [ADR-0020](./decisions/ADR-0020-derived-money-is-recomputed.md).
+>
+> - **Partial payments are rows, not a column.** Three instalments against one deal are three rows,
+>   each with its own date, method and reference. Nothing caps the total at the deal's value: an
+>   advance and an overpayment are both real.
+> - **A refund is a status, not a negative row.** `payments_amount_positive` makes a negative payment
+>   unrepresentable; reversing one sets `refunded_at` and takes it out of every total while leaving
+>   the record of having received it. **Partial refunds are deliberately not representable** — a half
+>   refund is a credit note, which belongs with the GST surface.
+> - **`payment_methods` is a table, not a CHECK.** A reconciliation report groups by it and a
+>   dropdown offers it, and the right answers differ per business — cash and UPI for a retailer,
+>   cheque and NEFT for a builder (`CLAUDE.md` rule 4). `requires_reference` is the tenant saying
+>   that a payment by this method cannot be reconciled without a transaction id or cheque number.
+> - **A receipt gets a `number` from `number_series`**, under `kind = 'payment'` with its own prefix
+>   (`RCPT-`): the receipt a customer is handed is counted and quoted independently of the quotation
+>   series.
+> - **`attributed_touchpoint_id` is absent.** The Phase 0 sketch has it; nothing writes it until
+>   Phase 9's attribution, and a column nothing can trust does not exist yet. Attribution will reach
+>   a payment's touchpoints through its lead or customer, which is one join away.
+> - **`provider` / `provider_payment_id` exist with no adapter behind them**, because
+>   `payments_provider_payment_key` is the idempotency key a provider webhook needs (rule 12) and
+>   adding it later would mean a migration over live money.
+>
+> **`deals.paid_minor` and the three `customers` columns are now real.** `lifetime_value_minor`,
+> `first_purchase_at` and `last_purchase_at` were carried as deliberately absent from step 6 to step
+> 9 for want of a writer; all four are **recomputed from `payments`** after any write that could
+> change them, inside the same transaction and after `SELECT … FOR UPDATE`, by one service. Never
+> incremented: a reversal path that forgets its compensating decrement drifts silently and forever,
+> and there is nothing left to compare the column against.
+>
+> Hand-written objects carrying guarantees the application cannot:
+>
+> - **`payments_received`**, partial on `status = 'succeeded' AND deleted_at IS NULL` — what every
+>   revenue figure reads, out of a table whose failed and refunded rows accumulate forever.
+> - **`payments_provider_payment_key`**, a partial unique index on
+>   `(organization_id, provider, provider_payment_id)`. Partial because every manually recorded
+>   payment has neither column; a plain unique index would have allowed exactly one cash receipt per
+>   workspace.
+> - **`deals_part_paid`**, partial on open deals where `paid_minor < value_minor` — the collections
+>   question, which is a handful of rows out of every deal ever opened.
+> - **`payments_received_has_timestamp`**: money that arrived has a date, money that has not arrived
+>   does not. Deliberately **not** a biconditional on `succeeded` — a refunded payment _did_ arrive
+>   and keeps its date, and writing it the obvious way made it contradict
+>   `payments_refund_was_received` and refunding anything impossible. Found by refunding something.
+> - **`payments_amount_positive`**, `payments_has_subject`, `payments_status`,
+>   `payments_failed_has_timestamp`, `payments_refunded_has_timestamp`,
+>   `payments_refund_was_received`, `payments_metadata_is_object`.
+> - **`deals_paid_non_negative`**, `customers_lifetime_value_non_negative`, and the pair
+>   `customers_purchase_dates_pair` / `customers_purchase_dates_ordered`: both dates or neither, and
+>   a first purchase cannot follow a last one.
+>
+> One more thing this migration does, which every future step that adds a permission must copy: it
+> **grants the new permissions to the system roles that should already have them.** A permission
+> added to the catalogue reaches a new workspace through `SYSTEM_ROLE_TEMPLATES` and an existing one
+> through nothing at all, so `payment:read` answered 403 for the owner of a seeded workspace five
+> minutes after being written. The data migration is narrow on purpose: only roles still marked
+> `is_system`, only the codes the templates name, only where the grant is absent.
+
 ### 6.7 Customers and conversion
 
 | Table       | Purpose             | Key columns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
@@ -497,6 +557,11 @@ AND deleted_at IS NULL`. SKUs are unique when present; a product without one is 
 >   writer is the payments ledger, which arrives with deals and quotations. A money column that is
 >   always zero lies to every report that reads it, and the schema's own principle — a column nothing
 >   can trust does not exist yet — applies to more than foreign keys.
+>   **_Added in step 9_**, once `payments` existed to write them. All three are recomputed from the
+>   ledger rather than incremented, and a customer's lifetime value is the **union** of their own
+>   payments and their lead's — conversion re-parents nothing, so a deposit taken before the sale
+>   closed is still on the lead and still this customer's money
+>   ([ADR-0020](./decisions/ADR-0020-derived-money-is-recomputed.md)).
 > - **`customer_merges` is not created.** `FR-DUP-5` wants the lead merge machinery for customers;
 >   `customers.merged_into_id` exists so that arrives without a migration, and
 >   `customers_not_merged_into_self` already makes a one-cycle unrepresentable.

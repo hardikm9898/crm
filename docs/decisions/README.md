@@ -24,3 +24,4 @@ A decision is changed by writing a **new** ADR that supersedes the old one, neve
 | [0017](./ADR-0017-customer-is-a-second-record.md)       | A customer is a second record; the timeline is a union             | Accepted |
 | [0018](./ADR-0018-money-arithmetic-in-one-place.md)     | Line-item arithmetic in one pure function, checked by the database | Accepted |
 | [0019](./ADR-0019-quotation-versions-are-immutable.md)  | A quotation version is immutable; its PDF is a cached artefact     | Accepted |
+| [0020](./ADR-0020-derived-money-is-recomputed.md)       | Derived money is recomputed from the ledger, never incremented     | Accepted |

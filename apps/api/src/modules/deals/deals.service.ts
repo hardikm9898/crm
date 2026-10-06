@@ -1065,6 +1065,7 @@ export class DealsService {
     grossMinor: bigint;
     discountMinor: bigint;
     taxMinor: bigint;
+    paidMinor: bigint;
     currency: string;
     expectedCloseDate: Date | null;
     wonAt: Date | null;
@@ -1091,6 +1092,16 @@ export class DealsService {
       grossMinor: Number(deal.grossMinor),
       discountMinor: Number(deal.discountMinor),
       taxMinor: Number(deal.taxMinor),
+      /**
+       * What has actually been received, and what is still owed.
+       *
+       * Two different numbers from the one a deal has always carried: `valueMinor` is what was
+       * agreed, `paidMinor` is what arrived, and the difference is what a collections call is
+       * about. `outstandingMinor` floors at zero, because an overpayment is a refund to arrange
+       * rather than a negative debt.
+       */
+      paidMinor: Number(deal.paidMinor),
+      outstandingMinor: Math.max(0, valueMinor - Number(deal.paidMinor)),
       /** What the probability says to expect — the figure a forecast should add up, not the total. */
       weightedMinor: weightedValueMinor(valueMinor, deal.probability),
       currency: deal.currency,

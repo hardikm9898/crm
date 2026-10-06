@@ -83,7 +83,10 @@ export const ACTIVITY_TYPES = {
   DEAL_LOST: 'deal.lost',
   DEAL_REOPENED: 'deal.reopened',
   DEAL_DELETED: 'deal.deleted',
+  PAYMENT_RECORDED: 'payment.recorded',
   PAYMENT_RECEIVED: 'payment.received',
+  PAYMENT_FAILED: 'payment.failed',
+  PAYMENT_REFUNDED: 'payment.refunded',
   // website and marketing (Phases 7–9)
   WEBSITE_SESSION: 'website.session',
   WEBSITE_PAGE_VIEW: 'website.page_view',

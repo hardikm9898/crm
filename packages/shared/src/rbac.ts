@@ -43,6 +43,8 @@ export const PERMISSIONS = {
   TASK_MANAGE_OTHERS: 'task:manage_others',
   DEAL_READ: 'deal:read',
   DEAL_MANAGE: 'deal:manage',
+  PAYMENT_READ: 'payment:read',
+  PAYMENT_RECORD: 'payment:record',
   // communication
   CONVERSATION_READ: 'conversation:read',
   CONVERSATION_REPLY: 'conversation:reply',
@@ -217,6 +219,23 @@ export const PERMISSION_CATALOGUE: readonly PermissionDefinition[] = [
     supportsScope: true,
   },
   {
+    key: P.PAYMENT_READ,
+    module: 'payments',
+    description: 'View payments received',
+    supportsScope: true,
+  },
+  {
+    /**
+     * Separate from `deal:manage` deliberately: quoting a price and recording that money arrived
+     * are different acts, and in most businesses they are done by different people. A workspace
+     * that wants one person to do both grants both — these are rows, not roles.
+     */
+    key: P.PAYMENT_RECORD,
+    module: 'payments',
+    description: 'Record, confirm and refund payments',
+    supportsScope: true,
+  },
+  {
     key: P.CONVERSATION_READ,
     module: 'conversations',
     description: 'View conversations',
@@ -351,6 +370,8 @@ export const SYSTEM_ROLE_TEMPLATES: readonly RoleTemplate[] = [
       { permission: P.TASK_MANAGE_OTHERS, scope: 'branch' },
       { permission: P.DEAL_READ, scope: 'branch' },
       { permission: P.DEAL_MANAGE, scope: 'branch' },
+      { permission: P.PAYMENT_READ, scope: 'branch' },
+      { permission: P.PAYMENT_RECORD, scope: 'branch' },
       { permission: P.CONVERSATION_READ, scope: 'branch' },
       { permission: P.CONVERSATION_REPLY, scope: 'branch' },
       { permission: P.CONVERSATION_ASSIGN, scope: 'branch' },
@@ -373,6 +394,10 @@ export const SYSTEM_ROLE_TEMPLATES: readonly RoleTemplate[] = [
       { permission: P.TASK_MANAGE, scope: 'own' },
       { permission: P.DEAL_READ, scope: 'own' },
       { permission: P.DEAL_MANAGE, scope: 'own' },
+      { permission: P.PAYMENT_READ, scope: 'own' },
+      // A salesperson who collects the cheque has to be able to record it; a workspace that wants
+      // only finance to do that removes this grant, which is a row.
+      { permission: P.PAYMENT_RECORD, scope: 'own' },
       { permission: P.CONVERSATION_READ, scope: 'own' },
       { permission: P.CONVERSATION_REPLY, scope: 'own' },
     ],
@@ -405,6 +430,7 @@ export const SYSTEM_ROLE_TEMPLATES: readonly RoleTemplate[] = [
       { permission: P.CUSTOMER_READ, scope: ALL },
       { permission: P.TASK_READ, scope: ALL },
       { permission: P.DEAL_READ, scope: ALL },
+      { permission: P.PAYMENT_READ, scope: ALL },
       { permission: P.CONVERSATION_READ, scope: ALL },
       { permission: P.REPORT_READ, scope: ALL },
       { permission: P.AUDIT_READ, scope: ALL },

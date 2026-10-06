@@ -170,6 +170,51 @@ export async function seedDealPipeline(
   return pipelineId;
 }
 
+/**
+ * How money arrives, for a workspace's first day (`FR-DEAL-3`).
+ *
+ * The five an Indian small business actually uses, in the order they are used. Cheque and bank
+ * transfer ask for a reference, because a reconciliation without the cheque number is a phone call
+ * to the bank — and UPI does too, since the transaction id is the only thing either side can quote.
+ * Every one of them is a row the tenant can rename, reorder, deactivate or replace.
+ */
+const PAYMENT_METHOD_SEEDS: readonly { name: string; requiresReference?: boolean }[] = [
+  { name: 'Cash' },
+  { name: 'UPI', requiresReference: true },
+  { name: 'Bank transfer', requiresReference: true },
+  { name: 'Cheque', requiresReference: true },
+  { name: 'Card' },
+];
+
+/**
+ * Seeded separately from `seedCrmDefaults` for the same reason the deal pipeline is: workspaces
+ * created before payments existed need these too, and `seedCrmDefaults` short-circuits on the
+ * presence of a lead status.
+ */
+export async function seedPaymentMethods(
+  tx: DbTransactionClient,
+  organizationId: string,
+): Promise<number> {
+  const existing = await tx.paymentMethod.findFirst({
+    where: { organizationId },
+    select: { id: true },
+  });
+  if (existing) return 0;
+
+  for (const [index, seed] of PAYMENT_METHOD_SEEDS.entries()) {
+    await tx.paymentMethod.create({
+      data: {
+        id: newId(),
+        organizationId,
+        name: seed.name,
+        sortOrder: index,
+        requiresReference: seed.requiresReference ?? false,
+      },
+    });
+  }
+  return PAYMENT_METHOD_SEEDS.length;
+}
+
 export async function seedDefaultTags(
   tx: DbTransactionClient,
   organizationId: string,
@@ -356,6 +401,7 @@ export const CRM_DEFAULT_SEEDS = {
   sources: SOURCE_SEEDS,
   lostReasons: LOST_REASON_SEEDS,
   tags: TAG_SEEDS,
+  paymentMethods: PAYMENT_METHOD_SEEDS,
 } as const;
 
 // ═══════════════════════════════════════════════════════════════════════════

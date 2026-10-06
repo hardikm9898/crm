@@ -100,6 +100,12 @@ const REQUIRED_INDEXES = [
   'quotations_current',
   'quotations_superseded_by',
   'quotations_awaiting_expiry',
+  // Payments. `payments_provider_payment_key` is the idempotency key a provider webhook will need
+  // (rule 12), partial because a manually recorded payment has neither column; `payments_received`
+  // is what every revenue figure reads.
+  'payments_provider_payment_key',
+  'payments_received',
+  'deals_part_paid',
 ];
 
 /**
@@ -276,6 +282,31 @@ const REQUIRED_CONSTRAINTS = [
   'number_series_kind_present',
   'number_series_next_value_positive',
   'number_series_padding_range',
+  // Payments (`FR-DEAL-3`). `payments_received_has_timestamp` is deliberately **not** a
+  // biconditional on `succeeded`: a refunded payment did arrive and keeps its date, and writing it
+  // the obvious way made it contradict `payments_refund_was_received` and refunding impossible.
+  'payments_has_subject',
+  'payments_status',
+  'payments_number_present',
+  'payments_currency_format',
+  'payments_amount_positive',
+  'payments_received_has_timestamp',
+  'payments_failed_has_timestamp',
+  'payments_refunded_has_timestamp',
+  'payments_refund_was_received',
+  'payments_metadata_is_object',
+  'payments_deal_same_org_fk',
+  'payments_quotation_same_org_fk',
+  'payments_lead_same_org_fk',
+  'payments_customer_same_org_fk',
+  'payments_owner_same_org_fk',
+  'payments_method_same_org_fk',
+  'payment_methods_name_present',
+  // The derived money columns, and the pair that keeps the two purchase dates honest.
+  'deals_paid_non_negative',
+  'customers_lifetime_value_non_negative',
+  'customers_purchase_dates_pair',
+  'customers_purchase_dates_ordered',
 ];
 
 describe('hand-written indexes survive every generated migration', () => {

@@ -304,6 +304,36 @@ const DESCRIBERS: Readonly<Record<string, Describer>> = {
     description: `${text(payload, 'number') ?? 'The quotation'} passed its validity date. Revise it to re-issue the price.`,
     tone: 'warning',
   }),
+  'payment.recorded': (payload) => ({
+    label: 'Payment',
+    description: `${money(payload, 'amountMinor', 'currency') ?? 'A payment'} recorded${
+      text(payload, 'method') ? ` by ${text(payload, 'method')}` : ''
+    }, not yet cleared${text(payload, 'reference') ? ` (${text(payload, 'reference')})` : ''}.`,
+    tone: 'warning',
+  }),
+  'payment.received': (payload) => ({
+    label: 'Paid',
+    description: `${money(payload, 'amountMinor', 'currency') ?? 'A payment'} received${
+      text(payload, 'method') ? ` by ${text(payload, 'method')}` : ''
+    }${text(payload, 'reference') ? ` (${text(payload, 'reference')})` : ''}${
+      text(payload, 'note') ? ` — ${text(payload, 'note')}` : ''
+    }.`,
+    tone: 'success',
+  }),
+  'payment.failed': (payload) => ({
+    label: 'Failed',
+    description: `${money(payload, 'amountMinor', 'currency') ?? 'A payment'} did not clear${
+      text(payload, 'note') ? ` — ${text(payload, 'note')}` : ''
+    }. It is out of every total.`,
+    tone: 'danger',
+  }),
+  'payment.refunded': (payload) => ({
+    label: 'Refunded',
+    description: `${money(payload, 'amountMinor', 'currency') ?? 'A payment'} refunded${
+      text(payload, 'note') ? ` — ${text(payload, 'note')}` : ''
+    }. The receipt stays; the money does not.`,
+    tone: 'warning',
+  }),
   'customer.deleted': () => ({
     label: 'Deleted',
     description: 'Moved to the recycle bin. Nothing about the history is gone.',

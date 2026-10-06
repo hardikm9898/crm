@@ -62,6 +62,8 @@ interface Tenant {
   customerId: string;
   dealId: string;
   quotationId: string;
+  paymentId: string;
+  paymentMethodId: string;
   productId: string;
 }
 
@@ -265,6 +267,18 @@ async function createTenant(label: string): Promise<Tenant> {
     token,
   });
 
+  const paymentMethods = await call<EnvelopeBody<{ id: string }[]>>(ctx.app, {
+    method: 'GET',
+    url: '/api/v1/settings/payment-methods',
+    token,
+  });
+  const payment = await call<EnvelopeBody<{ id: string }>>(ctx.app, {
+    method: 'POST',
+    url: '/api/v1/payments',
+    payload: { dealId: deal.body.data.id, amountMinor: 25_000 },
+    token,
+  });
+
   const [duplicateRule, assignmentRule, scoringRule, savedView] = await Promise.all([
     ctx.db.duplicateRule.findFirstOrThrow({ where: { organizationId, isActive: true } }),
     ctx.db.assignmentRule.findFirstOrThrow({ where: { organizationId } }),
@@ -303,6 +317,8 @@ async function createTenant(label: string): Promise<Tenant> {
     customerId: customer.body.data.id,
     dealId: deal.body.data.id,
     quotationId: quotation.body.data.id,
+    paymentId: payment.body.data.id,
+    paymentMethodId: paymentMethods.body.data[0]?.id ?? '',
     productId: product.body.data.id,
   };
 }
@@ -469,6 +485,11 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       '/quotations/:id/accept': `/quotations/${orgA.quotationId}/accept`,
       '/quotations/:id/reject': `/quotations/${orgA.quotationId}/reject`,
       '/quotations/:id/revise': `/quotations/${orgA.quotationId}/revise`,
+      '/payments/:id': `/payments/${orgA.paymentId}`,
+      '/payments/:id/confirm': `/payments/${orgA.paymentId}/confirm`,
+      '/payments/:id/fail': `/payments/${orgA.paymentId}/fail`,
+      '/payments/:id/refund': `/payments/${orgA.paymentId}/refund`,
+      '/settings/payment-methods/:id': `/settings/payment-methods/${orgA.paymentMethodId}`,
       '/products/:id': `/products/${orgA.productId}`,
       '/customers/:id': `/customers/${orgA.customerId}`,
       '/customers/:id/timeline': `/customers/${orgA.customerId}/timeline`,
@@ -821,6 +842,19 @@ function bodyFor(
       return {};
     case '/settings/number-series/quotation':
       return { prefix: 'HACK-', padding: 4 };
+    // Phase 2, step 9 — payments
+    case '/payments':
+      return { dealId: target.dealId, amountMinor: 1_000 };
+    case '/payments/:id':
+      return { amountMinor: 2_000 };
+    case '/payments/:id/confirm':
+    case '/payments/:id/fail':
+    case '/payments/:id/refund':
+      return {};
+    case '/settings/payment-methods':
+      return { name: 'Cross tenant method' };
+    case '/settings/payment-methods/:id':
+      return { name: 'Renamed by another tenant' };
     case '/products':
       return { name: 'Cross tenant product', priceMinor: 100 };
     case '/products/:id':

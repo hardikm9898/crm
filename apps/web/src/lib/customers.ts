@@ -20,6 +20,10 @@ export interface CustomerSummary {
   city: string | null;
   converted: boolean;
   convertedAt: string | null;
+  /** Derived from the payments ledger — real only since step 9 built it. */
+  lifetimeValueMinor: number;
+  firstPurchaseAt: string | null;
+  lastPurchaseAt: string | null;
   owner: { userId: string; name: string; email: string } | null;
   branch: { id: string; name: string } | null;
   team: { id: string; name: string } | null;

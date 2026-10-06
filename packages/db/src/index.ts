@@ -21,6 +21,7 @@ export {
   CRM_DEFAULT_SEEDS,
   seedCrmDefaults,
   seedDealPipeline,
+  seedPaymentMethods,
   seedDefaultAssignmentRule,
   seedDefaultTags,
   SCORING_DEFAULT_SEEDS,

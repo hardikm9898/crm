@@ -1,9 +1,9 @@
 import Link from 'next/link';
 import { describeError } from '@/lib/api';
 import { can, readAccessToken, requireCurrentUser } from '@/lib/session';
-import { Badge, Card, DefinitionRow, ErrorNotice, PageHeader } from '@/components/ui';
+import { Badge, Card, DefinitionRow, ErrorNotice, PageHeader, StatCard } from '@/components/ui';
 import { Timeline } from '@/components/timeline';
-import { formatDate, formatDateTime } from '@/lib/lead-format';
+import { formatDate, formatDateTime, formatMoney } from '@/lib/lead-format';
 import { loadCustomer, loadJourney, type CustomerDetail } from '@/lib/customers';
 import type { TimelineEntryLike } from '@/lib/timeline-registry';
 import {
@@ -91,6 +91,27 @@ export default async function CustomerPage({
           )}
         </div>
       )}
+
+      {/*
+        The three figures that were deliberately absent until the payments ledger existed to write
+        them. A money column with no writer reads as zero and lies to every report that touches it,
+        so these waited three steps rather than shipping empty.
+      */}
+      <div className="mb-5 grid gap-3 sm:grid-cols-3">
+        <StatCard
+          label="Lifetime value"
+          value={formatMoney(customer.lifetimeValueMinor, 'INR')}
+          hint="Cleared payments only"
+        />
+        <StatCard
+          label="First purchase"
+          value={customer.firstPurchaseAt ? formatDate(customer.firstPurchaseAt) : '—'}
+        />
+        <StatCard
+          label="Last purchase"
+          value={customer.lastPurchaseAt ? formatDate(customer.lastPurchaseAt) : '—'}
+        />
+      </div>
 
       <div className="grid gap-5 lg:grid-cols-[2fr_1fr]">
         <div className="flex flex-col gap-4">

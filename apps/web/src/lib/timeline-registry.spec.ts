@@ -296,3 +296,57 @@ describe('the quotation entries', () => {
     expect(entry('quotation.sent', {}).description).toBe('A quotation sent.');
   });
 });
+
+describe('the payment entries', () => {
+  const entry = (type: string, payload: Record<string, unknown>) =>
+    describeEntry({
+      id: 'a',
+      type,
+      module: type.split('.')[0]!,
+      known: true,
+      occurredAt: '2026-10-06T10:00:00.000Z',
+      visibility: 'all',
+      actor: { type: 'user', id: null, name: 'Anita' },
+      payload,
+    });
+
+  it('shows the money, the method and the reference', () => {
+    const described = entry('payment.received', {
+      amountMinor: 7_000_000,
+      currency: 'INR',
+      method: 'Cheque',
+      reference: '004213',
+    });
+    expect(described.description).toContain('70,000');
+    expect(described.description).toContain('by Cheque');
+    expect(described.description).toContain('004213');
+    expect(described.tone).toBe('success');
+  });
+
+  it('says a pending payment is not cleared, and tones it as a warning', () => {
+    const described = entry('payment.recorded', { amountMinor: 100_000, currency: 'INR' });
+    expect(described.description).toContain('not yet cleared');
+    expect(described.tone).toBe('warning');
+  });
+
+  it('says a failed payment has left every total', () => {
+    const described = entry('payment.failed', {
+      amountMinor: 100_000,
+      currency: 'INR',
+      note: 'Returned unpaid',
+    });
+    expect(described.description).toContain('Returned unpaid');
+    expect(described.description).toContain('out of every total');
+    expect(described.tone).toBe('danger');
+  });
+
+  it('says a refund keeps the receipt', () => {
+    expect(
+      entry('payment.refunded', { amountMinor: 100_000, currency: 'INR' }).description,
+    ).toContain('receipt stays');
+  });
+
+  it('still reads when the payload is empty', () => {
+    expect(entry('payment.received', {}).description).toBe('A payment received.');
+  });
+});

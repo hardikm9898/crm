@@ -779,6 +779,9 @@ export class CustomersService {
     city: string | null;
     leadId: string | null;
     convertedAt: Date | null;
+    lifetimeValueMinor: bigint;
+    firstPurchaseAt: Date | null;
+    lastPurchaseAt: Date | null;
     lastActivityAt: Date | null;
     createdAt: Date;
     deletedAt: Date | null;
@@ -800,6 +803,14 @@ export class CustomersService {
       /** True when this customer came from a lead, which is what makes the origin panel meaningful. */
       converted: customer.leadId !== null,
       convertedAt: customer.convertedAt,
+      /**
+       * Derived from the payments ledger, and real only since step 9 built it. These three were
+       * deliberately absent from step 6 — a money column with no writer reads as zero and lies to
+       * every report that touches it.
+       */
+      lifetimeValueMinor: Number(customer.lifetimeValueMinor),
+      firstPurchaseAt: customer.firstPurchaseAt,
+      lastPurchaseAt: customer.lastPurchaseAt,
       owner: customer.owner
         ? {
             userId: customer.owner.userId,

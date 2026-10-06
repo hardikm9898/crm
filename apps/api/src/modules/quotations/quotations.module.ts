@@ -25,6 +25,6 @@ import { QuotationExpiryProcessor } from './quotations.processor.js';
     NumberSeriesService,
     QuotationExpiryProcessor,
   ],
-  exports: [QuotationsService, QuotationExpiryProcessor],
+  exports: [QuotationsService, QuotationExpiryProcessor, NumberSeriesService],
 })
 export class QuotationsModule {}

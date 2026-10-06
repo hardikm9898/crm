@@ -757,6 +757,97 @@ font fallback in the PDF is not built** — the document font covers Latin, `₹
 punctuation, so a name in Devanagari or Gujarati prints as empty boxes, and the renderer logs the
 code points it could not draw so that this is found in a log rather than by a customer.
 
+### Step 9 — payments, and the revenue columns that were waiting for them ✅ _(landed 2026-10-06)_
+
+`FR-DEAL-3`: payments recorded manually, partial payments supported, and payment events on the
+timeline for automation and attribution to read.
+
+- **A deal's value and a deal's payments are different numbers, and the product now says so.**
+  `value_minor` is what was agreed and `paid_minor` is what arrived; `₹1,15,050 agreed, ₹50,000
+received, ₹65,050 outstanding` is the sentence a collections call starts from, and no single
+  column answers it.
+- **Partial payments are rows.** Three instalments are three rows, each with its own date, method
+  and reference, so "when did each one arrive and against which cheque number" has an answer.
+  Nothing caps the total at the deal's value: an advance for next year's work and an overpayment
+  somebody has to refund are both real, and refusing them would make the system disagree with the
+  bank statement. `outstandingMinor` floors at zero, because an overpayment is a refund to arrange
+  rather than a negative debt.
+- **Every derived figure is recomputed from the ledger, never incremented.** `deals.paid_minor` and
+  the three `customers` rollups are summed from `payments` after any write that could change them —
+  recording, confirming, failing, refunding, correcting an amount, deleting — inside the same
+  transaction and after `SELECT … FOR UPDATE`. Incrementing would need a compensating decrement on
+  every one of those paths, and the first one to forget drifts silently and forever with nothing
+  left to compare the column against. That is the scoring queue's bug with money in it;
+  [ADR-0020](./decisions/ADR-0020-derived-money-is-recomputed.md) has the reasoning and the four
+  alternatives rejected.
+- **`customers.lifetime_value_minor`, `first_purchase_at` and `last_purchase_at` are real at last.**
+  Carried as deliberately absent from step 6 to step 9 for want of a writer — a money column that
+  is always zero lies to every report that reads it. A customer's lifetime value is the **union** of
+  their own payments and their lead's, exactly like their timeline: conversion re-parents nothing,
+  so a deposit taken before the sale closed is still on the lead and still this customer's money.
+- **A refund is a status, not a negative row.** `payments_amount_positive` makes a negative payment
+  unrepresentable; reversing one sets `refunded_at` and takes it out of every total while leaving
+  the record of having received it. A bounced cheque is the same shape and additionally loses the
+  date it appeared to arrive on, because it did not.
+- **How money arrives is the tenant's own list.** `payment_methods` is a table, not a CHECK, for the
+  same reason `lost_reasons` is one: a reconciliation groups by it and the right answers differ per
+  business. Seeded with the five an Indian small business actually uses, three of which ask for a
+  reference — and a method that has been used cannot be deleted, because deleting it would take the
+  record of how that money arrived with it.
+- **A receipt is numbered**, from the same locked-counter machinery as a quotation under its own
+  `kind` and its own prefix (`RCPT-`), so the number a customer is handed is counted independently.
+- **The screens follow the money.** Received and outstanding on the deal's header, a payments panel
+  with the amount pre-filled to what is owed, a receipt screen offering only the transitions its
+  status allows, a list separating what arrived from what is merely on the filter, lifetime value on
+  the customer, and a settings screen for the methods.
+
+**1 276 tests green** (580 unit, 696 integration) — up from 1 210 — including a 30-case payments
+suite over real HTTP that attacks the derived figures directly (partial payments, an overpayment, a
+pending cheque, a bounce, a refund, a corrected amount, a deleted row, and six payments recorded
+concurrently against one deal), 31 new database guarantees asserted against real PostgreSQL, and 7
+cross-tenant tests. Then **149 browser checks** against the built app (43 new, 106 existing and
+still green), among them the whole chain: a ₹2,00,000 deal, a cheque refused for want of a
+reference, ₹50,000 received, the figure corrected to ₹5,000 and the deal following it, an uncleared
+payment that counts for nothing until it clears, and a bounce that leaves the total alone.
+
+**Five defects found by running it, not by testing it:**
+
+1. **Two CHECK constraints contradicted each other, and refunding anything was impossible.**
+   `payments_succeeded_has_timestamp` as a biconditional on `succeeded`, plus
+   `payments_refund_was_received`, are each sensible and together refuse every refund. Neither is
+   wrong on its own, so nothing caught it until something exercised the transition. It is a `CASE`
+   now: pending and failed have no date, everything else has one.
+2. **`payment:read` answered 403 for the owner of a seeded workspace**, five minutes after being
+   written. The permission catalogue is read when a workspace is **created**, so a new key reaches
+   new workspaces and nothing else. Every step that adds a permission now ends with a data
+   migration granting it to the system roles the templates name — and the grant cache's five
+   minutes is the rest of the answer.
+3. **A refused submission silently lost the chosen payment method.** `state.values` restores a text
+   box through `defaultValue` and restores a `<select>` through nothing, so the commonest path
+   through the form — pick Cheque, get refused for the missing reference, type the number, submit —
+   recorded the payment with **no method at all**. A controlled `value` did not fix it either:
+   React re-created the options in the same commit and the DOM kept `selectedIndex: 0`, so the
+   screen said "Not recorded" while the component thought otherwise. Re-keying the select on the
+   echoed value is what works.
+4. **The payment-methods settings list was unreadable.** Seven editable rows rendered as seven
+   identical "Name" labels, because every value lived in an input; and the browser check asserting
+   that "Cheque" was listed passed off the page's own description sentence. Each row prints its name
+   as text above the editor now.
+5. **A migration cut by "everything before the first `CREATE TABLE`" deleted two `ADD COLUMN`
+   statements** along with Prisma's spurious drops, and failed loudly on `column "paid_minor" does
+not exist`. Recovered by dropping what the half-applied migration created and deleting its
+   unfinished `_prisma_migrations` row — not by resetting a database.
+
+**Deferred, and why:** **a payment provider adapter** is a later phase; `provider` and
+`provider_payment_id` exist with the partial unique index that makes its webhook idempotent, because
+adding that later would be a migration over live money. **Partial refunds are not representable** —
+`refunded` is all-or-nothing, and a half refund is a credit note with its own number, which belongs
+with the GST surface rather than the ledger. **`attributed_touchpoint_id` is still absent**: nothing
+writes it until Phase 9, and attribution reaches a payment's touchpoints through its lead or
+customer, one join away. **Conversion does not recompute a customer's rollups** — the figures are
+derived and are recomputed on write, so a pre-conversion deposit lands in the lifetime value at the
+next payment write; making conversion recompute would mean two modules owning the same four columns.
+
 **Exit criteria**
 
 - Creating a custom field of every supported type requires **no migration and no deploy**, and that
@@ -988,13 +1079,15 @@ partially landed, with the specific gaps named.
 ## Immediate next step
 
 _This section names the next step only; what each landed step actually did is in the step entries
-above. Last reviewed 2026-10-06, after Phase 2 step 8._
+above. Last reviewed 2026-10-06, after Phase 2 step 9._
 
-**Phase 2, step 9 — payments, and the three customer columns that have been waiting for them.**
-`FR-DEAL-3`: `payments` recorded manually (a provider adapter is a later phase), partial payments
-against a deal or a quotation, `payment.received` on the deal's and the party's timelines, and the
-numbering series reused for receipts. That ledger is the only legitimate writer of
-`customers.lifetime_value_minor`, `first_purchase_at` and `last_purchase_at` — deliberately absent
-since step 6 — and it is what every revenue and attribution report in Phases 8 and 9 is specified to
-read, which they currently cannot. It is the last step of Phase 2's commercial surface; after it the
-remaining Phase 2 work is the industry templates and the onboarding wizard.
+**Phase 2, step 10 — industry templates and the onboarding wizard, which is what closes Phase 2.**
+Everything in the Phase 2 scope above is now built except these two, and they are one piece of work:
+the wizard asks a new workspace what kind of business it is, and a template answers by seeding the
+statuses, sources, pipeline stages, lost reasons, task types, custom fields and saved views that
+business actually uses — real estate, education, healthcare, services — instead of the generic set
+`seedCrmDefaults` installs today. The templates are **rows**, defined once at platform level and
+copied into a workspace, so adding an industry is data rather than a deploy (`CLAUDE.md` rule 4);
+the wizard is resumable from the organization's own onboarding state, which Phase 1 step 5 already
+stores. After it, Phase 2's exit criteria can be reviewed honestly and Phase 3 (tasks, follow-ups,
+SLA and the executive workspace) begins.

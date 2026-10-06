@@ -442,6 +442,48 @@ POST /exports                       GET /exports/{id}
 >   forward, but not back" reaches the screen instead of "That is not allowed." Write these messages
 >   as the thing a person should read.
 
+> **Amendment, 2026-10-06 (implementation).** Payments, and the methods a workspace accepts:
+>
+> ```
+> GET    /payments                 ?dealId= ?quotationId= ?leadId= ?customerId= ?methodId=
+>                                  ?status=pending|succeeded|failed|refunded
+>                                  ?receivedFrom= ?receivedTo= ?deleted= ?limit= ?cursor=
+>                                  ?sort=paid_at|amount|created_at ?direction=
+>                                  → meta.totalMinor is the filter's sum;
+>                                    meta.receivedMinor is the succeeded sum
+> POST   /payments                 { dealId | quotationId | leadId | customerId, amountMinor,
+>                                    methodId?, reference?, status=succeeded|pending, paidAt?, note? }
+> GET    /payments/{id}
+> PATCH  /payments/{id}            corrects an amount, method or reference — never the status
+> POST   /payments/{id}/confirm    pending → succeeded (the cheque cleared)
+> POST   /payments/{id}/fail       pending → failed (it bounced); clears paidAt
+> POST   /payments/{id}/refund     succeeded → refunded; keeps paidAt
+> DELETE /payments/{id}            soft; leaves every total, keeps the row
+>
+> GET    /settings/payment-methods ?includeInactive=true   payment:read
+> POST   /settings/payment-methods settings:manage
+> PATCH  /settings/payment-methods/{id}
+> DELETE /settings/payment-methods/{id}   refused once the method has been used
+> ```
+>
+> `deals` gained `paidMinor` and `outstandingMinor` on every response; `customers` gained
+> `lifetimeValueMinor`, `firstPurchaseAt` and `lastPurchaseAt`. All four are derived from the ledger
+> ([ADR-0020](./decisions/ADR-0020-derived-money-is-recomputed.md)).
+>
+> Three conventions this step establishes:
+>
+> - **A list whose rows carry money reports two totals.** The filter's sum answers "what is on this
+>   list"; a second figure answers "how much of it is real". A payments screen showing only the first
+>   would count a bounced cheque as revenue.
+> - **A new permission ships with a data migration that grants it.** The permission catalogue is
+>   read when a workspace is **created**, so a new key reaches new workspaces and nothing else —
+>   `payment:read` answered 403 for the owner of a seeded workspace. The migration inserts the grant
+>   for roles still marked `is_system`, with the scope the template specifies, only where it is
+>   absent. Grants are then cached for five minutes, which is the rest of the answer.
+> - **A per-tenant list that gates another field belongs under `settings/`, readable with the
+>   feature's read permission.** `payment:read` can list the methods so a form can offer the
+>   dropdown; `settings:manage` is needed to change them. The same split a price list uses.
+
 ### Automation, websites, analytics, marketing
 
 ```

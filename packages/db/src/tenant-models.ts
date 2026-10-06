@@ -71,6 +71,8 @@ export const TENANT_MODELS = [
   'NumberSeries',
   'Quotation',
   'QuotationItem',
+  'PaymentMethod',
+  'Payment',
 ] as const;
 
 export type TenantModel = (typeof TENANT_MODELS)[number];
