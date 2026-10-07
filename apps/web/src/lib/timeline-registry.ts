@@ -433,7 +433,45 @@ const DESCRIBERS: Readonly<Record<string, Describer>> = {
     } and has not been done.`,
     tone: 'danger',
   }),
+
+  // ── SLA (`FR-TSK-8`) ──────────────────────────────────────────────────────
+  //
+  // The sentence names the **promise**, not the clock: "First response within an hour" is what a
+  // business owner recognises, and `sla_clock 01a1…` is not. The target is spelled out in words for
+  // the same reason — `first_response` is a column name.
+  'sla.at_risk': (payload) => ({
+    label: 'Running out',
+    description: `${slaTarget(payload)} is nearly out of time${
+      text(payload, 'policy') ? ` — ${text(payload, 'policy')}` : ''
+    }${dueAt(payload) ? `, due ${dueAt(payload)}` : ''}.`,
+    tone: 'warning',
+  }),
+  'sla.breached': (payload) => ({
+    label: 'SLA missed',
+    description: `${slaTarget(payload)} passed its deadline${
+      text(payload, 'policy') ? ` — ${text(payload, 'policy')}` : ''
+    }${
+      number(payload, 'targetMinutes')
+        ? ` (${number(payload, 'targetMinutes')} working minutes)`
+        : ''
+    }.`,
+    tone: 'danger',
+  }),
 };
+
+/** `first_response` is a column name; "The first response" is a sentence. */
+function slaTarget(payload: ActivityPayload): string {
+  switch (text(payload, 'target')) {
+    case 'first_response':
+      return 'The first response';
+    case 'next_response':
+      return 'The next reply';
+    case 'resolution':
+      return 'Closing this out';
+    default:
+      return 'The response';
+  }
+}
 
 function assignmentSentence(payload: ActivityPayload): string {
   const to = text(payload, 'toUserName') ?? text(payload, 'assignedUserName');

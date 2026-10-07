@@ -105,6 +105,15 @@ export const SCHEDULES: readonly ScheduleDefinition[] = [
     description: 'Tell the assignee and their manager about follow-ups that were missed',
   },
   {
+    queue: QUEUES.MAINTENANCE,
+    jobName: JOBS.SLA_SWEEP,
+    // Every five minutes, which `docs/queue-event-architecture.md` §5 specifies. Frequent on
+    // purpose: the near-breach warning is only worth sending while there is still time to act on
+    // it, and a half-hourly sweep would turn a sixty-minute promise's warning into a breach notice.
+    cron: '*/5 * * * *',
+    description: 'Warn on SLA clocks running out and escalate the ones that have breached',
+  },
+  {
     queue: QUEUES.SCORING,
     jobName: JOBS.SCORE_DECAY_SWEEP,
     // Overnight, before anyone opens the app: a score that decayed at 1am is right when the first

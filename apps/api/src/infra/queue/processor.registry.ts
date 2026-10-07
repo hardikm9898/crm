@@ -30,6 +30,10 @@ import {
   TaskOverdueSweepProcessor,
   TaskReminderDispatchProcessor,
 } from '../../modules/tasks/tasks.processor.js';
+import {
+  SlaEscalationNotificationProcessor,
+  SlaSweepProcessor,
+} from '../../modules/sla/sla.processor.js';
 import { ImportProcessProcessor } from '../../modules/imports/imports.processor.js';
 import type { JobProcessor } from './job-processor.js';
 
@@ -55,6 +59,7 @@ export const PROCESSOR_TYPES: readonly Type<JobProcessor>[] = [
   TrialExpiredNotificationProcessor,
   UnassignedLeadNotificationProcessor,
   TaskOverdueNotificationProcessor,
+  SlaEscalationNotificationProcessor,
   // maintenance
   SessionPruneProcessor,
   InvitationExpiryProcessor,
@@ -67,6 +72,7 @@ export const PROCESSOR_TYPES: readonly Type<JobProcessor>[] = [
   // tasks and follow-ups
   TaskReminderDispatchProcessor,
   TaskOverdueSweepProcessor,
+  SlaSweepProcessor,
   // scoring
   LeadScoreProcessor,
   ScoreDecaySweepProcessor,

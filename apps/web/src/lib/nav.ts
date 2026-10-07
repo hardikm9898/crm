@@ -37,6 +37,7 @@ export const NAV_SECTIONS: readonly NavSection[] = [
       { label: 'Quotations', href: '/quotations', permissions: ['deal:read'] },
       { label: 'Payments', href: '/payments', permissions: ['payment:read'] },
       { label: 'Follow-ups', href: '/tasks', permissions: ['task:read'] },
+      { label: 'Response times', href: '/sla', permissions: ['sla:read'] },
       { label: 'Inbox', href: '/inbox', permissions: ['conversation:read'], phase: 5 },
     ],
   },
@@ -79,6 +80,11 @@ export const NAV_SECTIONS: readonly NavSection[] = [
       {
         label: 'Follow-up settings',
         href: '/settings/follow-ups',
+        permissions: ['settings:manage'],
+      },
+      {
+        label: 'Response promises',
+        href: '/settings/sla',
         permissions: ['settings:manage'],
       },
       { label: 'Your security', href: '/settings/security', permissions: [] },

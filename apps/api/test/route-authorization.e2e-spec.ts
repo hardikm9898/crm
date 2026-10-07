@@ -71,6 +71,10 @@ interface Tenant {
   taskTypeId: string;
   taskOutcomeId: string;
   rescheduleReasonId: string;
+  // Phase 3, step 2 — SLA. The escalation is produced by backdating a clock and running the real
+  // sweep, so the route is aimed at a row the product itself wrote.
+  slaPolicyId: string;
+  escalationId: string;
 }
 
 let orgA: Tenant;
@@ -296,6 +300,12 @@ async function createTenant(label: string): Promise<Tenant> {
     },
     token,
   });
+  // The SLA policy and an escalation of org A's own. The escalation has to be *made*, not found:
+  // the sweep only writes one for a clock whose moment has passed, so the clock is backdated first
+  // — `sla_clocks_instants_ordered` requires `started_at <= warn_at <= due_at`, which is why all
+  // three move together.
+  const slaPolicy = await ctx.db.slaPolicy.findFirstOrThrow({ where: { organizationId } });
+
   const taskConfig = await call<
     EnvelopeBody<{
       types: { id: string }[];
@@ -303,6 +313,24 @@ async function createTenant(label: string): Promise<Tenant> {
       rescheduleReasons: { id: string }[];
     }>
   >(ctx.app, { method: 'GET', url: '/api/v1/tasks/config', token });
+
+  const slaClock = await ctx.db.slaClock.findFirstOrThrow({
+    where: { organizationId, leadId: lead.body.data.id },
+  });
+  const nowForSla = Date.now();
+  await ctx.db.slaClock.update({
+    where: { id: slaClock.id },
+    data: {
+      startedAt: new Date(nowForSla - 3_600_000),
+      warnAt: new Date(nowForSla - 120_000),
+      dueAt: new Date(nowForSla - 60_000),
+    },
+  });
+  const { SlaService } = await import('../src/modules/sla/sla.service.js');
+  await ctx.app.get(SlaService).sweep();
+  const escalation = await ctx.db.escalation.findFirstOrThrow({
+    where: { organizationId, clockId: slaClock.id },
+  });
 
   const [duplicateRule, assignmentRule, scoringRule, savedView] = await Promise.all([
     ctx.db.duplicateRule.findFirstOrThrow({ where: { organizationId, isActive: true } }),
@@ -349,6 +377,8 @@ async function createTenant(label: string): Promise<Tenant> {
     taskTypeId: taskConfig.body.data.types[0]?.id ?? '',
     taskOutcomeId: taskConfig.body.data.outcomes[0]?.id ?? '',
     rescheduleReasonId: taskConfig.body.data.rescheduleReasons[0]?.id ?? '',
+    slaPolicyId: slaPolicy.id,
+    escalationId: escalation.id,
   };
 }
 
@@ -534,6 +564,9 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       '/settings/task-types/:id': `/settings/task-types/${orgA.taskTypeId}`,
       '/settings/task-outcomes/:id': `/settings/task-outcomes/${orgA.taskOutcomeId}`,
       '/settings/reschedule-reasons/:id': `/settings/reschedule-reasons/${orgA.rescheduleReasonId}`,
+      // Phase 3, step 2 — SLA
+      '/sla/policies/:id': `/sla/policies/${orgA.slaPolicyId}`,
+      '/sla/escalations/:id/acknowledge': `/sla/escalations/${orgA.escalationId}/acknowledge`,
       '/exports/:id/download': `/exports/${orgA.exportJobId}/download`,
     };
 

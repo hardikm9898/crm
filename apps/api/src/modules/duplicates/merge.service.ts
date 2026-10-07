@@ -4,6 +4,7 @@ import { DbService } from '../../infra/db/db.service.js';
 import { AuditService } from '../../infra/audit/audit.service.js';
 import { OutboxService } from '../../infra/outbox/outbox.service.js';
 import { TimelineService } from '../../infra/timeline/timeline.service.js';
+import { SlaService } from '../sla/sla.service.js';
 import { DataScopeService } from '../../infra/authz/data-scope.service.js';
 import type { MergeLeadsInput } from './duplicates.dto.js';
 
@@ -80,6 +81,7 @@ export class MergeService {
     private readonly audit: AuditService,
     private readonly outbox: OutboxService,
     private readonly timeline: TimelineService,
+    private readonly sla: SlaService,
   ) {}
 
   async merge(input: MergeLeadsInput) {
@@ -314,6 +316,16 @@ export class MergeService {
           touchCount: 0,
         },
       });
+      /**
+       * The absorbed lead's SLA clocks are cancelled, not satisfied.
+       *
+       * Without this they stay `running` on a lead that no longer exists and breach forever — a
+       * board filling up with records nobody can act on. Cancelled rather than satisfied because
+       * nobody answered *that* lead: the survivor keeps its own clocks, and the promise about the
+       * duplicate stopped applying rather than being kept. (The sweep also skips soft-deleted leads,
+       * so a future absorber that forgets this cannot produce a phantom breach.)
+       */
+      await this.sla.cancelForLead(tx, organizationId, input.mergedLeadId, now);
 
       const snapshot: MergeSnapshot = {
         survivingBefore,

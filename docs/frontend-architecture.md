@@ -186,6 +186,20 @@ connection is never lost, and the card shows a retry state if the request ultima
 >   roadmap rather than quietly assumed.
 > - **Not shipped.** `[Call]` and `[WhatsApp]` on a card — both arrive with their channels.
 >
+> **Amendment, 2026-10-07 (implementation, Phase 3 step 2).** The SLA screens are built: `/sla` is
+> the breach board and `/settings/sla` the policies, and the lead detail screen carries the promise
+> as a line in "At a glance". The `SLA 43 min left` the mock-up above shows is therefore real, just
+> not yet on `/today`.
+>
+> Every count on the board is an aggregate over the whole filter, and every reading is derived from
+> the clock rather than from the stored state — so a manager refreshing at 10:01 is never told a
+> 10:00 promise is still fine because the five-minute sweep has not fired. "Answered late" is its
+> own column beside "Missed": a clock somebody eventually got to is a different management problem
+> from one still sitting there.
+>
+> The promise appears on the lead's own screen and not only on the manager's board, because a board
+> a manager reads is no use to the person who could still answer in time.
+
 > The due time is **two inputs, a date and a time**, not one `datetime-local`: that control renders
 > differently in every browser, is close to unusable on an Indian Android keyboard, and cannot be
 > given a sensible default time. The browser's own UTC offset rides along as a hidden field, because

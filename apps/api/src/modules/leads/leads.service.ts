@@ -20,6 +20,7 @@ import { DataScopeService, applyScopeFilter } from '../../infra/authz/data-scope
 import { FilterCompilerService } from '../views/filter-compiler.service.js';
 import { ViewsService } from '../views/views.service.js';
 import { ScoringEngineService } from '../scoring/scoring-engine.service.js';
+import { SlaService } from '../sla/sla.service.js';
 import { EntitlementService } from '../../infra/entitlements/entitlement.service.js';
 import { FieldRegistryService } from '../custom-fields/field-registry.service.js';
 import {
@@ -72,6 +73,7 @@ export class LeadsService {
     private readonly filters: FilterCompilerService,
     private readonly views: ViewsService,
     private readonly scoring: ScoringEngineService,
+    private readonly sla: SlaService,
   ) {}
 
   // ── Reading ───────────────────────────────────────────────────────────────
@@ -529,6 +531,30 @@ export class LeadsService {
         await tx.lead.update({ where: { id }, data: { isDuplicateOfId: decidingMatch.leadId } });
         await this.duplicates.recordPairs(tx, id, matches);
       }
+
+      /**
+       * The SLA clock starts here, inside the capture's own transaction (`FR-TSK-8`).
+       *
+       * After the assignment, deliberately: a clock copies the lead's branch, team and owner so the
+       * breach board can be data-scoped without a join, and starting it before the round-robin had
+       * run would leave every clock owned by nobody. Never throws — a lead the business paid for
+       * must not fail to be created because an SLA policy is misconfigured.
+       */
+      await this.sla.startForLead(
+        tx,
+        {
+          id,
+          organizationId,
+          leadSourceId: input.leadSourceId ?? null,
+          priority: input.priority ?? 'medium',
+          pipelineId: placement.pipelineId,
+          scoreBand: null,
+          branchId: input.branchId ?? null,
+          teamId: assignedTeamId,
+          assignedUserId,
+        },
+        now,
+      );
 
       await this.timeline.recordManyInTransaction(tx, [
         {
@@ -1108,6 +1134,27 @@ export class LeadsService {
           payload: { statusId: status.id, statusName: status.name },
         } as never);
       }
+      /**
+       * A lead that reached a terminal status has been resolved — or has stopped being resolvable.
+       *
+       * Won or lost both **satisfy** the resolution clock: the promise was "close this out", and a
+       * loss is a closure. An `invalid` lead is a different thing entirely — a wrong number, a test
+       * submission — so its clocks are **cancelled**, because counting a junk lead as a kept promise
+       * would make the SLA report flattering and useless.
+       */
+      if (status.category === 'won' || status.category === 'lost') {
+        await this.sla.satisfy(
+          tx,
+          { organizationId: lead.organizationId, leadId: id },
+          'resolution',
+          now,
+          `Marked ${status.name}`,
+        );
+      }
+      if (status.category === 'invalid') {
+        await this.sla.cancelForLead(tx, lead.organizationId, id, now);
+      }
+
       await this.timeline.recordManyInTransaction(tx, entries);
 
       await this.audit.recordInTransaction(tx, {
@@ -1401,6 +1448,9 @@ export class LeadsService {
         where: { id },
         data: { deletedAt: now, deletedById: tenantContext.get()?.actorId ?? null },
       });
+      // Cancelled, not satisfied: a promise that stopped applying was not kept, and a deleted lead
+      // counted as a met SLA is how a breach report becomes a number nobody believes.
+      await this.sla.cancelForLead(tx, lead.organizationId, id, now);
       await this.timeline.recordInTransaction(tx, {
         type: ACTIVITY_TYPES.LEAD_DELETED,
         leadId: id,

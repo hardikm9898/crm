@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { NotificationsModule } from '../notifications/notifications.module.js';
+import { SlaModule } from '../sla/sla.module.js';
 import { TaskConfigController, TasksController } from './tasks.controller.js';
 import { TasksService } from './tasks.service.js';
 import { TaskConfigService } from './task-config.service.js';
@@ -22,7 +23,9 @@ import {
  * columns each would couple follow-ups to the whole CRM surface. The same reasoning payments used.
  */
 @Module({
-  imports: [NotificationsModule],
+  // `SlaModule` because a completed follow-up is what satisfies a first-response clock, inside the
+  // completion's own transaction.
+  imports: [NotificationsModule, SlaModule],
   controllers: [TasksController, TaskConfigController],
   providers: [
     TasksService,

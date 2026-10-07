@@ -390,6 +390,61 @@ source_event_id) WHERE source_event_id IS NOT NULL`, and `delta <> 0` keeps rows
 > `organization_id`: both sweeps run across tenants, and a leading tenant column would make them
 > scan rather than seek.
 
+> **Amendment, 2026-10-07 (implementation, Phase 3 step 2).** `sla_policies`, `sla_clocks` and
+> `escalations` are built. The reasoning is
+> [ADR-0023](./decisions/ADR-0023-sla-clocks-are-stored-and-escalation-is-a-unique-key.md); the
+> corrections to the rows above:
+>
+> - **`sla_policies` gained `warn_at_percent` and `priority`.** The near-breach `FR-TSK-8` asks for
+>   has to be a share of the target somebody can set — 80 % by default — and matching needs an
+>   explicit order, which is the `priority` convention [ADR-0014](./decisions/ADR-0014-duplicate-matching.md)
+>   set for duplicate rules. `escalate_to` holds `{ permission?, userIds? }`: a **permission**, not a
+>   role name, so a workspace that renames its roles keeps working.
+> - **`sla_clocks` gained `target`, `warn_at`, `target_minutes`, `warned_at`, `satisfied_by` and a
+>   real `lead_id`.** `target` because one subject has several promises (first response, resolution)
+>   and the row list implied one clock each. `warn_at` and `target_minutes` are walked through the
+>   business calendar at capture and **stored**: the sweep needs one indexed query across every
+>   tenant, and a promise recomputed later against an edited calendar would move a deadline already
+>   communicated. `lead_id` is a composite FK beside the polymorphic `subject_id`, so "a clock on
+>   another tenant's lead" is unrepresentable and the board joins without a union.
+> - **`escalations` gained `clock_id`, `reason` and `acknowledged_by_id`**, and
+>   `notified_user_ids` is a `UUID[]` rather than a join table — written once, read whole, and
+>   nothing queries "every escalation that reached this person".
+>   `UNIQUE (organization_id, clock_id, level)` is the "escalate exactly once" guarantee the phase's
+>   exit criteria ask for: a database constraint rather than a careful sweep.
+> - **`sla_clocks.paused_ms` has no writer yet.** It is for the pause/resume a conversation SLA
+>   needs, and `sla_clocks_paused_non_negative` keeps it honest in the meantime. Said out loud
+>   rather than left to look implemented.
+> - **`working_hours` is now read as a calendar, and a workspace has its own rows.** Provisioning
+>   has written the _owner's_ hours since Phase 1; it now also writes workspace-wide rows
+>   (`user_id IS NULL, branch_id IS NULL`), and `seedWorkingHours` backfills existing workspaces.
+>   Without them the SLA clock falls back to always-open and runs through the night — wrong, and
+>   invisibly so. A branch's own rows win over the workspace's.
+>
+> **`leads.first_contacted_at` and `last_contacted_at` finally have a writer.** They have existed
+> since Phase 2 step 1 with none at all, which is the same shape as a money column that reads as
+> zero and lies to every report touching it. A completed follow-up writes both, and `first` never
+> moves once set while `last` never moves backwards.
+>
+> Hand-written objects: `sla_policies_name_present`, `sla_policies_first_response_positive`,
+> `sla_policies_next_response_positive`, `sla_policies_resolution_positive`,
+> `sla_policies_warn_percent_range` (1–99, because 0 % fires at the start and 100 % arrives with the
+> breach), `sla_policies_applies_to_is_object`, `sla_policies_escalate_to_is_object`,
+> `sla_clocks_lead_subject_has_lead`, `sla_clocks_subject_matches_lead`,
+> `sla_clocks_target_minutes_positive`, `sla_clocks_paused_non_negative`,
+> `sla_clocks_instants_ordered`, the three `CASE`-shaped state/timestamp checks, the five composite
+> FKs, `escalations_level_matches_reason`, `escalations_notified_somebody`,
+> `escalations_acknowledged_pair`, and the partial indexes `sla_clocks_awaiting_warning`,
+> `sla_clocks_awaiting_breach`, `sla_clocks_open`, `escalations_clock` and
+> `escalations_unacknowledged`. The first two are deliberately **not** prefixed by
+> `organization_id`: the sweep runs platform-wide, and a leading tenant column would make it scan
+> rather than seek.
+>
+> `escalations_notified_somebody` shipped as `array_length(notified_user_ids, 1) >= 1`, which does
+> not do what it reads as — `array_length` on an empty array is **NULL**, and a CHECK evaluating to
+> NULL is _satisfied_, so a row claiming somebody was told when nobody was went straight in.
+> `20261007103000_escalation_notified_check` corrects it to `cardinality`.
+
 `documents` moved to [§6.8](#68-files-imports-and-exports), where it sits with the import and export
 jobs that are its only writers today.
 

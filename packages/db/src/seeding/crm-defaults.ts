@@ -215,6 +215,89 @@ export async function seedPaymentMethods(
   return PAYMENT_METHOD_SEEDS.length;
 }
 
+/**
+ * The **workspace's** working hours — Mon–Sat, 09:30–18:30.
+ *
+ * Distinct from the owner's personal hours, which provisioning has written since Phase 1 and which
+ * the assignment engine reads to ask "is this person on shift". A workspace needs both, and the
+ * difference matters: a lead arriving at 21:00 is out of *the business's* hours whoever happens to
+ * be rostered, and the SLA clock is a promise the business makes rather than one a person makes.
+ *
+ * Without these rows `SlaCalendarService` finds no calendar and falls back to always-open, which
+ * would make every clock run through the night — wrong, and invisibly so. Written here rather than
+ * only in provisioning because the workspaces that already exist need them too.
+ */
+const WORKSPACE_WORKING_DAYS = [1, 2, 3, 4, 5, 6];
+const WORKSPACE_DAY_START_MINUTE = 9 * 60 + 30;
+const WORKSPACE_DAY_END_MINUTE = 18 * 60 + 30;
+
+export async function seedWorkingHours(
+  tx: DbTransactionClient,
+  organizationId: string,
+): Promise<number> {
+  const existing = await tx.workingHours.findFirst({
+    where: { organizationId, userId: null, branchId: null },
+    select: { id: true },
+  });
+  if (existing) return 0;
+
+  await tx.workingHours.createMany({
+    data: WORKSPACE_WORKING_DAYS.map((dayOfWeek) => ({
+      id: newId(),
+      organizationId,
+      userId: null,
+      branchId: null,
+      dayOfWeek,
+      startMinute: WORKSPACE_DAY_START_MINUTE,
+      endMinute: WORKSPACE_DAY_END_MINUTE,
+    })),
+  });
+  return WORKSPACE_WORKING_DAYS.length;
+}
+
+/**
+ * The one SLA promise a workspace starts with (`FR-TSK-8`, docs/database-design.md §17).
+ *
+ * Sixty **working** minutes to first response, warning at 80 %, escalating to whoever holds
+ * `task:manage_others` — a permission rather than a role name, so a workspace that renames its
+ * roles keeps working (rule 4). Deliberately one catch-all policy with an empty `applies_to`: a
+ * business that wants a tighter promise for paid leads adds a narrower policy at a lower priority
+ * number, which is a row.
+ *
+ * No `resolution_minutes`, because most businesses have no such promise and a target invented on
+ * their behalf would breach all week and teach them to ignore the board.
+ *
+ * Independently idempotent, like the deal pipeline and the payment methods: `seedCrmDefaults`
+ * short-circuits on the presence of a lead status, so anything added to it later never reaches a
+ * workspace that already exists.
+ */
+export async function seedSlaPolicy(
+  tx: DbTransactionClient,
+  organizationId: string,
+): Promise<string | null> {
+  const existing = await tx.slaPolicy.findFirst({
+    where: { organizationId },
+    select: { id: true },
+  });
+  if (existing) return null;
+
+  const id = newId();
+  await tx.slaPolicy.create({
+    data: {
+      id,
+      organizationId,
+      name: 'First response within an hour',
+      appliesTo: {},
+      firstResponseMinutes: 60,
+      businessHoursOnly: true,
+      warnAtPercent: 80,
+      escalateTo: { permission: 'task:manage_others' },
+      priority: 0,
+    },
+  });
+  return id;
+}
+
 export async function seedDefaultTags(
   tx: DbTransactionClient,
   organizationId: string,
@@ -562,6 +645,11 @@ export const CRM_DEFAULT_SEEDS = {
   lostReasons: LOST_REASON_SEEDS,
   tags: TAG_SEEDS,
   paymentMethods: PAYMENT_METHOD_SEEDS,
+  workingHours: {
+    days: WORKSPACE_WORKING_DAYS,
+    startMinute: WORKSPACE_DAY_START_MINUTE,
+    endMinute: WORKSPACE_DAY_END_MINUTE,
+  },
   taskTypes: TASK_TYPE_SEEDS,
   taskOutcomes: TASK_OUTCOME_SEEDS,
   rescheduleReasons: RESCHEDULE_REASON_SEEDS,

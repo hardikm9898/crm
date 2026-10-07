@@ -1889,6 +1889,296 @@ describe('layer 3 — a task cannot be stitched to another tenant (FR-TSK-1)', (
   });
 });
 
+describe('layer 3 — an SLA clock cannot be stitched to another tenant (FR-TSK-8)', () => {
+  async function policy(organizationId: string) {
+    const id = newId();
+    await h.unscoped.slaPolicy.create({
+      data: {
+        id,
+        organizationId,
+        name: `Hour ${id.slice(-8)}`,
+        firstResponseMinutes: 60,
+      },
+    });
+    return id;
+  }
+
+  /**
+   * A lead of this test's own.
+   *
+   * `sla_clock_subject_target_key` allows one clock per promise per lead, so sharing the harness's
+   * lead between tests makes the second one fail on a uniqueness rule it was not testing — a test
+   * that reuses a fixture passing or failing for the wrong reason, which this suite has paid for
+   * twice.
+   */
+  async function lead(tenant: typeof h.orgA) {
+    const id = newId();
+    await h.unscoped.lead.create({
+      data: {
+        id,
+        organizationId: tenant.organizationId,
+        fullName: `Sla subject ${id.slice(-8)}`,
+        statusId: tenant.statusId,
+        pipelineId: tenant.pipelineId,
+        stageId: tenant.stageId,
+      },
+    });
+    return id;
+  }
+
+  async function clock(organizationId: string, leadId: string, policyId: string) {
+    const id = newId();
+    await h.unscoped.slaClock.create({
+      data: {
+        id,
+        organizationId,
+        policyId,
+        subjectType: 'lead',
+        subjectId: leadId,
+        leadId,
+        target: 'first_response',
+        startedAt: new Date('2026-04-02T04:00:00.000Z'),
+        warnAt: new Date('2026-04-02T04:48:00.000Z'),
+        dueAt: new Date('2026-04-02T05:00:00.000Z'),
+        targetMinutes: 60,
+      },
+    });
+    return id;
+  }
+
+  it('blocks a clock against another tenant’s lead, policy or assignee', async () => {
+    const mine = await policy(h.orgA.organizationId);
+    const theirs = await policy(h.orgB.organizationId);
+    const base = {
+      organizationId: h.orgA.organizationId,
+      subjectType: 'lead' as const,
+      target: 'first_response' as const,
+      startedAt: new Date('2026-04-02T04:00:00.000Z'),
+      warnAt: new Date('2026-04-02T04:48:00.000Z'),
+      dueAt: new Date('2026-04-02T05:00:00.000Z'),
+      targetMinutes: 60,
+    };
+
+    await expect(
+      h.unscoped.slaClock.create({
+        data: {
+          ...base,
+          id: newId(),
+          policyId: mine,
+          subjectId: h.orgB.leadId,
+          leadId: h.orgB.leadId,
+        },
+      }),
+    ).rejects.toThrow(/sla_clocks_lead_same_org_fk|foreign key/i);
+
+    await expect(
+      h.unscoped.slaClock.create({
+        data: {
+          ...base,
+          id: newId(),
+          policyId: theirs,
+          subjectId: h.orgA.leadId,
+          leadId: h.orgA.leadId,
+        },
+      }),
+    ).rejects.toThrow(/sla_clocks_policy_same_org_fk|foreign key/i);
+
+    await expect(
+      h.unscoped.slaClock.create({
+        data: {
+          ...base,
+          id: newId(),
+          policyId: mine,
+          subjectId: h.orgA.leadId,
+          leadId: h.orgA.leadId,
+          assignedUserId: h.orgB.userId,
+        },
+      }),
+    ).rejects.toThrow(/sla_clocks_assignee_same_org_fk|foreign key/i);
+  });
+
+  it('makes a lead clock with no lead, and a clock pointing at a different lead, unrepresentable', async () => {
+    const mine = await policy(h.orgA.organizationId);
+    const base = {
+      organizationId: h.orgA.organizationId,
+      policyId: mine,
+      target: 'first_response' as const,
+      startedAt: new Date('2026-04-02T04:00:00.000Z'),
+      warnAt: new Date('2026-04-02T04:48:00.000Z'),
+      dueAt: new Date('2026-04-02T05:00:00.000Z'),
+      targetMinutes: 60,
+    };
+
+    // A lead clock with nothing the board can join to.
+    await expect(
+      h.unscoped.slaClock.create({
+        data: { ...base, id: newId(), subjectType: 'lead', subjectId: h.orgA.leadId },
+      }),
+    ).rejects.toThrow(/sla_clocks_lead_subject_has_lead/i);
+
+    // And the polymorphic id has to agree with the typed one.
+    const other = newId();
+    await expect(
+      h.unscoped.slaClock.create({
+        data: {
+          ...base,
+          id: newId(),
+          subjectType: 'lead',
+          subjectId: other,
+          leadId: h.orgA.leadId,
+        },
+      }),
+    ).rejects.toThrow(/sla_clocks_subject_matches_lead/i);
+  });
+
+  it('refuses a clock whose instants are out of order', async () => {
+    const mine = await policy(h.orgA.organizationId);
+    await expect(
+      h.unscoped.slaClock.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          policyId: mine,
+          subjectType: 'lead',
+          subjectId: h.orgA.leadId,
+          leadId: h.orgA.leadId,
+          target: 'first_response',
+          startedAt: new Date('2026-04-02T05:00:00.000Z'),
+          warnAt: new Date('2026-04-02T04:00:00.000Z'),
+          dueAt: new Date('2026-04-02T06:00:00.000Z'),
+          targetMinutes: 60,
+        },
+      }),
+    ).rejects.toThrow(/sla_clocks_instants_ordered/i);
+  });
+
+  it('keeps one clock per promise per record', async () => {
+    const mine = await policy(h.orgA.organizationId);
+    const subject = await lead(h.orgA);
+    await clock(h.orgA.organizationId, subject, mine);
+    // A second first-response clock on the same lead would make every breach count double.
+    await expect(clock(h.orgA.organizationId, subject, mine)).rejects.toThrow(
+      /unique|duplicate key/i,
+    );
+  });
+
+  it('escalates at most once per level — the guarantee, as a unique key', async () => {
+    const mine = await policy(h.orgA.organizationId);
+    const theirClock = await clock(
+      h.orgB.organizationId,
+      await lead(h.orgB),
+      await policy(h.orgB.organizationId),
+    );
+    const subject = await lead(h.orgA);
+    const myClock = await clock(h.orgA.organizationId, subject, mine);
+
+    const row = {
+      organizationId: h.orgA.organizationId,
+      clockId: myClock,
+      policyId: mine,
+      subjectType: 'lead' as const,
+      subjectId: subject,
+      level: 2,
+      reason: 'breached' as const,
+      notifiedUserIds: [h.orgA.userId],
+    };
+    await h.unscoped.escalation.create({ data: { id: newId(), ...row } });
+    await expect(h.unscoped.escalation.create({ data: { id: newId(), ...row } })).rejects.toThrow(
+      /unique|duplicate key/i,
+    );
+
+    // The warning is a different level, so it is still allowed.
+    await h.unscoped.escalation.create({
+      data: { id: newId(), ...row, level: 1, reason: 'at_risk' },
+    });
+
+    // And an escalation cannot be attached to another tenant's clock.
+    await expect(
+      h.unscoped.escalation.create({
+        data: { id: newId(), ...row, clockId: theirClock, level: 1, reason: 'at_risk' },
+      }),
+    ).rejects.toThrow(/escalations_clock_same_org_fk|foreign key/i);
+  });
+
+  it('refuses an escalation that reached nobody, and one whose level contradicts its reason', async () => {
+    const mine = await policy(h.orgA.organizationId);
+    const subject = await lead(h.orgA);
+    const myClock = await clock(h.orgA.organizationId, subject, mine);
+    const base = {
+      organizationId: h.orgA.organizationId,
+      clockId: myClock,
+      policyId: mine,
+      subjectType: 'lead' as const,
+      subjectId: subject,
+    };
+
+    // A row claiming somebody was told when nobody was.
+    await expect(
+      h.unscoped.escalation.create({
+        data: { id: newId(), ...base, level: 2, reason: 'breached', notifiedUserIds: [] },
+      }),
+    ).rejects.toThrow(/escalations_notified_somebody/i);
+
+    await expect(
+      h.unscoped.escalation.create({
+        data: {
+          id: newId(),
+          ...base,
+          level: 1,
+          reason: 'breached',
+          notifiedUserIds: [h.orgA.userId],
+        },
+      }),
+    ).rejects.toThrow(/escalations_level_matches_reason/i);
+  });
+
+  it('refuses a policy whose warning threshold is not strictly inside its target', async () => {
+    for (const warnAtPercent of [0, 100]) {
+      await expect(
+        h.unscoped.slaPolicy.create({
+          data: {
+            id: newId(),
+            organizationId: h.orgA.organizationId,
+            name: `Silly ${warnAtPercent} ${newId().slice(-6)}`,
+            firstResponseMinutes: 60,
+            warnAtPercent,
+          },
+        }),
+      ).rejects.toThrow(/sla_policies_warn_percent_range/i);
+    }
+  });
+
+  it('keeps a policy name unique per workspace and free across workspaces', async () => {
+    const name = 'Golden hour';
+    for (const org of [h.orgA, h.orgB]) {
+      await h.unscoped.slaPolicy.create({
+        data: {
+          id: newId(),
+          organizationId: org.organizationId,
+          name,
+          firstResponseMinutes: 60,
+        },
+      });
+    }
+    await expect(
+      h.unscoped.slaPolicy.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          name,
+          firstResponseMinutes: 60,
+        },
+      }),
+    ).rejects.toThrow(/unique|duplicate key/i);
+
+    const mine = await tenantContext.run(h.orgA.principal, async () =>
+      h.db.slaPolicy.findMany({ where: { name } }),
+    );
+    expect(mine).toHaveLength(1);
+    expect(mine[0]?.organizationId).toBe(h.orgA.organizationId);
+  });
+});
+
 describe('layer 3 — the industry template catalogue is platform data, not a tenant table (FR-ONB-2)', () => {
   it('is populated by the platform catalogue seeder, with the ten industries', async () => {
     const rows = await h.unscoped.industryTemplate.findMany({ orderBy: { sortOrder: 'asc' } });

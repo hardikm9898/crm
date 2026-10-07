@@ -119,6 +119,15 @@ const REQUIRED_INDEXES = [
   'tasks_follows',
   'leads_next_action_task',
   'task_reminders_pending',
+  // SLA (`FR-TSK-8`). `sla_clocks_awaiting_warning` and `sla_clocks_awaiting_breach` are what the
+  // five-minute sweep scans across tenants — two partial indexes rather than one on `state`,
+  // because "needs warning" and "needs breaching" are different questions. Neither leads with
+  // `organization_id`, deliberately: the sweep is platform-wide.
+  'sla_clocks_awaiting_warning',
+  'sla_clocks_awaiting_breach',
+  'sla_clocks_open',
+  'escalations_clock',
+  'escalations_unacknowledged',
 ];
 
 /**
@@ -356,6 +365,32 @@ const REQUIRED_CONSTRAINTS = [
   'task_reschedules_reason_same_org_fk',
   'task_reminders_offset_non_negative',
   'task_reminders_task_same_org_fk',
+  // SLA (`FR-TSK-8`). `escalations_level_matches_reason` and the unique
+  // `escalation_once_per_level_key` together are the "escalate exactly once" guarantee the phase's
+  // exit criteria ask for — a database constraint rather than a careful sweep.
+  'sla_policies_name_present',
+  'sla_policies_first_response_positive',
+  'sla_policies_next_response_positive',
+  'sla_policies_resolution_positive',
+  'sla_policies_warn_percent_range',
+  'sla_policies_applies_to_is_object',
+  'sla_policies_escalate_to_is_object',
+  'sla_clocks_lead_subject_has_lead',
+  'sla_clocks_subject_matches_lead',
+  'sla_clocks_target_minutes_positive',
+  'sla_clocks_paused_non_negative',
+  'sla_clocks_instants_ordered',
+  'sla_clocks_satisfied_has_timestamp',
+  'sla_clocks_breached_has_timestamp',
+  'sla_clocks_cancelled_has_timestamp',
+  'sla_clocks_policy_same_org_fk',
+  'sla_clocks_lead_same_org_fk',
+  'sla_clocks_assignee_same_org_fk',
+  'escalations_level_matches_reason',
+  'escalations_notified_somebody',
+  'escalations_acknowledged_pair',
+  'escalations_clock_same_org_fk',
+  'escalations_policy_same_org_fk',
 ];
 
 describe('hand-written indexes survive every generated migration', () => {

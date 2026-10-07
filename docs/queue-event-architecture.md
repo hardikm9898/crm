@@ -184,7 +184,7 @@ can retune cadence.
 | ------------------ | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | every minute       | `task.reminder-dispatch`                                              | Due reminders → notifications                                                                                                             |
 | every minute       | `wf.reconcile-waiting`                                                | Resume workflow runs whose `resume_at` passed (safety net for lost delayed jobs)                                                          |
-| every 5 min        | `sla.sweep`                                                           | At-risk → warn, breached → escalate (`FR-TSK-8`)                                                                                          |
+| every 5 min        | `sla.sweep`                                                           | At-risk → warn, breached → escalate (`FR-TSK-8`). Built; breaches handled before warnings in a tick                                       |
 | every 5 min        | `rollup.*-daily` (today's partial)                                    | Near-real-time dashboards                                                                                                                 |
 | every 10 min       | `integration.health-check`                                            | Per-connection probes → `integration_health_checks`                                                                                       |
 | every 15 min       | `analytics.session-close`                                             | Close sessions idle > 30 min                                                                                                              |
@@ -224,6 +224,15 @@ All schedules are working-hours/timezone aware where they touch humans — a fol
 >   in-app notification _is_ the delivery; a per-channel job arrives with the channel (email,
 >   WhatsApp). The sweep creates the notification **before** marking the row sent, so a crash
 >   retries into an idempotent `create` rather than losing the reminder.
+>
+> **`sla.sweep` is built** and lives on `maintenance` with the other platform-wide sweeps. Breaches
+> are escalated before warnings inside one tick, because warning about something that has already
+> happened is noise; and escalating once is `UNIQUE (organization_id, clock_id, level)` on
+> `escalations` rather than a careful `if` — the sweep inserts and reads the collision, which is the
+> only form that survives two sweeps running at once. Its notifications go out through
+> `sla.at_risk` / `sla.breached` and one `notify.sla-escalation` processor dispatching on the
+> envelope's event name, with the recipients **stored on the escalation row** by the sweep so the
+> row and the notifications cannot disagree when somebody's role changes in between.
 >
 > `task.overdue` is the only one of the five task events with a consumer today
 > (`notify.task-overdue` → the assignee and whoever holds `task:manage_others`). `task.created`,

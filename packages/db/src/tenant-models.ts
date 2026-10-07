@@ -80,6 +80,10 @@ export const TENANT_MODELS = [
   'Task',
   'TaskReschedule',
   'TaskReminder',
+  // Phase 3, step 2 — SLA
+  'SlaPolicy',
+  'SlaClock',
+  'Escalation',
 ] as const;
 
 export type TenantModel = (typeof TENANT_MODELS)[number];

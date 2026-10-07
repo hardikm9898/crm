@@ -9,6 +9,8 @@ import {
   seedDealPipeline,
   seedPaymentMethods,
   seedTaskConfig,
+  seedSlaPolicy,
+  seedWorkingHours,
   seedDefaultAssignmentRule,
   seedDefaultTags,
   seedScoringAndViews,
@@ -103,6 +105,8 @@ async function topUpConfiguration(db: PrismaClient, organizationId: string): Pro
     if (taskConfig.types) added.push('task types');
     if (taskConfig.outcomes) added.push('task outcomes');
     if (taskConfig.reasons) added.push('reschedule reasons');
+    if (await seedWorkingHours(tx, organizationId)) added.push('workspace working hours');
+    if (await seedSlaPolicy(tx, organizationId)) added.push('SLA policy');
 
     const executives = await tx.userRole.findMany({
       where: { organizationId, role: { code: 'sales_executive' } },

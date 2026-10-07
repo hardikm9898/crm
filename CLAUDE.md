@@ -397,6 +397,29 @@ prisma migrate deploy` after generating a migration.
 - **A validation refusal is 400, not 422.** `AppError.validation` and a Zod schema failure both
   answer `400 VALIDATION_FAILED`; `AppError.businessRule` answers `422 BUSINESS_RULE_VIOLATION`. A
   test asserting 422 for a missing required field passes only by accident.
+- **A CHECK constraint that evaluates to NULL is satisfied.** `escalations_notified_somebody` as
+  `array_length(notified_user_ids, 1) >= 1` reads as "at least one recipient" and is not: on an
+  **empty** array `array_length` returns NULL, the comparison is NULL, and Postgres lets the row in.
+  An escalation claiming somebody was told when nobody was went straight through. `cardinality`
+  returns 0 and is the function such a check always wants. The general rule is that every
+  sub-expression of a CHECK has to be non-NULL for the check to bite — the same reason the
+  status/timestamp pairs are written as `CASE`.
+- **`working_hours` rows belong to a _person_ unless somebody writes workspace-wide ones.**
+  Provisioning has written the owner's hours since Phase 1, and the assignment engine reads them to
+  ask "is this person on shift". An SLA clock needs the **business's** hours, so
+  `SlaCalendarService` filters `user_id IS NULL` — and found nothing, falling back to always-open
+  and running every clock through the night. Silently: the feature looked built. `seedWorkingHours`
+  writes the workspace-wide set and backfills existing workspaces.
+- **Business-hours arithmetic must not truncate to the minute.** The day-walk clipped the first
+  segment to the whole minute the lead arrived in, so a sixty-minute promise came due in
+  fifty-nine — a business under-delivering against its own SLA, reaching a manager as a breach that
+  arrived a minute early. Walk **instants**, clipped to the exact `from`, and convert each window
+  boundary on its own local day (which is also what makes a DST day correct).
+- **A test fixture shared between tests in one file trips the uniqueness rules it is not testing.**
+  `sla_clock_subject_target_key` allows one clock per promise per lead, so a second test reusing the
+  harness's lead failed on a constraint it had nothing to do with. Each test creates its own
+  subject — the same lesson as "a test that finds its fixture passes for the wrong reason", one step
+  earlier.
 - **A browser check must use `localhost`, not `127.0.0.1`.** Against `127.0.0.1:3000` the login form
   submitted as a native GET with the password in the query string — the client bundle had not
   hydrated — and the check failed with a URL that explains itself only if you read it closely.

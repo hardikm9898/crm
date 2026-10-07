@@ -448,6 +448,62 @@ describe('tasks and follow-ups (FR-TSK-1..6)', () => {
   });
 });
 
+describe('SLA (FR-TSK-8)', () => {
+  const entry = (type: string, payload: Record<string, unknown>) =>
+    describeEntry({
+      id: 'a',
+      type,
+      module: type.split('.')[0]!,
+      known: true,
+      occurredAt: '2026-10-07T06:00:00.000Z',
+      visibility: 'all',
+      actor: { type: 'system', id: null, name: null },
+      payload,
+    });
+
+  it('names the promise a business owner recognises, not the clock', () => {
+    const described = entry('sla.breached', {
+      target: 'first_response',
+      policy: 'First response within an hour',
+      targetMinutes: 60,
+      dueAt: '2026-10-07T05:00:00.000Z',
+    });
+    expect(described.description).toContain('First response within an hour');
+    // `first_response` is a column name; nobody outside this repository reads it.
+    expect(described.description).not.toContain('first_response');
+    expect(described.description).toContain('60 working minutes');
+    expect(described.tone).toBe('danger');
+  });
+
+  it('warns before it blames', () => {
+    const described = entry('sla.at_risk', {
+      target: 'first_response',
+      policy: 'First response within an hour',
+      dueAt: '2026-10-07T07:00:00.000Z',
+    });
+    expect(described.label).toBe('Running out');
+    expect(described.tone).toBe('warning');
+    expect(described.description).toContain('nearly out of time');
+  });
+
+  it('spells out every target, and falls back rather than printing a slug', () => {
+    for (const [target, expected] of [
+      ['first_response', 'The first response'],
+      ['next_response', 'The next reply'],
+      ['resolution', 'Closing this out'],
+      ['something_new', 'The response'],
+    ] as const) {
+      expect(entry('sla.breached', { target }).description).toContain(expected);
+    }
+  });
+
+  it('still reads when the payload is empty', () => {
+    for (const type of ['sla.at_risk', 'sla.breached']) {
+      expect(entry(type, {}).description.length).toBeGreaterThan(10);
+    }
+  });
+});
+
 describe('every activity type the product writes has a describer', () => {
   /**
    * The types no code emits yet, each with the phase that will.
@@ -461,15 +517,22 @@ describe('every activity type the product writes has a describer', () => {
   const NOT_WRITTEN_YET: Readonly<Record<string, number>> = {
     'mention.created': 3,
     'document.uploaded': 3,
-    'sla.at_risk': 3,
-    'sla.breached': 3,
     'consent.granted': 13,
     'consent.revoked': 13,
   };
 
   // Phase 3 step 1 added `task`, and took the five task types off the deferred list above as part
   // of the same change — which is what the second test in this block is for.
-  const WRITTEN_MODULES = ['lead', 'customer', 'deal', 'quotation', 'payment', 'note', 'task'];
+  const WRITTEN_MODULES = [
+    'lead',
+    'customer',
+    'deal',
+    'quotation',
+    'payment',
+    'note',
+    'task',
+    'sla',
+  ];
 
   it('describes every type in a module the product writes, except the ones nothing writes yet', () => {
     const undescribed = Object.values(ACTIVITY_TYPES)

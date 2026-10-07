@@ -1068,6 +1068,77 @@ the notification-centre step); the queue's actions are server actions and round 
 optimistic-and-queued ones the frontend design describes for `/today`; `automation_run_id` on
 `tasks` waits for Phase 6 to create the table it would reference.
 
+### Step 2 — the SLA policy and the business-hours clock ✅ _(landed 2026-10-07)_
+
+`FR-TSK-8`, and the two exit criteria that are the whole difficulty: a clock that respects working
+hours and holidays across timezones **with a DST case**, and escalation that happens **exactly
+once**.
+
+**Three tenant tables.** `sla_policies` (the promise, its conditions, its targets, and who hears
+about a breach — by **permission**, not by role name), `sla_clocks` (one promise about one record,
+with the instant it comes due) and `escalations` (somebody was told). `sla:read` was added to the
+permission catalogue, with a data migration granting it to the 205 `is_system` roles that already
+existed — the trap `payment:read` paid for.
+
+**The business calendar is a pure function with 26 tests of its own.** `addBusinessMinutes`,
+`businessMinutesBetween`, `nextBusinessStart` and `isWithinBusinessHours` in `@leados/shared` walk
+the workspace's own local days rather than adding milliseconds, because a working window is a pair
+of **wall-clock minutes on a local day** and that is what makes "09:00–18:00" survive a clock
+change. Three of the tests cross a DST boundary in both directions; one asserts that
+`businessMinutesBetween` is the exact inverse of `addBusinessMinutes`, which is what makes a breach
+report trustworthy.
+
+Two bugs the arithmetic had, both found by running it rather than by reading it:
+
+- the walk truncated the start to the whole minute, so a sixty-minute promise came due in
+  fifty-nine — a business under-delivering against its own SLA, reaching a manager as a breach that
+  arrived too soon. Found by an end-to-end assertion on an always-open policy;
+- `escalations_notified_somebody` shipped as `array_length(notified_user_ids, 1) >= 1`, which is
+  **NULL** for an empty array — and a CHECK evaluating to NULL is _satisfied_, so a row claiming
+  somebody was told when nobody was went straight in. Corrected forward to `cardinality` in its own
+  migration rather than by editing an applied one.
+
+**Three decisions, written down as
+[ADR-0023](./decisions/ADR-0023-sla-clocks-are-stored-and-escalation-is-a-unique-key.md):**
+
+1. **`due_at` and `warn_at` are walked at capture and stored.** The sweep needs one indexed query
+   across every tenant, and a promise recomputed later against a calendar somebody has since edited
+   would move a deadline that was already communicated. Editing a policy therefore affects new
+   clocks only, and `target_minutes` on the row is why a report can still say what each old one
+   promised.
+2. **Escalating once is `UNIQUE (organization_id, clock_id, level)`.** The sweep inserts and reads
+   the collision; a read-then-write would let two sweeps both notify. Asserted by running two
+   sweeps concurrently and counting rows.
+3. **`breached` is stored, but "is it late" is read from the clock.** The opposite of a task's
+   derived `overdue`, and for the opposite reason: a breach is an _event_ escalated to named people
+   at a named moment. `slaHealth()` still reports a running clock past its due instant as breached,
+   so no screen is ever a cron tick behind the truth.
+
+**Two columns that had no writer now have one.** `working_hours` has been read since Phase 1 only
+as "is this person on shift"; a workspace now has rows of its own (`user_id IS NULL`), backfilled
+into existing workspaces, because without them the clock falls back to always-open and runs through
+the night — wrong, and invisibly so. And `leads.first_contacted_at` / `last_contacted_at`, which
+have existed since Phase 2 step 1 with nothing writing them at all, are written by a completed
+follow-up — which is also what satisfies the first-response clock.
+
+**Screens.** `/sla` is the breach board: five counts, each an aggregate over the whole filter, with
+"answered late" separate from "missed" because a clock somebody eventually got to is a different
+management problem. `/settings/sla` edits the policies, each row printing its promise as text.
+The lead detail screen carries the promise in "At a glance", because a board a manager reads is no
+use to the person who could still answer in time.
+
+**Verified.** 1 544 tests green (691 unit, 853 integration) plus 253 browser checks. Thirty of them
+are new and drive the board, the settings screen and the lead's own promise — including **waiting
+for the real five-minute `sla.sweep` tick**, so the escalation the check asserts was produced by the
+product rather than by the test.
+
+**Carried forward, named rather than assumed:** `/today` is the next step; `next_response` is stored
+on a policy but no clock starts for it until the Phase 5 inbox exists; `sla_clocks.paused_ms` has no
+writer for the same reason; neither the SLA sweep nor the task reminder dispatcher is quiet-hours
+aware, which needs `notification_preferences` to carry quiet hours (the notification-centre step);
+and nothing has been measured against the `p95 < 400 ms` the `/my/today` exit criterion sets, which
+belongs with that screen.
+
 ---
 
 ## Phase 4 — Capture & developer platform
@@ -1266,22 +1337,21 @@ partially landed, with the specific gaps named.
 ## Immediate next step
 
 _This section names the next step only; what each landed step actually did is in the step entries
-above. Last reviewed 2026-10-07, after Phase 3 step 1._
+above. Last reviewed 2026-10-07, after Phase 3 step 2._
 
-**Phase 3, step 2 — the SLA policy and the clock.** `sla_policies` (per-source/priority
-first-response and next-response targets), `sla_clocks` and `escalations`, with the clock respecting
-the working hours and holidays that `working_hours` and `holidays` have held since Phase 1 and that
-nothing has read yet. The exit criteria name the hard part explicitly: a DST transition has to be in
-the tests, and a breach has to escalate to the manager **exactly once**, which is the same
-idempotency the overdue sweep just solved with `overdue_notified_at`. After that comes `/today` —
-one request for the whole executive screen — which is the first screen in the product that is a
-queue rather than a list, and which the `/tasks` queue was built to be made from.
+**Phase 3, step 3 — `/today`, the executive workspace.** `GET /my/today` returning the entire screen
+in one request: the follow-up queue the `/tasks` page was built to be made from, the SLA clocks
+running out, the new leads with no first contact, and the counts beside each. It is the first screen
+in the product that is a **queue rather than a list**, and its exit criteria are the two that have
+not been met by anything yet — `p95 < 400 ms` on the 100 k fixture, and usable one-handed at 375 px.
+The data it needs now exists: `leads.next_action_task_id`, the task buckets and the SLA clocks were
+all built for it.
 
-Two items are carried forward from Phase 3 step 1 rather than left unsaid: neither task sweep is
+Three items are carried forward from Phase 3 and named rather than left unsaid: neither sweep is
 quiet-hours aware (it needs `notification_preferences` to carry quiet hours, which is the
-notification-centre step), and the queue's actions are ordinary server actions rather than the
-optimistic, queued, retried ones `docs/frontend-architecture.md` §5.1 describes — that belongs with
-`/today` and its offline story.
+notification-centre step later in this phase); the queue's actions are ordinary server actions
+rather than the optimistic, queued, retried ones `docs/frontend-architecture.md` §5.1 describes for
+`/today`; and `next_response` SLA clocks and `sla_clocks.paused_ms` wait for the Phase 5 inbox.
 
 Two Phase 2 items are still open, both named in that phase's exit-criteria review: there is no
 settings screen for custom fields (they are created through the API or by a template), and nothing

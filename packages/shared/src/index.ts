@@ -22,3 +22,5 @@ export * from './csv.js';
 export * from './import-mapping.js';
 export * from './export-columns.js';
 export * from './tasks.js';
+export * from './business-hours.js';
+export * from './sla.js';

@@ -29,6 +29,12 @@ import {
 } from '@/lib/leads';
 import { Timeline } from '@/components/timeline';
 import { BUCKET_CLASSES, BUCKET_LABELS, loadLeadTasks, loadTaskConfig } from '@/lib/tasks';
+import {
+  HEALTH_CLASSES as SLA_HEALTH_CLASSES,
+  HEALTH_LABELS as SLA_HEALTH_LABELS,
+  TARGET_LABELS as SLA_TARGET_LABELS,
+  loadLeadSla,
+} from '@/lib/sla';
 import { ScheduleTaskForm } from '../../tasks/_components/task-forms';
 import { ConvertForm } from '../../customers/_components/convert-form';
 import {
@@ -114,7 +120,17 @@ export default async function LeadDetailPage({
   // The follow-ups, and the vocabulary the form needs. Both swallow a failure: a lead that will
   // not open because one panel's request failed is worse than a lead with one panel missing — but
   // the form says so itself when it has nothing to offer, rather than rendering empty dropdowns.
-  const [tasks, taskConfig] = await Promise.all([loadLeadTasks(id, token), loadTaskConfig(token)]);
+  const [tasks, taskConfig, slaClocks] = await Promise.all([
+    loadLeadTasks(id, token),
+    loadTaskConfig(token),
+    // Swallows too: the clocks are a line on a panel, and a lead that will not open because an SLA
+    // request failed is worse than a lead with one line missing.
+    loadLeadSla(id, token),
+  ]);
+  const openClock = slaClocks.find(
+    (clock) =>
+      clock.health === 'breached' || clock.health === 'at_risk' || clock.health === 'running',
+  );
   const openTasks = tasks.filter(
     (task) => task.status === 'pending' || task.status === 'in_progress',
   );
@@ -296,6 +312,34 @@ export default async function LeadDetailPage({
                   <Detail label="Next action">
                     {lead.nextActionAt ? formatDateTime(lead.nextActionAt) : 'Nothing scheduled'}
                   </Detail>
+                  {/*
+                    The promise, where somebody working the lead will see it. A breach board a
+                    manager reads is no use to the person who could still answer in time.
+                  */}
+                  {openClock && (
+                    <Detail label="Response promise">
+                      <span
+                        className={`mr-2 inline-block rounded px-2 py-0.5 text-xs ${SLA_HEALTH_CLASSES[openClock.health]}`}
+                        data-lead-sla-health
+                      >
+                        {SLA_HEALTH_LABELS[openClock.health]}
+                      </span>
+                      <span data-lead-sla-due>
+                        {SLA_TARGET_LABELS[openClock.target]} due {formatDateTime(openClock.dueAt)}
+                      </span>
+                    </Detail>
+                  )}
+                  {!openClock && slaClocks.length > 0 && (
+                    <Detail label="Response promise">
+                      <span data-lead-sla-health>{SLA_HEALTH_LABELS[slaClocks[0]!.health]}</span>
+                      {slaClocks[0]!.satisfiedBy && (
+                        <span className="text-[var(--color-text-muted)]">
+                          {' '}
+                          — {slaClocks[0]!.satisfiedBy}
+                        </span>
+                      )}
+                    </Detail>
+                  )}
                   {lead.lostReason && <Detail label="Lost reason">{lead.lostReason.name}</Detail>}
                   {lead.lostNote && <Detail label="Lost note">{lead.lostNote}</Detail>}
                 </dl>

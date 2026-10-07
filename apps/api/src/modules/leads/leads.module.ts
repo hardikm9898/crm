@@ -5,6 +5,7 @@ import { DuplicatesModule } from '../duplicates/duplicates.module.js';
 import { AssignmentModule } from '../assignment/assignment.module.js';
 import { ScoringModule } from '../scoring/scoring.module.js';
 import { ViewsModule } from '../views/views.module.js';
+import { SlaModule } from '../sla/sla.module.js';
 import { LeadTimelineService } from './lead-timeline.service.js';
 import { LeadsController } from './leads.controller.js';
 import { LeadsService } from './leads.service.js';
@@ -28,6 +29,9 @@ import { LeadsService } from './leads.service.js';
     AssignmentModule,
     ScoringModule,
     ViewsModule,
+    // A captured lead starts its SLA clock inside the same transaction, so the clock cannot exist
+    // for a capture that was rolled back.
+    SlaModule,
     // For `POST /leads/:id/convert`. The dependency points this way on purpose: conversion writes
     // the customer and the lead's status history in one transaction, so it belongs to the module
     // that owns the customer, and the lead surface merely exposes it.

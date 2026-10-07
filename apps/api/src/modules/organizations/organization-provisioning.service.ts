@@ -11,6 +11,8 @@ import {
   seedDealPipeline,
   seedPaymentMethods,
   seedTaskConfig,
+  seedSlaPolicy,
+  seedWorkingHours,
   seedDefaultAssignmentRule,
   seedScoringAndViews,
 } from '@leados/db';
@@ -169,6 +171,8 @@ export class OrganizationProvisioningService {
         await seedDealPipeline(tx, organizationId);
         await seedPaymentMethods(tx, organizationId);
         await seedTaskConfig(tx, organizationId);
+        await seedWorkingHours(tx, organizationId);
+        await seedSlaPolicy(tx, organizationId);
         // The owner is the only member at signup, so they are the pool. A round-robin of one still
         // exercises the whole path — eligibility, working hours, the fallback — from day one.
         await seedDefaultAssignmentRule(tx, organizationId, [input.ownerUserId]);

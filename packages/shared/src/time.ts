@@ -75,6 +75,32 @@ export function zonedParts(date: Date, timeZone: string): ZonedParts {
   };
 }
 
+/**
+ * The UTC instant of a wall-clock minute on a given local date — `2026-03-29` + `150` in
+ * `Europe/Berlin` is 03:30 local, because 02:30 does not exist that morning.
+ *
+ * Exported because business-hours arithmetic is all of this shape: a window is a pair of minutes
+ * on a local day, and the whole point of storing it that way is that "09:00 to 18:00" survives a
+ * clock change. `minuteOfDay` may exceed 1440, which is how a window that ends at midnight is
+ * expressed as `[540, 1440]` without the caller having to roll the date itself.
+ */
+export function zonedInstant(dateKey: string, minuteOfDay: number, timeZone: string): Date {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  /* c8 ignore next */
+  if (!year || !month || !day) throw new Error(`not a date key: ${dateKey}`);
+  return zonedTimeToUtc(
+    {
+      year,
+      month,
+      day,
+      hour: Math.floor(minuteOfDay / 60),
+      minute: minuteOfDay % 60,
+      second: 0,
+    },
+    timeZone,
+  );
+}
+
 /** Interprets wall-clock parts in `timeZone` and returns the corresponding UTC instant. */
 function zonedTimeToUtc(parts: ZonedParts, timeZone: string): Date {
   const guess = Date.UTC(

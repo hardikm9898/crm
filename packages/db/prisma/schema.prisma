@@ -241,6 +241,51 @@ enum TaskCreatedVia {
   @@map("task_created_via")
 }
 
+/// What an SLA clock is measuring (`FR-TSK-8`).
+enum SlaTarget {
+  first_response
+  next_response
+  resolution
+
+  @@map("sla_target")
+}
+
+/// Which kind of record a clock is attached to. Only `lead` is started today; the other two arrive
+/// with conversations and with the task SLA, and the enum exists so the column does not have to
+/// change when they do.
+enum SlaSubjectType {
+  lead
+  conversation
+  task
+
+  @@map("sla_subject_type")
+}
+
+/// A clock's lifecycle.
+///
+/// `breached` is **stored**, unlike a task's derived `overdue` — and for the opposite reason.
+/// Overdue is a fact anybody can recompute from the clock; a breach is an *event* that was
+/// escalated to a named person at a named moment, and recomputing it would lose who was told.
+/// `slaHealth()` still reads a running clock past its due instant as breached, so a board is never
+/// a cron tick behind the truth.
+enum SlaClockState {
+  running
+  paused
+  satisfied
+  breached
+  cancelled
+
+  @@map("sla_clock_state")
+}
+
+/// Why somebody was escalated to. The warning first, then the breach.
+enum EscalationReason {
+  at_risk
+  breached
+
+  @@map("escalation_reason")
+}
+
 enum CustomFieldEntity {
   lead
   customer
@@ -621,7 +666,10 @@ model Organization {
   paymentMethods PaymentMethod[]
   payments       Payment[]
 
-  // Phase 3 — tasks and follow-ups
+  // Phase 3 — tasks, follow-ups and SLA
+  slaPolicies         SlaPolicy[]
+  slaClocks           SlaClock[]
+  escalations         Escalation[]
   taskTypes           TaskType[]
   taskOutcomes        TaskOutcome[]
   rescheduleReasons   RescheduleReason[]
@@ -670,8 +718,9 @@ model Branch {
 
   quotations Quotation[]
 
-  payments Payment[]
-  tasks    Task[]
+  payments  Payment[]
+  tasks     Task[]
+  slaClocks SlaClock[]
 
   @@unique([organizationId, id], name: "branch_tenant_key")
   @@unique([organizationId, code])
@@ -700,8 +749,9 @@ model Team {
 
   quotations Quotation[]
 
-  payments Payment[]
-  tasks    Task[]
+  payments  Payment[]
+  tasks     Task[]
+  slaClocks SlaClock[]
 
   @@unique([organizationId, id], name: "team_tenant_key")
   @@index([organizationId, deletedAt])
@@ -763,6 +813,8 @@ model Membership {
   recordedPayments Payment[] @relation("payment_owner")
 
   assignedTasks Task[] @relation("task_assignee")
+
+  slaClocks SlaClock[] @relation("sla_clock_assignee")
 
   @@unique([organizationId, id], name: "membership_tenant_key")
   @@unique([organizationId, userId])
@@ -1490,10 +1542,11 @@ model Lead {
   payments Payment[]
 
   tasks          Task[]
+  slaClocks      SlaClock[]
   /// `Restrict` rather than `SetNull`: this is a composite FK, and `SetNull` would null the NOT
   /// NULL `organization_id` with it. The pointer is cleared by the recompute before a task is ever
   /// hard-deleted.
-  nextActionTask Task?  @relation("lead_next_action", fields: [organizationId, nextActionTaskId], references: [organizationId, id], onDelete: Restrict, map: "leads_next_action_task_same_org_fk")
+  nextActionTask Task?      @relation("lead_next_action", fields: [organizationId, nextActionTaskId], references: [organizationId, id], onDelete: Restrict, map: "leads_next_action_task_same_org_fk")
 
   @@unique([organizationId, id], name: "lead_tenant_key")
   /// The default list.
@@ -3075,4 +3128,157 @@ model TaskReminder {
   /// One reminder per offset per task, so rewriting them is an upsert rather than a duplicate.
   @@unique([organizationId, taskId, offsetMinutes])
   @@map("task_reminders")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Phase 3 — SLA policies, clocks and escalation (`FR-TSK-8`)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// The promise a business makes about how fast it answers (`FR-TSK-8`).
+///
+/// `appliesTo` is an allow-list per condition, consulted only when present, which is what makes a
+/// policy with `{}` the catch-all. Matching is **first match wins by `priority`** — the convention
+/// ADR-0014 set for duplicate rules, so a business that has learned one ordering has learned both.
+model SlaPolicy {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+  name           String
+  /// `{ sourceIds?, priorities?, pipelineIds?, scoreBands? }`.
+  appliesTo      Json   @default("{}") @map("applies_to") @db.JsonB
+
+  /// How long to get back to a new lead. The one target every policy must have — a policy that
+  /// promises nothing is a row with no effect.
+  firstResponseMinutes Int  @map("first_response_minutes")
+  /// For a conversation waiting on a reply. Stored now; no clock starts for it until the inbox
+  /// exists, which is Phase 5.
+  nextResponseMinutes  Int? @map("next_response_minutes")
+  /// How long to convert or lose a lead. Optional, because most businesses have no such promise.
+  resolutionMinutes    Int? @map("resolution_minutes")
+
+  /// Whether the clock runs only inside the workspace's working hours. True by default: a lead that
+  /// arrives at 18:50 on a Friday is not late at 19:50.
+  businessHoursOnly Boolean @default(true) @map("business_hours_only")
+  /// The share of the target at which the near-breach warning fires (`FR-TSK-8`).
+  warnAtPercent     Int     @default(80) @map("warn_at_percent")
+  /// Who hears about it: `{ permission?: 'task:manage_others', userIds?: [] }`. A **permission**
+  /// rather than a role name, so a workspace that renames or restructures its roles keeps working
+  /// (rule 4).
+  escalateTo        Json    @default("{}") @map("escalate_to") @db.JsonB
+
+  priority  Int       @default(0)
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  clocks       SlaClock[]
+  escalations  Escalation[]
+
+  @@unique([organizationId, id], name: "sla_policy_tenant_key")
+  @@unique([organizationId, name])
+  @@index([organizationId, isActive, priority])
+  @@map("sla_policies")
+}
+
+/// One promise about one record, with the instant it comes due.
+///
+/// `dueAt` and `warnAt` are **computed through the business calendar when the clock starts** and
+/// then stored, rather than derived at read time. Two reasons: the sweep has to be able to find
+/// what is due with one indexed query over every tenant, and a target recomputed later against a
+/// calendar somebody has since edited would silently move a promise that was already made.
+model SlaClock {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+  policyId       String @map("policy_id") @db.Uuid
+
+  subjectType SlaSubjectType @map("subject_type")
+  subjectId   String         @map("subject_id") @db.Uuid
+  /// The lead, when the subject is one. A real composite FK rather than a polymorphic id alone, so
+  /// "a clock on another tenant's lead" is unrepresentable and the board can join without a union.
+  leadId      String?        @map("lead_id") @db.Uuid
+
+  target SlaTarget
+
+  /// Ownership, copied from the subject so the board can be data-scoped without a join.
+  branchId       String? @map("branch_id") @db.Uuid
+  teamId         String? @map("team_id") @db.Uuid
+  assignedUserId String? @map("assigned_user_id") @db.Uuid
+
+  startedAt     DateTime @map("started_at") @db.Timestamptz(6)
+  dueAt         DateTime @map("due_at") @db.Timestamptz(6)
+  warnAt        DateTime @map("warn_at") @db.Timestamptz(6)
+  /// The target this clock was created against, kept so a report can say "60 working minutes" even
+  /// after somebody edits the policy.
+  targetMinutes Int      @map("target_minutes")
+
+  /// Reserved for the pause/resume the conversation SLA needs. Nothing writes it yet, and the
+  /// `sla_clocks_paused_non_negative` check keeps it honest in the meantime.
+  pausedMs Int @default(0) @map("paused_ms")
+
+  state       SlaClockState @default(running)
+  satisfiedAt DateTime?     @map("satisfied_at") @db.Timestamptz(6)
+  breachedAt  DateTime?     @map("breached_at") @db.Timestamptz(6)
+  /// Set by the sweep when the near-breach warning went out, so it goes out once.
+  warnedAt    DateTime?     @map("warned_at") @db.Timestamptz(6)
+  cancelledAt DateTime?     @map("cancelled_at") @db.Timestamptz(6)
+  /// How it was satisfied — "a call was logged", "the lead converted". The sentence the report reads.
+  satisfiedBy String?       @map("satisfied_by")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  policy       SlaPolicy    @relation(fields: [organizationId, policyId], references: [organizationId, id], onDelete: Restrict, map: "sla_clocks_policy_same_org_fk")
+  lead         Lead?        @relation(fields: [organizationId, leadId], references: [organizationId, id], onDelete: Cascade, map: "sla_clocks_lead_same_org_fk")
+  branch       Branch?      @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict, map: "sla_clocks_branch_same_org_fk")
+  team         Team?        @relation(fields: [organizationId, teamId], references: [organizationId, id], onDelete: Restrict, map: "sla_clocks_team_same_org_fk")
+  assignee     Membership?  @relation("sla_clock_assignee", fields: [organizationId, assignedUserId], references: [organizationId, userId], onDelete: Restrict, map: "sla_clocks_assignee_same_org_fk")
+  escalations  Escalation[]
+
+  @@unique([organizationId, id], name: "sla_clock_tenant_key")
+  /// One clock per promise per record. A second first-response clock on the same lead would make
+  /// every breach count double.
+  @@unique([organizationId, subjectType, subjectId, target], name: "sla_clock_subject_target_key")
+  /// The board, and the per-person view.
+  @@index([organizationId, state, dueAt])
+  @@index([organizationId, assignedUserId, state, dueAt])
+  @@index([organizationId, leadId])
+  @@map("sla_clocks")
+}
+
+/// Somebody was told. Once per clock per level, by a unique key rather than by hope.
+///
+/// This table is what makes "escalate exactly once" a database guarantee instead of a careful
+/// sweep: the sweep inserts, and a duplicate insert is the collision that tells it the work was
+/// already done.
+model Escalation {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+  clockId        String @map("clock_id") @db.Uuid
+  policyId       String @map("policy_id") @db.Uuid
+
+  subjectType     SlaSubjectType   @map("subject_type")
+  subjectId       String           @map("subject_id") @db.Uuid
+  /// 1 = the near-breach warning, 2 = the breach.
+  level           Int
+  reason          EscalationReason
+  /// The people notified, as user ids. An array rather than a join table: it is written once and
+  /// read as a whole, and nothing ever queries "every escalation that reached this person".
+  notifiedUserIds String[]         @map("notified_user_ids") @db.Uuid
+
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  acknowledgedAt   DateTime? @map("acknowledged_at") @db.Timestamptz(6)
+  acknowledgedById String?   @map("acknowledged_by_id") @db.Uuid
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  clock        SlaClock     @relation(fields: [organizationId, clockId], references: [organizationId, id], onDelete: Cascade, map: "escalations_clock_same_org_fk")
+  policy       SlaPolicy    @relation(fields: [organizationId, policyId], references: [organizationId, id], onDelete: Restrict, map: "escalations_policy_same_org_fk")
+
+  @@unique([organizationId, id], name: "escalation_tenant_key")
+  /// The guarantee the exit criteria ask for: exactly once per clock per level.
+  @@unique([organizationId, clockId, level], name: "escalation_once_per_level_key")
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([organizationId, acknowledgedAt])
+  @@map("escalations")
 }

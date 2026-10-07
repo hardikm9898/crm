@@ -282,6 +282,25 @@ GET  /sla/board                              at-risk + breached (manager)  `sla:
 > leads" half of `FR-TSK-4`. It belongs beside the other counters because an empty Today list
 > means nothing if forty leads have nobody owing them anything.
 
+> **Amendment, 2026-10-07 (implementation, Phase 3 step 2).** `GET /sla/board` is built, and so are
+> `GET /sla/clocks`, `GET /sla/escalations`, `POST /sla/escalations/{id}/acknowledge` and CRUD on
+> `/sla/policies`. Three notes:
+>
+> - **It is `/sla/board`, not under `/my/`**, and it is read with `sla:read` through
+>   `DataScopeService` — an executive sees their own clocks at `own` scope and a branch manager
+>   their branch, from the same endpoint. A separate "manager" route would have been a second
+>   implementation of the same predicate.
+> - **There is no endpoint that starts or satisfies a clock**, by design. Both happen inside the
+>   transaction of the write that caused them — a capture, a completed follow-up, a terminal status.
+>   An endpoint that let a client mark its own SLA met would make the measurement worthless.
+> - **`PATCH /sla/policies/{id}` affects new clocks only**, and says so in its own `message`.
+>   Retargeting a running clock would let a breach un-breach itself because somebody relaxed the
+>   policy afterwards.
+>
+> `/sla/board` returns five counts — `breached`, `at_risk`, `running`, `met` and `answered_late` —
+> each an aggregate over the whole filter. `answered_late` is separate from `breached` because a
+> clock somebody eventually got to is a different management problem from one still sitting there.
+
 ### Pipeline & deals
 
 ```

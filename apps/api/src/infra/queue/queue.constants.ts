@@ -43,6 +43,7 @@ export const JOBS = {
   NOTIFY_TRIAL_EXPIRED: 'notify.trial-expired',
   NOTIFY_LEAD_UNASSIGNED: 'notify.lead-unassigned',
   NOTIFY_TASK_OVERDUE: 'notify.task-overdue',
+  NOTIFY_SLA_ESCALATION: 'notify.sla-escalation',
 
   SESSION_PRUNE: 'maintenance.session-prune',
   INVITATION_EXPIRE: 'maintenance.invitation-expire',
@@ -57,6 +58,7 @@ export const JOBS = {
    */
   TASK_OVERDUE_SWEEP: 'task.overdue-sweep',
   TASK_REMINDER_DISPATCH: 'task.reminder-dispatch',
+  SLA_SWEEP: 'sla.sweep',
 
   LEAD_SCORE: 'lead.score',
   SCORE_DECAY_SWEEP: 'score.decay-sweep',

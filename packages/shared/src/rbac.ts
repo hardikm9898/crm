@@ -41,6 +41,7 @@ export const PERMISSIONS = {
   TASK_READ: 'task:read',
   TASK_MANAGE: 'task:manage',
   TASK_MANAGE_OTHERS: 'task:manage_others',
+  SLA_READ: 'sla:read',
   DEAL_READ: 'deal:read',
   DEAL_MANAGE: 'deal:manage',
   PAYMENT_READ: 'payment:read',
@@ -207,6 +208,21 @@ export const PERMISSION_CATALOGUE: readonly PermissionDefinition[] = [
     supportsScope: true,
   },
   {
+    key: P.SLA_READ,
+    module: 'tasks',
+    /**
+     * Read-only on purpose, and deliberately **not** paired with an `sla:manage`.
+     *
+     * A policy is workspace configuration, like a status or a pipeline, so it is written with
+     * `settings:manage` — the permission a business already gives to whoever sets the workspace up.
+     * What `sla:read` buys is the other half: a manager who may see the breach board without being
+     * able to move the targets, which is exactly the separation that makes the board worth looking
+     * at (`FR-TSK-8`).
+     */
+    description: 'View SLA clocks, the breach board and escalations',
+    supportsScope: true,
+  },
+  {
     key: P.DEAL_READ,
     module: 'deals',
     description: 'View deals and quotations',
@@ -368,6 +384,7 @@ export const SYSTEM_ROLE_TEMPLATES: readonly RoleTemplate[] = [
       { permission: P.TASK_READ, scope: 'branch' },
       { permission: P.TASK_MANAGE, scope: 'branch' },
       { permission: P.TASK_MANAGE_OTHERS, scope: 'branch' },
+      { permission: P.SLA_READ, scope: 'branch' },
       { permission: P.DEAL_READ, scope: 'branch' },
       { permission: P.DEAL_MANAGE, scope: 'branch' },
       { permission: P.PAYMENT_READ, scope: 'branch' },
@@ -392,6 +409,9 @@ export const SYSTEM_ROLE_TEMPLATES: readonly RoleTemplate[] = [
       { permission: P.CUSTOMER_MANAGE, scope: 'own' },
       { permission: P.TASK_READ, scope: 'own' },
       { permission: P.TASK_MANAGE, scope: 'own' },
+      // Their own clocks: somebody who cannot see that they are forty minutes from a breach cannot
+      // do anything about it, which would make the escalation a surprise rather than a reminder.
+      { permission: P.SLA_READ, scope: 'own' },
       { permission: P.DEAL_READ, scope: 'own' },
       { permission: P.DEAL_MANAGE, scope: 'own' },
       { permission: P.PAYMENT_READ, scope: 'own' },
@@ -429,6 +449,7 @@ export const SYSTEM_ROLE_TEMPLATES: readonly RoleTemplate[] = [
       { permission: P.LEAD_READ, scope: ALL },
       { permission: P.CUSTOMER_READ, scope: ALL },
       { permission: P.TASK_READ, scope: ALL },
+      { permission: P.SLA_READ, scope: ALL },
       { permission: P.DEAL_READ, scope: ALL },
       { permission: P.PAYMENT_READ, scope: ALL },
       { permission: P.CONVERSATION_READ, scope: ALL },

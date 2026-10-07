@@ -25,6 +25,7 @@ import { OutboxService, type TransactionClient } from '../../infra/outbox/outbox
 import { TimelineService } from '../../infra/timeline/timeline.service.js';
 import { DataScopeService, applyScopeFilter } from '../../infra/authz/data-scope.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
+import { SlaService } from '../sla/sla.service.js';
 import { NextActionService } from './next-action.service.js';
 import type {
   CancelTaskInput,
@@ -77,6 +78,7 @@ export class TasksService {
     private readonly scopes: DataScopeService,
     private readonly nextActions: NextActionService,
     private readonly notifications: NotificationsService,
+    private readonly sla: SlaService,
     private readonly audit: AuditService,
     private readonly outbox: OutboxService,
     private readonly timeline: TimelineService,
@@ -873,8 +875,8 @@ export class TasksService {
   /** Completion, without the surrounding bookkeeping — shared by both branches of `complete`. */
   private async finish(
     tx: TransactionClient,
-    row: { id: string },
-    done: { outcome: { id: string }; note: string | null; completedAt: Date },
+    row: { id: string; organizationId: string; leadId: string | null; title: string },
+    done: { outcome: { id: string; name: string }; note: string | null; completedAt: Date },
   ): Promise<void> {
     await tx.task.update({
       where: { id: row.id },
@@ -888,6 +890,50 @@ export class TasksService {
     // A reminder for a task that is finished is noise. Only the unsent ones go; the sent ones are
     // a record of having been told.
     await tx.taskReminder.deleteMany({ where: { taskId: row.id, sentAt: null } });
+
+    if (row.leadId) await this.recordContact(tx, row, done);
+  }
+
+  /**
+   * A completed follow-up **is** a contact, and it is what satisfies the first-response SLA.
+   *
+   * `leads.first_contacted_at` and `last_contacted_at` have existed since step 1 with **no
+   * writer** — the same shape as the money columns that read as zero and lied to every report
+   * touching them. A completed task is the first real signal the product has: somebody rang, or
+   * sent the WhatsApp, and logged what happened. When the channels arrive they write these too, and
+   * `SlaService.satisfy` is idempotent on the clock's state precisely so that several call sites can
+   * do this without coordinating.
+   *
+   * Set from the task's **completion** instant and not from `now()`, so logging yesterday's missed
+   * call yesterday records it where it happened — which is also what makes "time to first call"
+   * answerable rather than merely plausible.
+   */
+  private async recordContact(
+    tx: TransactionClient,
+    row: { organizationId: string; leadId: string | null; title: string },
+    done: { outcome: { name: string }; completedAt: Date },
+  ): Promise<void> {
+    if (!row.leadId) return;
+    await tx.lead.updateMany({
+      where: { id: row.leadId, firstContactedAt: null },
+      data: { firstContactedAt: done.completedAt },
+    });
+    await tx.lead.updateMany({
+      // Never moves it backwards: logging an older call afterwards must not make the lead look
+      // staler than the contact that really was the most recent one.
+      where: {
+        id: row.leadId,
+        OR: [{ lastContactedAt: null }, { lastContactedAt: { lt: done.completedAt } }],
+      },
+      data: { lastContactedAt: done.completedAt },
+    });
+    await this.sla.satisfy(
+      tx,
+      { organizationId: row.organizationId, leadId: row.leadId },
+      'first_response',
+      done.completedAt,
+      `${row.title} — ${done.outcome.name}`,
+    );
   }
 
   private async completionAudit(
