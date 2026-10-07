@@ -164,6 +164,33 @@ Every card action is one tap. `Done` opens a sheet with outcome + "create next f
 tenant config, "Other" reveals a note field. Actions are optimistic and queued: a tap on a flaky
 connection is never lost, and the card shows a retry state if the request ultimately fails.
 
+> **Amendment, 2026-10-06 (implementation, Phase 3 step 1).** `/today` is **not** built. What is
+> built is `/tasks` — the queue it will be made from — plus the follow-up panel on the lead detail
+> screen and `/settings/follow-ups` for the vocabulary. The parts of the paragraph above that did
+> ship, and the parts that did not:
+>
+> - **Shipped.** Completing a follow-up asks for an outcome (required, and the database agrees) and
+>   offers "create next follow-up" on the same form, in the same transaction (`FR-TSK-6`).
+>   Rescheduling requires a date, a time and a reason, and a reason the tenant marked
+>   `requires_note` reveals a note field that the API also enforces (`FR-TSK-5`). Both are driven by
+>   tenant configuration, not by a hardcoded list.
+> - **Shipped, differently.** The sections are `overdue`, `due_now`, `due_today`, `upcoming`,
+>   `completed` and `cancelled`, grouped by the clock rather than by the hour, and each counter is a
+>   separate aggregate over the **whole filter** — a board that totals the loaded page tells an
+>   executive they have twenty things to do when they have ninety. `noNextAction` sits beside them,
+>   because an empty queue means nothing if forty leads have nobody owing them anything
+>   (`FR-TSK-4`).
+> - **Not shipped.** Optimistic, queued, retried actions. Every action is a server action and a
+>   round trip; a tap on a flaky connection shows the refusal rather than surviving it. That
+>   belongs with the Today workspace and its offline story, and it is listed as an open item in the
+>   roadmap rather than quietly assumed.
+> - **Not shipped.** `[Call]` and `[WhatsApp]` on a card — both arrive with their channels.
+>
+> The due time is **two inputs, a date and a time**, not one `datetime-local`: that control renders
+> differently in every browser, is close to unusable on an Indian Android keyboard, and cannot be
+> given a sensible default time. The browser's own UTC offset rides along as a hidden field, because
+> the server renders in UTC and "at 10:00" means ten o'clock where the person typing it is.
+
 ### 5.2 Lead detail — three columns on desktop, stacked on mobile (`FR-LEAD`, §55 of the brief)
 
 ```

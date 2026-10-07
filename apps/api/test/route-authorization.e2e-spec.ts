@@ -65,6 +65,12 @@ interface Tenant {
   paymentId: string;
   paymentMethodId: string;
   productId: string;
+  // Phase 3, step 1 — tasks. The vocabulary ids come from `GET /tasks/config` rather than from the
+  // database, so a settings route aimed at them is aimed at something the API itself just offered.
+  taskId: string;
+  taskTypeId: string;
+  taskOutcomeId: string;
+  rescheduleReasonId: string;
 }
 
 let orgA: Tenant;
@@ -279,6 +285,25 @@ async function createTenant(label: string): Promise<Tenant> {
     token,
   });
 
+  const task = await call<EnvelopeBody<{ id: string }>>(ctx.app, {
+    method: 'POST',
+    url: '/api/v1/tasks',
+    payload: {
+      leadId: lead.body.data.id,
+      title: 'Sweep follow-up',
+      // Far enough out that the reminder sweep in another suite cannot pick it up mid-run.
+      dueAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+    },
+    token,
+  });
+  const taskConfig = await call<
+    EnvelopeBody<{
+      types: { id: string }[];
+      outcomes: { id: string }[];
+      rescheduleReasons: { id: string }[];
+    }>
+  >(ctx.app, { method: 'GET', url: '/api/v1/tasks/config', token });
+
   const [duplicateRule, assignmentRule, scoringRule, savedView] = await Promise.all([
     ctx.db.duplicateRule.findFirstOrThrow({ where: { organizationId, isActive: true } }),
     ctx.db.assignmentRule.findFirstOrThrow({ where: { organizationId } }),
@@ -320,6 +345,10 @@ async function createTenant(label: string): Promise<Tenant> {
     paymentId: payment.body.data.id,
     paymentMethodId: paymentMethods.body.data[0]?.id ?? '',
     productId: product.body.data.id,
+    taskId: task.body.data.id,
+    taskTypeId: taskConfig.body.data.types[0]?.id ?? '',
+    taskOutcomeId: taskConfig.body.data.outcomes[0]?.id ?? '',
+    rescheduleReasonId: taskConfig.body.data.rescheduleReasons[0]?.id ?? '',
   };
 }
 
@@ -496,6 +525,15 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       '/customers/:id/restore': `/customers/${orgA.customerId}/restore`,
       '/leads/:id/convert': `/leads/${orgA.leadId}/convert`,
       '/exports/:id': `/exports/${orgA.exportJobId}`,
+      // Phase 3, step 1 — tasks and follow-ups
+      '/tasks/:id': `/tasks/${orgA.taskId}`,
+      '/tasks/:id/reschedules': `/tasks/${orgA.taskId}/reschedules`,
+      '/tasks/:id/complete': `/tasks/${orgA.taskId}/complete`,
+      '/tasks/:id/reschedule': `/tasks/${orgA.taskId}/reschedule`,
+      '/tasks/:id/cancel': `/tasks/${orgA.taskId}/cancel`,
+      '/settings/task-types/:id': `/settings/task-types/${orgA.taskTypeId}`,
+      '/settings/task-outcomes/:id': `/settings/task-outcomes/${orgA.taskOutcomeId}`,
+      '/settings/reschedule-reasons/:id': `/settings/reschedule-reasons/${orgA.rescheduleReasonId}`,
       '/exports/:id/download': `/exports/${orgA.exportJobId}/download`,
     };
 

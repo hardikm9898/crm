@@ -42,6 +42,7 @@ export const JOBS = {
   NOTIFY_MEMBER_JOINED: 'notify.member-joined',
   NOTIFY_TRIAL_EXPIRED: 'notify.trial-expired',
   NOTIFY_LEAD_UNASSIGNED: 'notify.lead-unassigned',
+  NOTIFY_TASK_OVERDUE: 'notify.task-overdue',
 
   SESSION_PRUNE: 'maintenance.session-prune',
   INVITATION_EXPIRE: 'maintenance.invitation-expire',
@@ -50,6 +51,12 @@ export const JOBS = {
   ACTIVITY_PARTITIONS: 'maintenance.activity-partitions',
   LEAD_RECYCLE: 'maintenance.lead-recycle',
   QUOTATION_EXPIRY: 'maintenance.quotation-expiry',
+  /**
+   * The two names `docs/queue-event-architecture.md` §5 gives them. Both live on `maintenance`
+   * because both are platform-scoped sweeps over every tenant.
+   */
+  TASK_OVERDUE_SWEEP: 'task.overdue-sweep',
+  TASK_REMINDER_DISPATCH: 'task.reminder-dispatch',
 
   LEAD_SCORE: 'lead.score',
   SCORE_DECAY_SWEEP: 'score.decay-sweep',

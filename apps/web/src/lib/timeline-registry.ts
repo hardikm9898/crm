@@ -1,4 +1,4 @@
-import { formatMoney } from './lead-format';
+import { formatDateTime, formatMoney } from './lead-format';
 
 /**
  * The timeline renderer registry (`FR-TL-1`, ADR-0009, docs/frontend-architecture.md §5.2).
@@ -57,6 +57,19 @@ const number = (payload: ActivityPayload, key: string): number | null => {
  * Minor units cross the wire, so a timeline that printed the raw number would say a deal was won
  * for "6320000" — which is the paise, and is the figure nobody means.
  */
+/**
+ * A timestamp from a payload, as a date and time somebody reads.
+ *
+ * Deliberately not `toLocaleString()` with no options: a bare locale string is ambiguous about
+ * day and month, which is the trap the CSV export already paid for. `formatDateTime` is the one
+ * format the rest of the app uses.
+ */
+const dueAt = (payload: ActivityPayload, key = 'dueAt'): string | null => {
+  const value = payload[key];
+  if (typeof value !== 'string') return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : formatDateTime(value);
+};
 const money = (payload: ActivityPayload, key: string, currencyKey: string): string | null => {
   const minor = number(payload, key);
   if (minor === null) return null;
@@ -358,6 +371,67 @@ const DESCRIBERS: Readonly<Record<string, Describer>> = {
   'note.added': (payload) => ({
     label: 'Note',
     description: text(payload, 'body') ?? 'A note was added.',
+  }),
+
+  // ── Tasks and follow-ups (`FR-TSK-1..6`) ─────────────────────────────────
+  //
+  // Written the day the tasks module started emitting them. A type with no describer renders as a
+  // bare row and loses everything in its payload, which is how `deal.won` once reached a screen
+  // without its amount — so adding an activity type is two edits, and this is the second.
+  'task.created': (payload) => ({
+    label: 'Planned',
+    description: `${text(payload, 'taskType') ?? 'Follow-up'} — ${
+      text(payload, 'title') ?? 'a follow-up'
+    }, due ${dueAt(payload) ?? 'later'}${
+      text(payload, 'followsTaskId') ? ', following the last one' : ''
+    }.`,
+  }),
+  'task.completed': (payload) => {
+    const next = payload['nextFollowUp'];
+    const planned =
+      next !== null && typeof next === 'object'
+        ? ((next as Record<string, unknown>)['title'] as string | undefined)
+        : undefined;
+    return {
+      label: 'Done',
+      description: `${text(payload, 'title') ?? 'A follow-up'} — ${
+        text(payload, 'outcome') ?? 'completed'
+      }${text(payload, 'note') ? ` (${text(payload, 'note')})` : ''}${
+        planned ? `. Next: ${planned}` : ''
+      }.`,
+      // Only a *positive* outcome is green. "No answer" is not progress, and a timeline where
+      // every completion reads as success is one nobody can scan for the ones that went well.
+      tone: payload['outcomeIsPositive'] === true ? ('success' as const) : ('neutral' as const),
+    };
+  },
+  'task.rescheduled': (payload) => ({
+    label: 'Moved',
+    description: `${text(payload, 'title') ?? 'A follow-up'} moved to ${
+      dueAt(payload, 'toDueAt') ?? 'another time'
+    } — ${text(payload, 'reason') ?? 'no reason given'}${
+      text(payload, 'note') ? ` (${text(payload, 'note')})` : ''
+    }${
+      // The coaching signal in `FR-TSK-5`: a number with no story is not actionable, and a story
+      // without the count does not say how often.
+      (number(payload, 'rescheduleCount') ?? 0) > 2
+        ? `. Moved ${number(payload, 'rescheduleCount')} times now`
+        : ''
+    }.`,
+    tone: (number(payload, 'rescheduleCount') ?? 0) > 2 ? 'warning' : 'neutral',
+  }),
+  'task.cancelled': (payload) => ({
+    label: 'Cancelled',
+    description: `${text(payload, 'title') ?? 'A follow-up'} was called off${
+      text(payload, 'reason') ? ` — ${text(payload, 'reason')}` : ''
+    }.`,
+    tone: 'warning',
+  }),
+  'task.overdue': (payload) => ({
+    label: 'Missed',
+    description: `${text(payload, 'title') ?? 'A follow-up'} was due ${
+      dueAt(payload) ?? 'earlier'
+    } and has not been done.`,
+    tone: 'danger',
   }),
 };
 

@@ -106,6 +106,19 @@ const REQUIRED_INDEXES = [
   'payments_provider_payment_key',
   'payments_received',
   'deals_part_paid',
+  // Tasks (`FR-TSK-1..7`). `tasks_open` and `tasks_open_due_date` are the Today view;
+  // `tasks_overdue_unreported` and `task_reminders_pending` are what the two sweeps scan, and both
+  // are deliberately un-prefixed by `organization_id` or keyed on the sweep's own predicate
+  // because they run across tenants. `tasks_follows` and `leads_next_action_task` are the
+  // referencing sides of the FKs into `tasks` — the omission that made lead deletion quadratic.
+  'tasks_open',
+  'tasks_open_due_date',
+  'tasks_overdue_unreported',
+  'tasks_lead_open',
+  'tasks_live_created_at',
+  'tasks_follows',
+  'leads_next_action_task',
+  'task_reminders_pending',
 ];
 
 /**
@@ -313,6 +326,36 @@ const REQUIRED_CONSTRAINTS = [
   'industry_templates_name_present',
   'industry_templates_description_present',
   'industry_templates_definition_is_object',
+  // Tasks (`FR-TSK-1..6`). `tasks_completed_has_outcome` is the one that makes "what happened on
+  // those forty calls" answerable a month later; the two timestamp pairs are written as `CASE`
+  // rather than as biconditionals, which is how the payments migration made refunding impossible.
+  'tasks_has_subject',
+  'tasks_title_present',
+  'tasks_completed_has_timestamp',
+  'tasks_cancelled_has_timestamp',
+  'tasks_completed_has_outcome',
+  'tasks_reminder_offsets_is_array',
+  'tasks_reschedule_count_non_negative',
+  'tasks_not_own_follow_up',
+  'tasks_lead_same_org_fk',
+  'tasks_customer_same_org_fk',
+  'tasks_deal_same_org_fk',
+  'tasks_assignee_same_org_fk',
+  'tasks_type_same_org_fk',
+  'tasks_outcome_same_org_fk',
+  'tasks_follows_same_org_fk',
+  'leads_next_action_task_same_org_fk',
+  'task_types_name_present',
+  'task_types_duration_positive',
+  'task_types_reminder_offsets_is_array',
+  'task_outcomes_name_present',
+  'reschedule_reasons_name_present',
+  'task_reschedules_changes_the_time',
+  'task_reschedules_note_present',
+  'task_reschedules_task_same_org_fk',
+  'task_reschedules_reason_same_org_fk',
+  'task_reminders_offset_non_negative',
+  'task_reminders_task_same_org_fk',
 ];
 
 describe('hand-written indexes survive every generated migration', () => {

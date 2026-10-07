@@ -1669,6 +1669,226 @@ describe('layer 3 — a payment cannot be stitched to another tenant (FR-DEAL-3)
   });
 });
 
+describe('layer 3 — a task cannot be stitched to another tenant (FR-TSK-1)', () => {
+  /** The three pieces of follow-up vocabulary, created in whichever workspace is asked for. */
+  async function vocabulary(organizationId: string) {
+    const typeId = newId();
+    const outcomeId = newId();
+    const reasonId = newId();
+    await h.unscoped.taskType.create({
+      data: { id: typeId, organizationId, name: `Call ${typeId.slice(-8)}` },
+    });
+    await h.unscoped.taskOutcome.create({
+      data: { id: outcomeId, organizationId, name: `Spoke ${outcomeId.slice(-8)}` },
+    });
+    await h.unscoped.rescheduleReason.create({
+      data: { id: reasonId, organizationId, name: `Busy ${reasonId.slice(-8)}` },
+    });
+    return { typeId, outcomeId, reasonId };
+  }
+
+  /** A minimal open task on the given workspace's own lead. */
+  async function task(organizationId: string, leadId: string, overrides = {}) {
+    const id = newId();
+    await h.unscoped.task.create({
+      data: {
+        id,
+        organizationId,
+        leadId,
+        title: 'Call back',
+        dueAt: new Date('2026-04-01T10:00:00.000Z'),
+        dueDate: new Date('2026-04-01T00:00:00.000Z'),
+        dueTime: new Date('1970-01-01T15:30:00.000Z'),
+        ...overrides,
+      },
+    });
+    return id;
+  }
+
+  it('blocks a task against another tenant’s lead, assignee, type or outcome', async () => {
+    const base = {
+      organizationId: h.orgA.organizationId,
+      title: 'Call back',
+      dueAt: new Date('2026-04-01T10:00:00.000Z'),
+      dueDate: new Date('2026-04-01T00:00:00.000Z'),
+      dueTime: new Date('1970-01-01T15:30:00.000Z'),
+    };
+
+    await expect(
+      h.unscoped.task.create({ data: { ...base, id: newId(), leadId: h.orgB.leadId } }),
+    ).rejects.toThrow(/tasks_lead_same_org_fk|foreign key/i);
+
+    await expect(
+      h.unscoped.task.create({
+        data: { ...base, id: newId(), leadId: h.orgA.leadId, assignedUserId: h.orgB.userId },
+      }),
+    ).rejects.toThrow(/tasks_assignee_same_org_fk|foreign key/i);
+
+    const theirs = await vocabulary(h.orgB.organizationId);
+    await expect(
+      h.unscoped.task.create({
+        data: { ...base, id: newId(), leadId: h.orgA.leadId, taskTypeId: theirs.typeId },
+      }),
+    ).rejects.toThrow(/tasks_type_same_org_fk|foreign key/i);
+
+    await expect(
+      h.unscoped.task.create({
+        data: {
+          ...base,
+          id: newId(),
+          leadId: h.orgA.leadId,
+          status: 'completed',
+          completedAt: new Date(),
+          outcomeId: theirs.outcomeId,
+        },
+      }),
+    ).rejects.toThrow(/tasks_outcome_same_org_fk|foreign key/i);
+  });
+
+  it('blocks a follow-up chain, a reschedule and a reminder that cross a tenant', async () => {
+    const theirTask = await task(h.orgB.organizationId, h.orgB.leadId);
+    await expect(
+      h.unscoped.task.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          leadId: h.orgA.leadId,
+          title: 'Call back',
+          dueAt: new Date('2026-04-01T10:00:00.000Z'),
+          dueDate: new Date('2026-04-01T00:00:00.000Z'),
+          dueTime: new Date('1970-01-01T15:30:00.000Z'),
+          followsTaskId: theirTask,
+        },
+      }),
+    ).rejects.toThrow(/tasks_follows_same_org_fk|foreign key/i);
+
+    const mine = await task(h.orgA.organizationId, h.orgA.leadId);
+    const theirReason = (await vocabulary(h.orgB.organizationId)).reasonId;
+    await expect(
+      h.unscoped.taskReschedule.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          taskId: mine,
+          fromDueAt: new Date('2026-04-01T10:00:00.000Z'),
+          toDueAt: new Date('2026-04-02T10:00:00.000Z'),
+          reasonId: theirReason,
+        },
+      }),
+    ).rejects.toThrow(/task_reschedules_reason_same_org_fk|foreign key/i);
+
+    await expect(
+      h.unscoped.taskReminder.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          taskId: theirTask,
+          remindAt: new Date('2026-04-01T09:00:00.000Z'),
+          offsetMinutes: 60,
+        },
+      }),
+    ).rejects.toThrow(/task_reminders_task_same_org_fk|foreign key/i);
+  });
+
+  it('makes a lead’s next action point only at its own workspace’s task', async () => {
+    const theirTask = await task(h.orgB.organizationId, h.orgB.leadId);
+    await expect(
+      h.unscoped.lead.update({
+        where: { id: h.orgA.leadId },
+        data: { nextActionTaskId: theirTask },
+      }),
+    ).rejects.toThrow(/leads_next_action_task_same_org_fk|foreign key/i);
+  });
+
+  it('makes a task about nobody unrepresentable', async () => {
+    // Rule 6 is the product: a task attached to no lead, customer or deal writes to no timeline.
+    await expect(
+      h.unscoped.task.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          title: 'Ring the bank',
+          dueAt: new Date('2026-04-01T10:00:00.000Z'),
+          dueDate: new Date('2026-04-01T00:00:00.000Z'),
+          dueTime: new Date('1970-01-01T15:30:00.000Z'),
+        },
+      }),
+    ).rejects.toThrow(/tasks_has_subject/i);
+  });
+
+  it('refuses a completion with no outcome, and a completion with no date', async () => {
+    const { outcomeId } = await vocabulary(h.orgA.organizationId);
+    await expect(
+      task(h.orgA.organizationId, h.orgA.leadId, {
+        status: 'completed',
+        completedAt: new Date(),
+      }),
+    ).rejects.toThrow(/tasks_completed_has_outcome/i);
+
+    await expect(
+      task(h.orgA.organizationId, h.orgA.leadId, { status: 'completed', outcomeId }),
+    ).rejects.toThrow(/tasks_completed_has_timestamp/i);
+
+    // And the pair the other way round: a timestamp on something that did not finish.
+    await expect(
+      task(h.orgA.organizationId, h.orgA.leadId, { completedAt: new Date() }),
+    ).rejects.toThrow(/tasks_completed_has_timestamp/i);
+  });
+
+  it('refuses a reschedule row that moved nothing', async () => {
+    const mine = await task(h.orgA.organizationId, h.orgA.leadId);
+    const { reasonId } = await vocabulary(h.orgA.organizationId);
+    const sameMoment = new Date('2026-04-01T10:00:00.000Z');
+    await expect(
+      h.unscoped.taskReschedule.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          taskId: mine,
+          fromDueAt: sameMoment,
+          toDueAt: sameMoment,
+          reasonId,
+        },
+      }),
+    ).rejects.toThrow(/task_reschedules_changes_the_time/i);
+  });
+
+  it('keeps one reminder per offset per task, so a rewrite cannot duplicate one', async () => {
+    const mine = await task(h.orgA.organizationId, h.orgA.leadId);
+    const row = {
+      organizationId: h.orgA.organizationId,
+      taskId: mine,
+      remindAt: new Date('2026-04-01T09:00:00.000Z'),
+      offsetMinutes: 60,
+    };
+    await h.unscoped.taskReminder.create({ data: { id: newId(), ...row } });
+    await expect(h.unscoped.taskReminder.create({ data: { id: newId(), ...row } })).rejects.toThrow(
+      /unique|duplicate key/i,
+    );
+  });
+
+  it('keeps the follow-up vocabulary scoped, and its names free across workspaces', async () => {
+    const name = 'Site visit';
+    for (const org of [h.orgA, h.orgB]) {
+      await h.unscoped.taskType.create({
+        data: { id: newId(), organizationId: org.organizationId, name },
+      });
+    }
+    await expect(
+      h.unscoped.taskType.create({
+        data: { id: newId(), organizationId: h.orgA.organizationId, name },
+      }),
+    ).rejects.toThrow(/unique|duplicate key/i);
+
+    // And the scoped client sees only its own.
+    const mine = await tenantContext.run(h.orgA.principal, async () =>
+      h.db.taskType.findMany({ where: { name } }),
+    );
+    expect(mine).toHaveLength(1);
+    expect(mine[0]?.organizationId).toBe(h.orgA.organizationId);
+  });
+});
+
 describe('layer 3 — the industry template catalogue is platform data, not a tenant table (FR-ONB-2)', () => {
   it('is populated by the platform catalogue seeder, with the ten industries', async () => {
     const rows = await h.unscoped.industryTemplate.findMany({ orderBy: { sortOrder: 'asc' } });

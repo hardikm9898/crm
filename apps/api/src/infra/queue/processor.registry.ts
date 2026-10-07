@@ -25,6 +25,11 @@ import {
 } from '../../modules/scoring/scoring.processor.js';
 import { ExportGenerateProcessor } from '../../modules/exports/exports.processor.js';
 import { QuotationExpiryProcessor } from '../../modules/quotations/quotations.processor.js';
+import {
+  TaskOverdueNotificationProcessor,
+  TaskOverdueSweepProcessor,
+  TaskReminderDispatchProcessor,
+} from '../../modules/tasks/tasks.processor.js';
 import { ImportProcessProcessor } from '../../modules/imports/imports.processor.js';
 import type { JobProcessor } from './job-processor.js';
 
@@ -49,6 +54,7 @@ export const PROCESSOR_TYPES: readonly Type<JobProcessor>[] = [
   MemberJoinedNotificationProcessor,
   TrialExpiredNotificationProcessor,
   UnassignedLeadNotificationProcessor,
+  TaskOverdueNotificationProcessor,
   // maintenance
   SessionPruneProcessor,
   InvitationExpiryProcessor,
@@ -58,6 +64,9 @@ export const PROCESSOR_TYPES: readonly Type<JobProcessor>[] = [
   LeadRecycleProcessor,
   DocumentExpiryProcessor,
   QuotationExpiryProcessor,
+  // tasks and follow-ups
+  TaskReminderDispatchProcessor,
+  TaskOverdueSweepProcessor,
   // scoring
   LeadScoreProcessor,
   ScoreDecaySweepProcessor,

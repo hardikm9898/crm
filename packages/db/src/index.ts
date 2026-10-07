@@ -22,6 +22,7 @@ export {
   seedCrmDefaults,
   seedDealPipeline,
   seedPaymentMethods,
+  seedTaskConfig,
   seedDefaultAssignmentRule,
   seedDefaultTags,
   SCORING_DEFAULT_SEEDS,

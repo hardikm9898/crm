@@ -36,7 +36,7 @@ export const NAV_SECTIONS: readonly NavSection[] = [
       { label: 'Deals', href: '/deals', permissions: ['deal:read'] },
       { label: 'Quotations', href: '/quotations', permissions: ['deal:read'] },
       { label: 'Payments', href: '/payments', permissions: ['payment:read'] },
-      { label: 'Tasks', href: '/tasks', permissions: ['task:read'], phase: 3 },
+      { label: 'Follow-ups', href: '/tasks', permissions: ['task:read'] },
       { label: 'Inbox', href: '/inbox', permissions: ['conversation:read'], phase: 5 },
     ],
   },
@@ -71,6 +71,14 @@ export const NAV_SECTIONS: readonly NavSection[] = [
       {
         label: 'Payment methods',
         href: '/settings/payment-methods',
+        permissions: ['settings:manage'],
+      },
+      // The follow-up vocabulary sits with the price list and the numbering for the same reason:
+      // renaming an outcome changes what every past completion reads as, which is not a thing to
+      // do from a follow-up screen.
+      {
+        label: 'Follow-up settings',
+        href: '/settings/follow-ups',
         permissions: ['settings:manage'],
       },
       { label: 'Your security', href: '/settings/security', permissions: [] },

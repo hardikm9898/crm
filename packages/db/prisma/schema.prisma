@@ -198,6 +198,49 @@ enum PipelineEntity {
   @@map("pipeline_entity")
 }
 
+/// A task's lifecycle (`FR-TSK-3`).
+///
+/// **`overdue` is deliberately not here.** It is derived — `due_at < now()` on an open task — and
+/// storing it would mean a status that is wrong between the sweep's ticks: a task due at 10:00 is
+/// overdue at 10:01, not at 10:30 when a job next runs. The sweep still exists, because somebody
+/// has to be *told*, and `task.overdue` is a real timeline entry; but the screen reads the clock.
+///
+/// `rescheduled` is not here either: a rescheduled task is still open, just later. Making it a
+/// status would drop it out of "what is due", which is the one list it has to stay in. The fact
+/// lives in `task_reschedules` and in `tasks.reschedule_count`.
+enum TaskStatus {
+  pending
+  in_progress
+  completed
+  cancelled
+
+  @@map("task_status")
+}
+
+/// Its own enum rather than `lead_priority`: an urgent task on an ordinary lead is the normal case,
+/// and sharing the type would read as sharing the meaning.
+enum TaskPriority {
+  low
+  medium
+  high
+  urgent
+
+  @@map("task_priority")
+}
+
+/// Who created the task. `automation` exists because the starter automation in Phase 6 is the
+/// loudest creator of tasks, and a Today list that cannot distinguish "I planned this" from "a rule
+/// planned this" is one people stop trusting.
+enum TaskCreatedVia {
+  manual
+  automation
+  api
+  system
+  import
+
+  @@map("task_created_via")
+}
+
 enum CustomFieldEntity {
   lead
   customer
@@ -575,8 +618,16 @@ model Organization {
   quotations     Quotation[]
   quotationItems QuotationItem[]
 
-  paymentMethods      PaymentMethod[]
-  payments            Payment[]
+  paymentMethods PaymentMethod[]
+  payments       Payment[]
+
+  // Phase 3 — tasks and follow-ups
+  taskTypes           TaskType[]
+  taskOutcomes        TaskOutcome[]
+  rescheduleReasons   RescheduleReason[]
+  tasks               Task[]
+  taskReschedules     TaskReschedule[]
+  taskReminders       TaskReminder[]
   /// Which industry template this workspace applied, if any (`FR-ONB-2`).
   ///
   /// Recorded so the onboarding screen can say what was installed, and so a support conversation
@@ -585,8 +636,8 @@ model Organization {
   /// than `Restrict` because retiring a template from the catalogue must not be blocked by the
   /// workspaces that once used it; this is a simple FK, not one of the composite ones where
   /// `SetNull` would null a NOT NULL `organization_id`.
-  industryTemplate    IndustryTemplate? @relation(fields: [industryTemplateKey], references: [key], onDelete: SetNull)
-  industryTemplateKey String?           @map("industry_template_key")
+  industryTemplate    IndustryTemplate?  @relation(fields: [industryTemplateKey], references: [key], onDelete: SetNull)
+  industryTemplateKey String?            @map("industry_template_key")
 
   @@index([status])
   @@index([createdAt])
@@ -620,6 +671,7 @@ model Branch {
   quotations Quotation[]
 
   payments Payment[]
+  tasks    Task[]
 
   @@unique([organizationId, id], name: "branch_tenant_key")
   @@unique([organizationId, code])
@@ -649,6 +701,7 @@ model Team {
   quotations Quotation[]
 
   payments Payment[]
+  tasks    Task[]
 
   @@unique([organizationId, id], name: "team_tenant_key")
   @@index([organizationId, deletedAt])
@@ -708,6 +761,8 @@ model Membership {
   ownedQuotations Quotation[] @relation("quotation_owner")
 
   recordedPayments Payment[] @relation("payment_owner")
+
+  assignedTasks Task[] @relation("task_assignee")
 
   @@unique([organizationId, id], name: "membership_tenant_key")
   @@unique([organizationId, userId])
@@ -1366,8 +1421,13 @@ model Lead {
   firstContactedAt DateTime? @map("first_contacted_at") @db.Timestamptz(6)
   lastContactedAt  DateTime? @map("last_contacted_at") @db.Timestamptz(6)
   lastActivityAt   DateTime? @map("last_activity_at") @db.Timestamptz(6)
-  /// Denormalized from tasks for the executive's Today view (Phase 3 writes it).
+  /// Denormalized from tasks for the executive's Today view, and recomputed from them on every
+  /// task write — never incremented (ADR-0020's reasoning, applied to a count instead of to money).
   nextActionAt     DateTime? @map("next_action_at") @db.Timestamptz(6)
+  /// The open task that *is* the next action: the soonest-due one. `FR-TSK-4` wants exactly one
+  /// next action per open lead, and a column holding the id is what lets "no next action" be an
+  /// indexed question rather than a correlated subquery.
+  nextActionTaskId String?   @map("next_action_task_id") @db.Uuid
   openTasksCount   Int       @default(0) @map("open_tasks_count")
   touchCount       Int       @default(0) @map("touch_count")
 
@@ -1428,6 +1488,12 @@ model Lead {
   quotations Quotation[]
 
   payments Payment[]
+
+  tasks          Task[]
+  /// `Restrict` rather than `SetNull`: this is a composite FK, and `SetNull` would null the NOT
+  /// NULL `organization_id` with it. The pointer is cleared by the recompute before a task is ever
+  /// hard-deleted.
+  nextActionTask Task?  @relation("lead_next_action", fields: [organizationId, nextActionTaskId], references: [organizationId, id], onDelete: Restrict, map: "leads_next_action_task_same_org_fk")
 
   @@unique([organizationId, id], name: "lead_tenant_key")
   /// The default list.
@@ -2224,6 +2290,8 @@ model Customer {
 
   payments Payment[]
 
+  tasks Task[]
+
   @@unique([organizationId, id], name: "customer_tenant_key")
   /// The default list.
   @@index([organizationId, createdAt(sort: Desc)])
@@ -2368,6 +2436,8 @@ model Deal {
   quotations Quotation[]
 
   payments Payment[]
+
+  tasks Task[]
 
   @@unique([organizationId, id], name: "deal_tenant_key")
   @@index([organizationId, createdAt(sort: Desc)])
@@ -2758,4 +2828,251 @@ model IndustryTemplate {
 
   @@index([isActive, sortOrder])
   @@map("industry_templates")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Phase 3 — tasks and follow-ups (`FR-TSK-1..6`)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// What kind of thing a task is (`FR-TSK-2`) — rows, not an enum (rule 4).
+///
+/// `defaultDurationMinutes` and `defaultReminderOffsets` are what make the task form one field long
+/// for the common case: picking "Call" fills in fifteen minutes and a ten-minute warning, and a
+/// business that wants a site visit to remind them the evening before changes a row.
+model TaskType {
+  id                     String    @id @db.Uuid
+  organizationId         String    @map("organization_id") @db.Uuid
+  name                   String
+  /// A short slug the web app maps to an icon. Unknown values degrade to a generic one.
+  icon                   String?
+  defaultDurationMinutes Int?      @map("default_duration_minutes")
+  /// Minutes before `due_at`, as a JSON array of integers — `[1440, 60]` is "the day before, and an
+  /// hour before".
+  defaultReminderOffsets Json      @default("[]") @map("default_reminder_offsets") @db.JsonB
+  sortOrder              Int       @default(0) @map("sort_order")
+  isActive               Boolean   @default(true) @map("is_active")
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt              DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  tasks        Task[]
+
+  @@unique([organizationId, id], name: "task_type_tenant_key")
+  @@unique([organizationId, name])
+  @@index([organizationId, isActive, sortOrder])
+  @@map("task_types")
+}
+
+/// How a task turned out (`FR-TSK-6`).
+///
+/// `isPositive` is what turns a completion log into a report: "forty calls, nine of them positive"
+/// is a coaching conversation, and "forty calls" is not. Separate from `call_outcomes`, which
+/// arrives with call logging and carries a provider-level category and a score delta a task outcome
+/// has no use for — `calls.task_id` is what ties the two records together.
+model TaskOutcome {
+  id             String    @id @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  name           String
+  /// Did this move the lead forward? Null means "neither" — a no-answer is not a failure.
+  isPositive     Boolean?  @map("is_positive")
+  /// Keeps "Other" from becoming the most common outcome, exactly as it does on a lost reason.
+  requiresNote   Boolean   @default(false) @map("requires_note")
+  sortOrder      Int       @default(0) @map("sort_order")
+  isActive       Boolean   @default(true) @map("is_active")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  tasks        Task[]
+
+  @@unique([organizationId, id], name: "task_outcome_tenant_key")
+  @@unique([organizationId, name])
+  @@index([organizationId, isActive, sortOrder])
+  @@map("task_outcomes")
+}
+
+/// Why a follow-up moved (`FR-TSK-5`), as the tenant's own list.
+///
+/// The requirement's reason list is seeded and editable. The reason is mandatory on every
+/// reschedule because the count of reschedules without them is a number with no story: "this lead
+/// has been pushed five times" is only actionable alongside "four of them because the decision
+/// maker was away".
+model RescheduleReason {
+  id             String    @id @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  name           String
+  requiresNote   Boolean   @default(false) @map("requires_note")
+  sortOrder      Int       @default(0) @map("sort_order")
+  isActive       Boolean   @default(true) @map("is_active")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  reschedules  TaskReschedule[]
+
+  @@unique([organizationId, id], name: "reschedule_reason_tenant_key")
+  @@unique([organizationId, name])
+  @@index([organizationId, isActive, sortOrder])
+  @@map("reschedule_reasons")
+}
+
+/// A thing somebody has to do, about somebody (`FR-TSK-1`).
+///
+/// Four decisions shape this table:
+///
+///  * **A task has a subject.** `tasks_has_subject` requires a lead, a customer or a deal, because
+///    rule 6 says anything a business owner would want to see on a lead is written to its timeline —
+///    and a task attached to nobody writes to no timeline. A personal to-do list is a different
+///    product.
+///  * **`due_date` and `due_time` are the workspace's wall clock, maintained on write.** `due_at` is
+///    the instant; "due today" is a question about a *day*, and the day depends on the workspace's
+///    timezone. Grouping by `due_at AT TIME ZONE org.timezone` in every query cannot use an index;
+///    a stored local date can, which is what makes the Today view one indexed read.
+///  * **Completion carries an outcome.** `tasks_completed_has_outcome` makes a completion with no
+///    outcome unrepresentable, which is the only way "what happened on those forty calls" has an
+///    answer a month later.
+///  * **A reschedule moves this row.** It does not close the task and open another: the lead's next
+///    action has to stay one thing, and two rows would double the open count and the Today list.
+model Task {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  // ── Subject (at least one, by constraint) ────────────────────────────────
+  leadId     String? @map("lead_id") @db.Uuid
+  customerId String? @map("customer_id") @db.Uuid
+  dealId     String? @map("deal_id") @db.Uuid
+
+  // ── Ownership, inherited from the subject and then editable ──────────────
+  branchId       String? @map("branch_id") @db.Uuid
+  teamId         String? @map("team_id") @db.Uuid
+  assignedUserId String? @map("assigned_user_id") @db.Uuid
+
+  title       String
+  description String?
+  taskTypeId  String? @map("task_type_id") @db.Uuid
+
+  /// The instant it is due, in UTC like every other timestamp.
+  dueAt   DateTime @map("due_at") @db.Timestamptz(6)
+  /// `due_at` as the workspace's calendar date and wall-clock time. See the class comment.
+  dueDate DateTime @map("due_date") @db.Date
+  dueTime DateTime @map("due_time") @db.Time(0)
+
+  priority TaskPriority @default(medium)
+  status   TaskStatus   @default(pending)
+
+  completedAt    DateTime? @map("completed_at") @db.Timestamptz(6)
+  cancelledAt    DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  outcomeId      String?   @map("outcome_id") @db.Uuid
+  completionNote String?   @map("completion_note")
+
+  /// Minutes before `due_at` this task asks to be reminded. The rows in `task_reminders` are
+  /// derived from it and rewritten whenever the due time moves.
+  reminderOffsets Json @default("[]") @map("reminder_offsets") @db.JsonB
+
+  createdVia TaskCreatedVia @default(manual) @map("created_via")
+
+  /// The task this one came out of — "create the next follow-up" at completion (`FR-TSK-6`).
+  ///
+  /// Named for what it is rather than `rescheduled_from_task_id`: a reschedule moves this row, so
+  /// the only chain worth storing is the sequence of follow-ups, which is what a manager reads as
+  /// "five calls over three weeks".
+  followsTaskId String? @map("follows_task_id") @db.Uuid
+
+  rescheduleCount   Int       @default(0) @map("reschedule_count")
+  /// Set by the overdue sweep so it tells somebody once rather than every half hour. Cleared when
+  /// the task is rescheduled, because the next miss is news again.
+  overdueNotifiedAt DateTime? @map("overdue_notified_at") @db.Timestamptz(6)
+
+  createdById String?   @map("created_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lead         Lead?        @relation(fields: [organizationId, leadId], references: [organizationId, id], onDelete: Cascade, map: "tasks_lead_same_org_fk")
+  customer     Customer?    @relation(fields: [organizationId, customerId], references: [organizationId, id], onDelete: Cascade, map: "tasks_customer_same_org_fk")
+  deal         Deal?        @relation(fields: [organizationId, dealId], references: [organizationId, id], onDelete: Cascade, map: "tasks_deal_same_org_fk")
+  branch       Branch?      @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict, map: "tasks_branch_same_org_fk")
+  team         Team?        @relation(fields: [organizationId, teamId], references: [organizationId, id], onDelete: Restrict, map: "tasks_team_same_org_fk")
+  /// Through `Membership`, so "assigned to somebody in another tenant" is unrepresentable.
+  assignee     Membership?  @relation("task_assignee", fields: [organizationId, assignedUserId], references: [organizationId, userId], onDelete: Restrict, map: "tasks_assignee_same_org_fk")
+  taskType     TaskType?    @relation(fields: [organizationId, taskTypeId], references: [organizationId, id], onDelete: Restrict, map: "tasks_type_same_org_fk")
+  outcome      TaskOutcome? @relation(fields: [organizationId, outcomeId], references: [organizationId, id], onDelete: Restrict, map: "tasks_outcome_same_org_fk")
+  follows      Task?        @relation("task_follow_chain", fields: [organizationId, followsTaskId], references: [organizationId, id], onDelete: Restrict, map: "tasks_follows_same_org_fk")
+  followedBy   Task[]       @relation("task_follow_chain")
+
+  reschedules   TaskReschedule[]
+  reminders     TaskReminder[]
+  /// The leads pointing at this task as their next action. At most one, by construction.
+  nextActionFor Lead[]           @relation("lead_next_action")
+
+  @@unique([organizationId, id], name: "task_tenant_key")
+  /// The Today view: one person's open work, in due order.
+  @@index([organizationId, assignedUserId, status, dueAt])
+  /// A lead's or a customer's task panel.
+  @@index([organizationId, leadId, status, dueAt])
+  @@index([organizationId, customerId, status, dueAt])
+  @@index([organizationId, dealId, status, dueAt])
+  /// The overdue sweep and the manager's board.
+  @@index([organizationId, status, dueAt])
+  /// Reporting on reschedules — the coaching signal in `FR-TSK-5`.
+  @@index([organizationId, rescheduleCount])
+  @@map("tasks")
+}
+
+/// Every move of a follow-up, with its reason (`FR-TSK-5`).
+///
+/// Append-only in practice and in intent: the count on the task is a cache of how many rows are
+/// here, and the rows are what make the count explainable.
+model TaskReschedule {
+  id              String   @id @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  taskId          String   @map("task_id") @db.Uuid
+  fromDueAt       DateTime @map("from_due_at") @db.Timestamptz(6)
+  toDueAt         DateTime @map("to_due_at") @db.Timestamptz(6)
+  reasonId        String   @map("reason_id") @db.Uuid
+  reasonNote      String?  @map("reason_note")
+  rescheduledById String?  @map("rescheduled_by_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  task         Task             @relation(fields: [organizationId, taskId], references: [organizationId, id], onDelete: Cascade, map: "task_reschedules_task_same_org_fk")
+  reason       RescheduleReason @relation(fields: [organizationId, reasonId], references: [organizationId, id], onDelete: Restrict, map: "task_reschedules_reason_same_org_fk")
+
+  @@unique([organizationId, id], name: "task_reschedule_tenant_key")
+  @@index([organizationId, taskId, createdAt])
+  @@index([organizationId, reasonId])
+  @@map("task_reschedules")
+}
+
+/// A reminder that is a **row**, not a delayed job.
+///
+/// A delayed BullMQ job per reminder would have to be cancelled on every reschedule, every
+/// completion and every delete — and job removal is best effort, so the reminder for a time nobody
+/// is waiting for any more would still fire. Rewriting rows inside the same transaction as the
+/// change cannot drift, and a one-minute sweep over `(remind_at, sent_at IS NULL)` is an indexed
+/// read of nothing on almost every tick.
+model TaskReminder {
+  id             String              @id @db.Uuid
+  organizationId String              @map("organization_id") @db.Uuid
+  taskId         String              @map("task_id") @db.Uuid
+  remindAt       DateTime            @map("remind_at") @db.Timestamptz(6)
+  /// How it is delivered. `in_app` today; the others arrive with their channels.
+  channel        NotificationChannel @default(in_app)
+  /// Minutes before the due time this reminder was derived from, kept so a reminder can say
+  /// "due in an hour" rather than only naming a time.
+  offsetMinutes  Int                 @map("offset_minutes")
+  sentAt         DateTime?           @map("sent_at") @db.Timestamptz(6)
+  createdAt      DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  task         Task         @relation(fields: [organizationId, taskId], references: [organizationId, id], onDelete: Cascade, map: "task_reminders_task_same_org_fk")
+
+  @@unique([organizationId, id], name: "task_reminder_tenant_key")
+  /// One reminder per offset per task, so rewriting them is an upsert rather than a duplicate.
+  @@unique([organizationId, taskId, offsetMinutes])
+  @@map("task_reminders")
 }

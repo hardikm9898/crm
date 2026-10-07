@@ -87,6 +87,24 @@ export const SCHEDULES: readonly ScheduleDefinition[] = [
     description: 'Mark sent quotations expired once their validity has run out',
   },
   {
+    queue: QUEUES.MAINTENANCE,
+    jobName: JOBS.TASK_REMINDER_DISPATCH,
+    // Every minute, which is what `docs/queue-event-architecture.md` §5 specifies and what a
+    // reminder is worth: a warning an hour before a call is only useful if it arrives at the hour
+    // and not at the half hour. An indexed read of nothing on almost every tick
+    // (`task_reminders_pending`).
+    cron: '* * * * *',
+    description: 'Send the task reminders whose moment has come',
+  },
+  {
+    queue: QUEUES.MAINTENANCE,
+    jobName: JOBS.TASK_OVERDUE_SWEEP,
+    // Every half hour. Overdue itself is read from the clock, so this is only about *telling*
+    // somebody, and a notification eleven minutes after the fact is as useful as one at the minute.
+    cron: '*/30 * * * *',
+    description: 'Tell the assignee and their manager about follow-ups that were missed',
+  },
+  {
     queue: QUEUES.SCORING,
     jobName: JOBS.SCORE_DECAY_SWEEP,
     // Overnight, before anyone opens the app: a score that decayed at 1am is right when the first

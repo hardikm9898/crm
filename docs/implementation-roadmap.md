@@ -995,6 +995,79 @@ click-to-call abstraction; email sending adapter + bounce→suppression.
 - Zero-training usability check: a non-technical tester completes "call the overdue lead, log the
   outcome, schedule tomorrow's follow-up" without help.
 
+### Step 1 — tasks and follow-ups ✅ _(landed 2026-10-07)_
+
+The product's answer to "what do I do next", and `FR-TSK-4`'s other half: making the leads nobody
+owes anything to visible.
+
+**Six tenant tables.** `tasks` (a thing somebody has to do, about a lead, a customer or a deal),
+`task_types`, `task_outcomes`, `reschedule_reasons`, `task_reschedules` and `task_reminders` —
+every one of the last three a row the tenant edits, because rule 4 says so and because `FR-TSK-2`
+and `FR-TSK-5` both name lists a business has to be able to change.
+`leads.next_action_task_id` was added: §6.2 of the database design had named it and the column did
+not exist.
+
+**Three decisions, written down as
+[ADR-0022](./decisions/ADR-0022-overdue-is-derived-and-a-reschedule-moves-the-row.md),** because
+each has a wrong answer that looks right:
+
+1. **Overdue is derived from the clock, never stored.** A task due at 10:00 is overdue at 10:01,
+   not at 10:30 when a sweep next runs. `task_status` therefore has four values and not the six
+   `FR-TSK-3` lists. The sweep's job is to _tell_ somebody, which is why it writes
+   `overdue_notified_at`, a timeline entry and an event, and changes nothing about what is true.
+2. **A reschedule moves the same row.** Closing it and opening a replacement would put two things
+   on the Today list for one call and double the lead's open count.
+   `rescheduled_from_task_id` became `follows_task_id` and means something else: the follow-up
+   created at completion pointing back at the task it came out of — the chain a manager reads as
+   "five calls over three weeks".
+3. **A reminder is a row, not a delayed job.** A delayed BullMQ job would have to be cancelled on
+   every reschedule, completion and delete, and job removal is best-effort, so a reminder nobody is
+   waiting for would still fire. A one-minute sweep over a partial index is an indexed read of
+   nothing on almost every tick, and deleting a row is how a reminder is cancelled.
+
+**Completion is the interaction `FR-TSK-6` describes.** The outcome is required — by the schema and
+by `tasks_completed_has_outcome` — and an outcome the tenant marked `requires_note` demands one.
+"Create the next follow-up" happens on the same form and in the same transaction, so a lead never
+passes through a state where nothing is owed to it. Deactivating the **last** active outcome is
+refused, because otherwise the workspace reaches a state where no task can ever be completed and
+the error names a constraint rather than the setting somebody changed.
+
+**The lead's denormalized next action is recomputed, never incremented** — and the lead's row lock
+is taken _before_ the task write. That is not belt and braces: inserting a task takes a
+`FOR KEY SHARE` lock on its lead, so asking for `FOR UPDATE` afterwards made two simultaneous
+creates on one lead deadlock, and both callers got a 500. Found by a concurrency test, not by
+reading the code.
+
+**Two schedules on `maintenance`:** `task.reminder-dispatch` every minute and
+`task.overdue-sweep` every thirty. Both read across tenants and write inside each tenant's own
+context, because `TimelineService` takes the organization from the context by design — the trap the
+quotation expiry sweep paid for. `task.overdue` leaves through the outbox and
+`notify.task-overdue` tells the assignee and whoever holds `task:manage_others`; the other four
+task events are recorded with no subscribers so a typo reads as "unsubscribed" rather than as
+silence.
+
+**`task:manage_others` is enforced for the first time.** It has been in the permission catalogue
+since Phase 1 with nothing reading it. `task:manage` plus its data scope decides which tasks a
+caller can touch; this decides whether they may finish somebody else's work for them.
+
+**Screens.** `/tasks` is the queue — sections in the order somebody works them, each counter a
+separate aggregate over the whole filter rather than a tally of the loaded page, and `noNextAction`
+beside them. The follow-up panel on the lead detail screen is where a follow-up is actually
+planned. `/settings/follow-ups` edits the three lists, each row printing its name as text above its
+editor. `?taskId=` is a deep link that loads the task **by id** rather than finding it in the
+current page — the panel otherwise failed to open for a colleague's follow-up, silently, which is
+exactly where a reminder notification sends somebody.
+
+**Verified.** 1 427 tests green (632 unit, 795 integration) plus 223 browser checks. The reminder
+and overdue chains were also exercised live: the real scheduler fired both jobs, the real worker
+consumed the outbox event, and the notifications arrived with one copy per recipient per task.
+
+**Carried forward, named rather than assumed:** `/today` and the SLA machinery are the next steps;
+neither sweep is quiet-hours aware (that needs `notification_preferences` to carry quiet hours, in
+the notification-centre step); the queue's actions are server actions and round trips, not the
+optimistic-and-queued ones the frontend design describes for `/today`; `automation_run_id` on
+`tasks` waits for Phase 6 to create the table it would reference.
+
 ---
 
 ## Phase 4 — Capture & developer platform
@@ -1193,19 +1266,24 @@ partially landed, with the specific gaps named.
 ## Immediate next step
 
 _This section names the next step only; what each landed step actually did is in the step entries
-above. Last reviewed 2026-10-06, after Phase 2 step 10, which closes Phase 2._
+above. Last reviewed 2026-10-07, after Phase 3 step 1._
 
-**Phase 3, step 1 — tasks and follow-ups.** `task_types`, `tasks` with an owner, a due time and an
-outcome, reschedule with a mandatory reason from the tenant's own list, and the five timeline types
-that have been sitting in the activity registry with nothing writing them (`task.created`,
-`task.completed`, `task.rescheduled`, `task.cancelled`, `task.overdue`) — the describer-coverage test
-lists them against this phase, so the first thing that writes one has to describe it. Reminders ride
-the notifications queue that already exists; the overdue sweep is another `maintenance.*` schedule
-beside quotation expiry. After tasks come the SLA policy and `/today`, which is the screen a sales
-executive lands on and the first screen in the product that is a **queue** rather than a list.
+**Phase 3, step 2 — the SLA policy and the clock.** `sla_policies` (per-source/priority
+first-response and next-response targets), `sla_clocks` and `escalations`, with the clock respecting
+the working hours and holidays that `working_hours` and `holidays` have held since Phase 1 and that
+nothing has read yet. The exit criteria name the hard part explicitly: a DST transition has to be in
+the tests, and a breach has to escalate to the manager **exactly once**, which is the same
+idempotency the overdue sweep just solved with `overdue_notified_at`. After that comes `/today` —
+one request for the whole executive screen — which is the first screen in the product that is a
+queue rather than a list, and which the `/tasks` queue was built to be made from.
 
-Two Phase 2 items are deliberately carried forward rather than left unsaid, both named in the exit
-criteria review above: there is no settings screen for custom fields (they are created through the
-API or by a template), and nothing has been measured against a latency budget at 100 000 leads —
-that belongs with the Phase 12 performance work, which is where the budget itself should be written
-down.
+Two items are carried forward from Phase 3 step 1 rather than left unsaid: neither task sweep is
+quiet-hours aware (it needs `notification_preferences` to carry quiet hours, which is the
+notification-centre step), and the queue's actions are ordinary server actions rather than the
+optimistic, queued, retried ones `docs/frontend-architecture.md` §5.1 describes — that belongs with
+`/today` and its offline story.
+
+Two Phase 2 items are still open, both named in that phase's exit-criteria review: there is no
+settings screen for custom fields (they are created through the API or by a template), and nothing
+has been measured against a latency budget at 100 000 leads — which belongs with the Phase 12
+performance work, where the budget itself should be written down.

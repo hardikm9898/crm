@@ -73,6 +73,13 @@ export const TENANT_MODELS = [
   'QuotationItem',
   'PaymentMethod',
   'Payment',
+  // Phase 3, step 1 — tasks and follow-ups
+  'TaskType',
+  'TaskOutcome',
+  'RescheduleReason',
+  'Task',
+  'TaskReschedule',
+  'TaskReminder',
 ] as const;
 
 export type TenantModel = (typeof TENANT_MODELS)[number];

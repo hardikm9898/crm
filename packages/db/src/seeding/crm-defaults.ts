@@ -395,6 +395,166 @@ export async function seedDefaultAssignmentRule(
   return ruleId;
 }
 
+/**
+ * The kinds of follow-up a business actually schedules (`FR-TSK-2`).
+ *
+ * The requirement names them, and every one is a row the tenant renames, reorders or removes. What
+ * the defaults carry that matters is the **reminder offsets**: a call needs an hour's warning, a
+ * site visit needs the evening before, and a form that pre-fills that is a form somebody fills in
+ * one field.
+ */
+const TASK_TYPE_SEEDS: readonly {
+  readonly name: string;
+  readonly icon: string;
+  readonly defaultDurationMinutes: number;
+  readonly defaultReminderOffsets: readonly number[];
+}[] = [
+  { name: 'Call', icon: 'phone', defaultDurationMinutes: 15, defaultReminderOffsets: [60] },
+  { name: 'WhatsApp', icon: 'message', defaultDurationMinutes: 10, defaultReminderOffsets: [60] },
+  { name: 'Email', icon: 'mail', defaultDurationMinutes: 15, defaultReminderOffsets: [60] },
+  // The three somebody has to travel to or prepare for get the day before as well.
+  {
+    name: 'Meeting',
+    icon: 'users',
+    defaultDurationMinutes: 45,
+    defaultReminderOffsets: [1440, 60],
+  },
+  {
+    name: 'Demo',
+    icon: 'presentation',
+    defaultDurationMinutes: 45,
+    defaultReminderOffsets: [1440, 60],
+  },
+  {
+    name: 'Site visit',
+    icon: 'map-pin',
+    defaultDurationMinutes: 90,
+    defaultReminderOffsets: [1440, 120],
+  },
+  { name: 'Follow-up', icon: 'repeat', defaultDurationMinutes: 15, defaultReminderOffsets: [60] },
+  {
+    name: 'Payment follow-up',
+    icon: 'banknote',
+    defaultDurationMinutes: 15,
+    defaultReminderOffsets: [60],
+  },
+  {
+    name: 'Document collection',
+    icon: 'file-text',
+    defaultDurationMinutes: 20,
+    defaultReminderOffsets: [60],
+  },
+];
+
+/**
+ * How a follow-up turned out (`FR-TSK-6`).
+ *
+ * `isPositive` is what makes a completion log into a report — "forty calls, nine of them positive"
+ * is a coaching conversation and "forty calls" is not. Null is deliberate on the three that are
+ * neither: a no-answer is not a failure, it is a call to make again.
+ */
+const TASK_OUTCOME_SEEDS: readonly {
+  readonly name: string;
+  readonly isPositive?: boolean | null;
+  readonly requiresNote?: boolean;
+}[] = [
+  { name: 'Spoke — interested', isPositive: true },
+  { name: 'Spoke — needs time', isPositive: null },
+  { name: 'Done as planned', isPositive: true },
+  { name: 'No answer', isPositive: null },
+  { name: 'Busy — call back later', isPositive: null },
+  { name: 'Wrong or unreachable number', isPositive: false },
+  { name: 'Not interested', isPositive: false },
+  { name: 'Other', isPositive: null, requiresNote: true },
+];
+
+/**
+ * Why a follow-up moved (`FR-TSK-5`), which the requirement lists and this seeds verbatim.
+ *
+ * A mandatory reason is the difference between "this lead has been pushed five times" — a number
+ * with no story — and "four of them because the decision maker was away", which is something a
+ * manager can act on. `requiresNote` on "Other" is what stops it becoming the commonest reason.
+ */
+const RESCHEDULE_REASON_SEEDS: readonly {
+  readonly name: string;
+  readonly requiresNote?: boolean;
+}[] = [
+  { name: 'Customer requested later' },
+  { name: 'Customer busy' },
+  { name: 'I was unavailable' },
+  { name: 'Price discussion pending' },
+  { name: 'Decision maker unavailable' },
+  { name: 'Callback requested' },
+  { name: 'Other', requiresNote: true },
+];
+
+/**
+ * Task types, outcomes and reschedule reasons for a workspace's first day.
+ *
+ * Idempotent **per concern**, not per workspace: `seedCrmDefaults` short-circuits on the presence
+ * of a lead status, so anything added to it after the first release never reaches a workspace that
+ * already exists — which is how the deal pipeline and the payment methods each ended up needing
+ * their own absence check. A tenant who deleted every outcome should not have them reinstated
+ * because their reschedule reasons are missing.
+ */
+export async function seedTaskConfig(
+  tx: DbTransactionClient,
+  organizationId: string,
+): Promise<{ types: number; outcomes: number; reasons: number }> {
+  let types = 0;
+  if (!(await tx.taskType.findFirst({ where: { organizationId }, select: { id: true } }))) {
+    for (const [index, seed] of TASK_TYPE_SEEDS.entries()) {
+      await tx.taskType.create({
+        data: {
+          id: newId(),
+          organizationId,
+          name: seed.name,
+          icon: seed.icon,
+          defaultDurationMinutes: seed.defaultDurationMinutes,
+          defaultReminderOffsets: seed.defaultReminderOffsets as never,
+          sortOrder: index,
+        },
+      });
+    }
+    types = TASK_TYPE_SEEDS.length;
+  }
+
+  let outcomes = 0;
+  if (!(await tx.taskOutcome.findFirst({ where: { organizationId }, select: { id: true } }))) {
+    for (const [index, seed] of TASK_OUTCOME_SEEDS.entries()) {
+      await tx.taskOutcome.create({
+        data: {
+          id: newId(),
+          organizationId,
+          name: seed.name,
+          isPositive: seed.isPositive ?? null,
+          requiresNote: seed.requiresNote ?? false,
+          sortOrder: index,
+        },
+      });
+    }
+    outcomes = TASK_OUTCOME_SEEDS.length;
+  }
+
+  let reasons = 0;
+  if (!(await tx.rescheduleReason.findFirst({ where: { organizationId }, select: { id: true } }))) {
+    for (const [index, seed] of RESCHEDULE_REASON_SEEDS.entries()) {
+      await tx.rescheduleReason.create({
+        data: {
+          id: newId(),
+          organizationId,
+          name: seed.name,
+          requiresNote: seed.requiresNote ?? false,
+          sortOrder: index,
+        },
+      });
+    }
+    reasons = RESCHEDULE_REASON_SEEDS.length;
+  }
+
+  return { types, outcomes, reasons };
+}
+
 export const CRM_DEFAULT_SEEDS = {
   statuses: STATUS_SEEDS,
   stages: STAGE_SEEDS,
@@ -402,6 +562,9 @@ export const CRM_DEFAULT_SEEDS = {
   lostReasons: LOST_REASON_SEEDS,
   tags: TAG_SEEDS,
   paymentMethods: PAYMENT_METHOD_SEEDS,
+  taskTypes: TASK_TYPE_SEEDS,
+  taskOutcomes: TASK_OUTCOME_SEEDS,
+  rescheduleReasons: RESCHEDULE_REASON_SEEDS,
 } as const;
 
 // ═══════════════════════════════════════════════════════════════════════════

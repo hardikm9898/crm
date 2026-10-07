@@ -28,6 +28,8 @@ import {
   type ScoreBreakdown,
 } from '@/lib/leads';
 import { Timeline } from '@/components/timeline';
+import { BUCKET_CLASSES, BUCKET_LABELS, loadLeadTasks, loadTaskConfig } from '@/lib/tasks';
+import { ScheduleTaskForm } from '../../tasks/_components/task-forms';
 import { ConvertForm } from '../../customers/_components/convert-form';
 import {
   OwnerControl,
@@ -108,6 +110,15 @@ export default async function LeadDetailPage({
     loadBreakdown(id, token),
     loadDuplicates(id, token),
   ]);
+
+  // The follow-ups, and the vocabulary the form needs. Both swallow a failure: a lead that will
+  // not open because one panel's request failed is worse than a lead with one panel missing — but
+  // the form says so itself when it has nothing to offer, rather than rendering empty dropdowns.
+  const [tasks, taskConfig] = await Promise.all([loadLeadTasks(id, token), loadTaskConfig(token)]);
+  const openTasks = tasks.filter(
+    (task) => task.status === 'pending' || task.status === 'in_progress',
+  );
+  const mayManageTasks = can(user, 'task:manage');
 
   const pipeline = pipelines.find((entry) => entry.id === lead.pipelineId);
   const band = lead.scoreBand
@@ -288,6 +299,63 @@ export default async function LeadDetailPage({
                   {lead.lostReason && <Detail label="Lost reason">{lead.lostReason.name}</Detail>}
                   {lead.lostNote && <Detail label="Lost note">{lead.lostNote}</Detail>}
                 </dl>
+              </Card>
+
+              <Card
+                title="Follow-ups"
+                description="What is owed to this lead, and what happened on the last one (FR-TSK-4)."
+              >
+                {openTasks.length === 0 ? (
+                  <p className="text-sm" data-lead-no-next-action>
+                    <strong>Nothing is planned.</strong> A lead with no next action is a lead
+                    nothing will happen to.
+                  </p>
+                ) : (
+                  <ul className="mb-3 flex flex-col divide-y divide-[var(--color-border)]/60">
+                    {openTasks.map((task) => (
+                      <li
+                        key={task.id}
+                        className="flex flex-wrap items-baseline justify-between gap-2 py-2"
+                        data-lead-task={task.id}
+                      >
+                        <span className="text-sm">
+                          <span className="font-medium">{task.title}</span>
+                          {task.taskType && (
+                            <span className="text-[var(--color-text-muted)]">
+                              {' '}
+                              · {task.taskType.name}
+                            </span>
+                          )}
+                          {task.rescheduleCount > 0 && (
+                            <span className="text-[var(--color-text-muted)]">
+                              {' '}
+                              · moved {task.rescheduleCount}{' '}
+                              {task.rescheduleCount === 1 ? 'time' : 'times'}
+                            </span>
+                          )}
+                        </span>
+                        <span className="flex items-center gap-3 text-sm">
+                          <span
+                            className={`rounded px-2 py-0.5 text-xs ${BUCKET_CLASSES[task.bucket]}`}
+                          >
+                            {BUCKET_LABELS[task.bucket]}
+                          </span>
+                          <span className="text-[var(--color-text-muted)]">
+                            {formatDateTime(task.dueAt)}
+                          </span>
+                          <Link href={`/tasks?taskId=${task.id}`} className="underline">
+                            Log the outcome
+                          </Link>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {mayManageTasks && (
+                  <div className="border-t border-[var(--color-border)] pt-3">
+                    <ScheduleTaskForm config={taskConfig} leadId={lead.id} compact />
+                  </div>
+                )}
               </Card>
 
               <CustomFieldsCard lead={lead} />

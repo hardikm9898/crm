@@ -371,6 +371,32 @@ prisma migrate deploy` after generating a migration.
 - **The web app has no self-serve registration screen.** Sign-up is an API call; the screens begin at
   sign-in. A browser check that needs a fresh workspace registers over HTTP and then signs in through
   the form.
+- **Inserting a child row takes a `FOR KEY SHARE` lock on its parent, so locking the parent
+  afterwards deadlocks.** Two tasks created on the same lead at the same instant both held KEY SHARE
+  on that lead (Postgres takes it for every FK, to stop the parent disappearing underneath the
+  child), and then both asked for `FOR UPDATE` to recompute `leads.next_action_at` — a cycle, and
+  Postgres killed one with a 500. Take the parent's `FOR UPDATE` **before** the insert, in a
+  deterministic id order, and the second transaction queues instead. Every read-then-write on a
+  denormalized parent column has this shape; `NextActionService.lockLeads` is the pattern.
+- **`@leados/shared` may not be imported by `apps/web` runtime code at all.** Its entry point
+  re-exports the tenant context, which reaches `node:async_hooks`, and a client component that
+  transitively imports it fails `next build` with "the chunking context does not support external
+  modules" — on whichever page happens to render it, not on the file that imported it. The same
+  shape as the `next/headers` rule in the other direction. The web app hand-writes its own copy of
+  a shared vocabulary (`TASK_BUCKETS` in `lib/tasks.ts`) and a **spec** reconciles the two, because
+  a spec runs in Node and may import both.
+- **A deep-linked panel must load its subject by id, not find it in the current page.**
+  `/tasks?taskId=X` rendered its action panel by searching the loaded list, so the panel silently
+  failed to open whenever the filter excluded the row — and the filter defaults to "mine", while the
+  reminder notification that sends somebody there is often about a colleague's follow-up. A link
+  into a filtered list has to fetch what it names.
+- **`Number(null)` is 0, `Number('')` is 0, and 0 is often a meaningful value.** A JSONB array of
+  reminder offsets that picked up a null, or a blank form field, silently became "remind me at the
+  due moment" — the one time a spurious reminder is most confusing. A coercion used on untrusted
+  input needs to refuse what `Number()` accepts, not reuse it.
+- **A validation refusal is 400, not 422.** `AppError.validation` and a Zod schema failure both
+  answer `400 VALIDATION_FAILED`; `AppError.businessRule` answers `422 BUSINESS_RULE_VIOLATION`. A
+  test asserting 422 for a missing required field passes only by accident.
 - **A browser check must use `localhost`, not `127.0.0.1`.** Against `127.0.0.1:3000` the login form
   submitted as a native GET with the password in the query string — the client bundle had not
   hydrated — and the check failed with a URL that explains itself only if you read it closely.

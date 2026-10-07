@@ -29,6 +29,10 @@ export const EVENT_SUBSCRIPTIONS: Readonly<Record<string, readonly EventSubscrip
   // A lead nobody picked up is the most expensive silent failure in the product, so it has its own
   // event rather than being inferred from `lead.assigned` with a null (`FR-ASG-4`).
   'lead.unassigned_pool': [{ queue: QUEUES.NOTIFICATIONS, jobName: JOBS.NOTIFY_LEAD_UNASSIGNED }],
+  // A missed follow-up is told about through the event rather than by the sweep, so "mark it
+  // reported" and "tell somebody" retry independently — and a second consumer (the Phase 3
+  // escalation policy, a WhatsApp nudge) is a line here rather than a change to the sweep.
+  'task.overdue': [{ queue: QUEUES.NOTIFICATIONS, jobName: JOBS.NOTIFY_TASK_OVERDUE }],
   // Scoring reacts to what a lead does (`FR-SCR-2`). Every one of these is a trigger a tenant may
   // write a rule on, and the job name is the same for all of them — the processor reads which event
   // it was from the envelope, so adding a trigger is a line here and an entry in `SCORING_TRIGGERS`.
@@ -40,6 +44,10 @@ export const EVENT_SUBSCRIPTIONS: Readonly<Record<string, readonly EventSubscrip
   'lead.touchpoint_added': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }],
   // Recorded but not yet consumed. Listed explicitly so the set of known events is visible, and so
   // a typo in an event name shows up as "unsubscribed" rather than silently doing nothing.
+  'task.created': [],
+  'task.completed': [],
+  'task.rescheduled': [],
+  'task.cancelled': [],
   'organization.created': [],
   'onboarding.completed': [],
   'lead.deleted': [],

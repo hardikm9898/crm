@@ -17,8 +17,8 @@ place to check "where is this specified?". `PRD` = `product-requirements.md`.
 | 10      | Assignment engine                       | `FR-ASG-1..7`                           | `database-design.md` §6.3; `queue-event-architecture.md` §3                                |
 | 11      | Lead scoring                            | `FR-SCR-1..3`                           | `database-design.md` §6.3; `api-architecture.md` (score-breakdown)                         |
 | 12      | Pipeline management                     | `FR-PIP-1..3`                           | `database-design.md` §6.3; `frontend-architecture.md` §4 (KanbanBoard)                     |
-| 13      | Task management                         | `FR-TSK-1..3`                           | `database-design.md` §6.4                                                                  |
-| 14      | Follow-up engine                        | `FR-TSK-4/7`                            | `frontend-architecture.md` §5.1; `api-architecture.md` (`/my/today`)                       |
+| 13      | Task management                         | `FR-TSK-1..3`                           | `database-design.md` §6.4; ADR-0022; `apps/api/src/modules/tasks/README.md`                |
+| 14      | Follow-up engine                        | `FR-TSK-4..7`                           | `frontend-architecture.md` §5.1; `api-architecture.md` (`/tasks`, `/my/today`); ADR-0022   |
 | 15      | Follow-up automation                    | `FR-AUT-1..8`                           | `queue-event-architecture.md` §7                                                           |
 | 16      | WhatsApp Cloud API                      | `FR-WA-1..6`                            | `integration-architecture.md` §4; ADR-0008                                                 |
 | 17      | Shared WhatsApp inbox                   | `FR-WA-7/8`                             | `database-design.md` §7; `frontend-architecture.md` §5.3                                   |

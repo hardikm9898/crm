@@ -1487,6 +1487,7 @@ export class LeadsService {
     openTasksCount: number;
     touchCount: number;
     nextActionAt: Date | null;
+    nextActionTaskId: string | null;
     lastActivityAt: Date | null;
     convertedAt: Date | null;
     createdAt: Date;
@@ -1522,6 +1523,14 @@ export class LeadsService {
       openTasksCount: lead.openTasksCount,
       touchCount: lead.touchCount,
       nextActionAt: lead.nextActionAt,
+      /**
+       * Which task the next action *is*, not merely when it falls due.
+       *
+       * Added with Phase 3's tasks: without it a screen showing "next action in 2 hours" has no
+       * way to open the thing it is talking about, and `FR-TSK-4` is about one identifiable next
+       * action rather than a timestamp.
+       */
+      nextActionTaskId: lead.nextActionTaskId,
       lastActivityAt: lead.lastActivityAt,
       /**
        * On the summary, not only the detail: a list that cannot show which leads are already

@@ -180,30 +180,55 @@ Registered as BullMQ repeatable jobs by the `scheduler` process (a single logica
 lock, crash-safe and replaceable). Cron expressions are stored, not hardcoded, so the platform admin
 can retune cadence.
 
-| Schedule                      | Job                                                                   | Purpose                                                                                                                                   |
-| ----------------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| every minute                  | `task.reminder-dispatch`                                              | Due reminders → notifications                                                                                                             |
-| every minute                  | `wf.reconcile-waiting`                                                | Resume workflow runs whose `resume_at` passed (safety net for lost delayed jobs)                                                          |
-| every 5 min                   | `sla.sweep`                                                           | At-risk → warn, breached → escalate (`FR-TSK-8`)                                                                                          |
-| every 5 min                   | `rollup.*-daily` (today's partial)                                    | Near-real-time dashboards                                                                                                                 |
-| every 10 min                  | `integration.health-check`                                            | Per-connection probes → `integration_health_checks`                                                                                       |
-| every 15 min                  | `analytics.session-close`                                             | Close sessions idle > 30 min                                                                                                              |
-| hourly                        | `ads.sync-metrics`                                                    | Spend/impressions/clicks                                                                                                                  |
-| hourly                        | `webhook.reap-exhausted`                                              | Disable dead endpoints, alert admins                                                                                                      |
-| every 30 min (org-hour aware) | `task.overdue-sweep`                                                  | Mark overdue, notify owner + manager                                                                                                      |
-| daily 00:15 org-tz            | `rollup.backfill` (yesterday, full recompute)                         | Late events corrected                                                                                                                     |
-| daily 01:07                   | `score.decay-sweep`                                                   | Inactivity decay (`FR-SCR-1`). Implemented at :07 — every schedule here runs on an odd minute so a restart does not fire them all at once |
-| daily 02:00                   | `retention.purge`                                                     | Retention + DSR purges (`FR-PRV-3`)                                                                                                       |
-| daily 02:30                   | `partition.maintain`                                                  | Pre-create/detach/drop partitions                                                                                                         |
-| daily 03:00                   | `lead.recycle-sweep`                                                  | Stale/unworked leads back to the pool (`FR-ASG-7`)                                                                                        |
-| daily 07:00 org-tz            | `notify.digest`                                                       | "Your day" digest for opted-in users                                                                                                      |
-| daily 08:00                   | `trial.check`                                                         | Expiring/expired trials → notify + transition (`FR-BIL-3`)                                                                                |
-| daily 09:00                   | `billing.dunning`                                                     | Failed-payment retries                                                                                                                    |
-| daily 04:00                   | `tenant.health-score`                                                 | Churn signals (`FR-SA-6`)                                                                                                                 |
-| weekly                        | `usage.reconcile`, `search.vector-rebuild`, `db.vacuum-analyze-hints` | Hygiene                                                                                                                                   |
+| Schedule           | Job                                                                   | Purpose                                                                                                                                   |
+| ------------------ | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| every minute       | `task.reminder-dispatch`                                              | Due reminders → notifications                                                                                                             |
+| every minute       | `wf.reconcile-waiting`                                                | Resume workflow runs whose `resume_at` passed (safety net for lost delayed jobs)                                                          |
+| every 5 min        | `sla.sweep`                                                           | At-risk → warn, breached → escalate (`FR-TSK-8`)                                                                                          |
+| every 5 min        | `rollup.*-daily` (today's partial)                                    | Near-real-time dashboards                                                                                                                 |
+| every 10 min       | `integration.health-check`                                            | Per-connection probes → `integration_health_checks`                                                                                       |
+| every 15 min       | `analytics.session-close`                                             | Close sessions idle > 30 min                                                                                                              |
+| hourly             | `ads.sync-metrics`                                                    | Spend/impressions/clicks                                                                                                                  |
+| hourly             | `webhook.reap-exhausted`                                              | Disable dead endpoints, alert admins                                                                                                      |
+| every 30 min       | `task.overdue-sweep`                                                  | Report a missed follow-up **once** and notify owner + manager. _Not_ org-hour aware and does not "mark overdue" — see the amendment below |
+| daily 00:15 org-tz | `rollup.backfill` (yesterday, full recompute)                         | Late events corrected                                                                                                                     |
+| daily 01:07        | `score.decay-sweep`                                                   | Inactivity decay (`FR-SCR-1`). Implemented at :07 — every schedule here runs on an odd minute so a restart does not fire them all at once |
+| daily 02:00        | `retention.purge`                                                     | Retention + DSR purges (`FR-PRV-3`)                                                                                                       |
+| daily 02:30        | `partition.maintain`                                                  | Pre-create/detach/drop partitions                                                                                                         |
+| daily 03:00        | `lead.recycle-sweep`                                                  | Stale/unworked leads back to the pool (`FR-ASG-7`)                                                                                        |
+| daily 07:00 org-tz | `notify.digest`                                                       | "Your day" digest for opted-in users                                                                                                      |
+| daily 08:00        | `trial.check`                                                         | Expiring/expired trials → notify + transition (`FR-BIL-3`)                                                                                |
+| daily 09:00        | `billing.dunning`                                                     | Failed-payment retries                                                                                                                    |
+| daily 04:00        | `tenant.health-score`                                                 | Churn signals (`FR-SA-6`)                                                                                                                 |
+| weekly             | `usage.reconcile`, `search.vector-rebuild`, `db.vacuum-analyze-hints` | Hygiene                                                                                                                                   |
 
 All schedules are working-hours/timezone aware where they touch humans — a follow-up reminder at
 3 a.m. is a defect, not a feature.
+
+> **Amendment, 2026-10-06 (implementation, Phase 3 step 1).** `task.reminder-dispatch` and
+> `task.overdue-sweep` are built, both on the `maintenance` queue. Three things this section said
+> that are not what shipped; the reasoning is
+> [ADR-0022](./decisions/ADR-0022-overdue-is-derived-and-a-reschedule-moves-the-row.md).
+>
+> - **The overdue sweep does not "mark overdue".** Overdue is derived from the clock, because a
+>   stored flag is wrong between ticks. The sweep writes `tasks.overdue_notified_at`, a
+>   `task.overdue` timeline entry and a `task.overdue` event — once per missed follow-up, which is
+>   what `overdue_notified_at` is for, and again after a reschedule, which clears it.
+> - **Neither sweep is working-hours aware yet**, and the sentence above is therefore not true of
+>   them. A reminder fires at the offset somebody chose, including at 3 a.m. if they chose it; a
+>   missed follow-up is reported at the next half-hourly tick whatever the hour. Making these
+>   quiet-hours aware needs `notification_preferences` to carry quiet hours and the dispatcher to
+>   respect them — which is the notification-centre step later in Phase 3, and is listed as an open
+>   item in the roadmap rather than quietly assumed.
+> - **The reminder is dispatched by the sweep itself**, not handed to a second queue hop. The
+>   in-app notification _is_ the delivery; a per-channel job arrives with the channel (email,
+>   WhatsApp). The sweep creates the notification **before** marking the row sent, so a crash
+>   retries into an idempotent `create` rather than losing the reminder.
+>
+> `task.overdue` is the only one of the five task events with a consumer today
+> (`notify.task-overdue` → the assignee and whoever holds `task:manage_others`). `task.created`,
+> `task.completed`, `task.rescheduled` and `task.cancelled` are recorded and listed with no
+> subscribers, so a typo in an event name shows up as "unsubscribed" rather than as silence.
 
 ---
 

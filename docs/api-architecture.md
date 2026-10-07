@@ -245,16 +245,42 @@ CRUD /sla-policies    CRUD /saved-views
 ### Tasks & work · `task:*`
 
 ```
-GET  /tasks                                  ?bucket=due_now|today|overdue|upcoming|completed
+GET  /tasks                                  ?bucket=overdue|due_now|due_today|upcoming|completed|cancelled
 GET  /tasks/summary                          the Today counters (FR-TSK-7)
+GET  /tasks/config                           types + outcomes + reasons, for the form
 CRUD /tasks
-POST /tasks/{id}/complete                    { outcomeId?, note?, nextFollowUp? }
+GET  /tasks/{id}/reschedules                 the history behind reschedule_count (FR-TSK-5)
+POST /tasks/{id}/complete                    { outcomeId, note?, nextFollowUp? }  ← outcome REQUIRED
 POST /tasks/{id}/reschedule                  { dueAt, reasonId, note? }   ← reason REQUIRED
 POST /tasks/{id}/cancel
+CRUD /settings/task-types | /settings/task-outcomes | /settings/reschedule-reasons
 GET  /my/today                               executive workspace payload in ONE request
 GET  /my/leads | /my/conversations
 GET  /sla/board                              at-risk + breached (manager)  `sla:read`
 ```
+
+> **Amendment, 2026-10-06 (implementation, Phase 3 step 1).** Everything above except `/my/*` and
+> `/sla/*` is built. Four corrections to what this section said:
+>
+> - **`?bucket=` takes six values, not five**, and `today` is spelled `due_today`. The buckets are
+>   defined once in `taskBucket()` (`@leados/shared`) and once as a `where` clause beside it, which
+>   is what lets `/tasks/summary` aggregate over the whole filter rather than tally the loaded
+>   page — and `cancelled` is its own bucket because "we decided not to" is not "done".
+> - **`outcomeId` is required on `complete`**, not optional. `FR-TSK-6` says the completion prompts
+>   for an outcome, and a prompt that can be dismissed leaves "what happened on those forty calls"
+>   unanswerable a month later. `tasks_completed_has_outcome` enforces it in the database too.
+> - **`GET /tasks/config` is new**, and readable with `task:read` rather than `settings:manage`: the
+>   task form needs three dropdowns, and a sales executive has no business holding a settings
+>   permission to plan a call. The three `/settings/*` collections behind it are
+>   `settings:manage` to write, `task:read` to read, like `/settings/payment-methods`.
+> - **`PATCH /tasks/{id}` cannot change `status` or `dueAt`.** Completing, rescheduling and
+>   cancelling each have their own preconditions, their own timeline entry on up to three subjects
+>   and their own effect on the lead's next action; a PATCH that happened to carry a status could
+>   check none of them. The same reasoning as `/payments/{id}`.
+>
+> `/tasks/summary` also returns **`noNextAction`** — open leads with nothing planned, the "silent
+> leads" half of `FR-TSK-4`. It belongs beside the other counters because an empty Today list
+> means nothing if forty leads have nobody owing them anything.
 
 ### Pipeline & deals
 

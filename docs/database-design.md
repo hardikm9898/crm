@@ -340,6 +340,56 @@ source_event_id) WHERE source_event_id IS NOT NULL`, and `delta <> 0` keeps rows
 | `notes`              | org, subject, `body`, `is_internal`, `mentions UUID[]`, author, deleted_at                                                                                                                                                                   |
 | `mentions`           | org, note_id/message_id, `mentioned_user_id`, `read_at?`                                                                                                                                                                                     |
 
+> **Amendment, 2026-10-06 (implementation, Phase 3 step 1).** `tasks`, `task_types`,
+> `task_outcomes`, `reschedule_reasons`, `task_reschedules` and `task_reminders` are built. Five
+> corrections to the rows above; the reasoning is
+> [ADR-0022](./decisions/ADR-0022-overdue-is-derived-and-a-reschedule-moves-the-row.md).
+>
+> - **`task_status` has four values, not five.** `pending | in_progress | completed | cancelled`.
+>   `overdue` is derived from the clock (`due_at < now()` on an open task) and would be wrong
+>   between a sweep's ticks; `rescheduled` is not a state an open task can be in, because an open
+>   task has to stay in "what is due".
+> - **`rescheduled_from_task_id` is implemented as `follows_task_id`**, and means something else: a
+>   reschedule moves the same row, so the only chain worth storing is the follow-up created at
+>   completion pointing back at the task it came out of (`FR-TSK-6`). `reschedule_count` is a cache
+>   of `count(task_reschedules)` and the rows are what make it explainable.
+> - **`task_outcomes` is a new table** the row list did not name, though §1's enum rule lists
+>   "outcomes" among the tenant-owned ones. `tasks.outcome_id` references it: org, name,
+>   `is_positive BOOL NULL` (three-way — a no-answer is neither), `requires_note`, `sort_order`,
+>   `is_active`, `deleted_at`. `call_outcomes` stays separate, per the ADR.
+> - **`task_reminders` has `offset_minutes` and no `job_id`.** A reminder is a row swept every
+>   minute, not a delayed job that would have to be cancelled on every reschedule; the offset is
+>   kept so the notification can say "due in an hour" rather than only naming a time.
+>   `UNIQUE (organization_id, task_id, offset_minutes)` makes rewriting the set an upsert.
+> - **`due_date` and `due_time` are NOT NULL and maintained on write**, like `leads.full_name`:
+>   "due today" is a question about the workspace's calendar day, and
+>   `due_at AT TIME ZONE org.timezone` on every row cannot use an index.
+>
+> `tasks` also carries `overdue_notified_at`, which is what makes the sweep report a missed
+> follow-up once rather than every half hour, and which a reschedule clears. `automation_run_id` is
+> deliberately absent until Phase 6 creates `automation_runs` — a column with no table to reference
+> is an FK that cannot exist.
+>
+> **`leads.next_action_task_id` was added** (the row list in §6.2 named it; the column did not
+> exist). It is written only by the tasks module, recomputed from the open tasks under the lead's
+> row lock, and the lock is taken **before** the task write — inserting a task takes a
+> `FOR KEY SHARE` lock on its lead, so asking for `FOR UPDATE` afterwards deadlocks two
+> simultaneous creates on one lead.
+>
+> Hand-written objects: `tasks_has_subject`, `tasks_title_present`,
+> `tasks_completed_has_timestamp`, `tasks_cancelled_has_timestamp` (both `CASE`, never
+> biconditionals — see the payments amendment), `tasks_completed_has_outcome`,
+> `tasks_reminder_offsets_is_array`, `tasks_reschedule_count_non_negative`,
+> `tasks_not_own_follow_up`, `task_types_name_present`, `task_types_duration_positive`,
+> `task_types_reminder_offsets_is_array`, `task_outcomes_name_present`,
+> `reschedule_reasons_name_present`, `task_reschedules_changes_the_time`,
+> `task_reschedules_note_present`, `task_reminders_offset_non_negative`, the eleven composite FKs,
+> and the partial indexes `tasks_open`, `tasks_open_due_date`, `tasks_overdue_unreported`,
+> `tasks_lead_open`, `tasks_live_created_at`, `tasks_follows`, `leads_next_action_task` and
+> `task_reminders_pending`. The last two sweep indexes are deliberately **not** prefixed by
+> `organization_id`: both sweeps run across tenants, and a leading tenant column would make them
+> scan rather than seek.
+
 `documents` moved to [§6.8](#68-files-imports-and-exports), where it sits with the import and export
 jobs that are its only writers today.
 

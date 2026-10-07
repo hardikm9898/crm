@@ -351,6 +351,103 @@ describe('the payment entries', () => {
   });
 });
 
+describe('tasks and follow-ups (FR-TSK-1..6)', () => {
+  const entry = (type: string, payload: Record<string, unknown>) =>
+    describeEntry({
+      id: 'a',
+      type,
+      module: type.split('.')[0]!,
+      known: true,
+      occurredAt: '2026-10-06T10:00:00.000Z',
+      visibility: 'all',
+      actor: { type: 'user', id: null, name: 'Anita' },
+      payload,
+    });
+
+  it('says what was planned, and when', () => {
+    const described = entry('task.created', {
+      title: 'Call about the 3BHK',
+      taskType: 'Call',
+      dueAt: '2026-04-02T09:30:00.000Z',
+    });
+    expect(described.label).toBe('Planned');
+    expect(described.description).toContain('Call about the 3BHK');
+    // The due time, not the raw ISO string a programmer would read.
+    expect(described.description).not.toContain('2026-04-02T09:30');
+  });
+
+  it('reports the outcome, and only calls a positive one a success', () => {
+    const good = entry('task.completed', {
+      title: 'Call',
+      outcome: 'Spoke — interested',
+      outcomeIsPositive: true,
+    });
+    expect(good.description).toContain('Spoke — interested');
+    expect(good.tone).toBe('success');
+
+    // "No answer" is not progress, and a timeline where every completion reads green is one
+    // nobody can scan for the calls that actually went well.
+    const indifferent = entry('task.completed', {
+      title: 'Call',
+      outcome: 'No answer',
+      outcomeIsPositive: null,
+    });
+    expect(indifferent.tone).toBe('neutral');
+  });
+
+  it('mentions the follow-up that was planned in the same breath', () => {
+    const described = entry('task.completed', {
+      title: 'First call',
+      outcome: 'Spoke — interested',
+      outcomeIsPositive: true,
+      nextFollowUp: { taskId: 'x', title: 'Site visit', dueAt: '2026-04-05T05:00:00.000Z' },
+    });
+    expect(described.description).toContain('Next: Site visit');
+  });
+
+  it('names the reason a follow-up moved, and warns once it has become a habit', () => {
+    const once = entry('task.rescheduled', {
+      title: 'Call',
+      toDueAt: '2026-04-09T09:30:00.000Z',
+      reason: 'Customer busy',
+      rescheduleCount: 1,
+    });
+    expect(once.description).toContain('Customer busy');
+    expect(once.tone).toBe('neutral');
+
+    const chronic = entry('task.rescheduled', {
+      title: 'Call',
+      toDueAt: '2026-04-09T09:30:00.000Z',
+      reason: 'Customer busy',
+      rescheduleCount: 4,
+    });
+    // `FR-TSK-5` calls chronic rescheduling a coaching signal, so the row has to carry it.
+    expect(chronic.description).toContain('Moved 4 times');
+    expect(chronic.tone).toBe('warning');
+  });
+
+  it('reads a miss as a miss', () => {
+    const described = entry('task.overdue', {
+      title: 'Call back',
+      dueAt: '2026-04-01T09:30:00.000Z',
+    });
+    expect(described.label).toBe('Missed');
+    expect(described.tone).toBe('danger');
+  });
+
+  it('still reads when the payload is empty', () => {
+    for (const type of [
+      'task.created',
+      'task.completed',
+      'task.rescheduled',
+      'task.cancelled',
+      'task.overdue',
+    ]) {
+      expect(entry(type, {}).description.length).toBeGreaterThan(5);
+    }
+  });
+});
+
 describe('every activity type the product writes has a describer', () => {
   /**
    * The types no code emits yet, each with the phase that will.
@@ -362,11 +459,6 @@ describe('every activity type the product writes has a describer', () => {
    * part of the work.
    */
   const NOT_WRITTEN_YET: Readonly<Record<string, number>> = {
-    'task.created': 3,
-    'task.completed': 3,
-    'task.rescheduled': 3,
-    'task.cancelled': 3,
-    'task.overdue': 3,
     'mention.created': 3,
     'document.uploaded': 3,
     'sla.at_risk': 3,
@@ -375,11 +467,13 @@ describe('every activity type the product writes has a describer', () => {
     'consent.revoked': 13,
   };
 
-  const PHASE_2_MODULES = ['lead', 'customer', 'deal', 'quotation', 'payment', 'note'];
+  // Phase 3 step 1 added `task`, and took the five task types off the deferred list above as part
+  // of the same change — which is what the second test in this block is for.
+  const WRITTEN_MODULES = ['lead', 'customer', 'deal', 'quotation', 'payment', 'note', 'task'];
 
-  it('describes every type in a module Phase 2 writes, except the ones nothing writes yet', () => {
+  it('describes every type in a module the product writes, except the ones nothing writes yet', () => {
     const undescribed = Object.values(ACTIVITY_TYPES)
-      .filter((type) => PHASE_2_MODULES.includes(type.split('.')[0] ?? ''))
+      .filter((type) => WRITTEN_MODULES.includes(type.split('.')[0] ?? ''))
       .filter((type) => !hasDescriber(type))
       .filter((type) => !(type in NOT_WRITTEN_YET));
     expect(undescribed, 'these render as a bare row, losing whatever is in their payload').toEqual(
