@@ -1139,6 +1139,99 @@ aware, which needs `notification_preferences` to carry quiet hours (the notifica
 and nothing has been measured against the `p95 < 400 ms` the `/my/today` exit criterion sets, which
 belongs with that screen.
 
+### Step 3 — `/today`, the executive workspace ✅ _(landed 2026-10-13)_
+
+`FR-TSK-7`, and the two exit criteria nothing in the product had met: **one request under 400 ms on
+the 100 k fixture**, and a screen **usable one-handed at 375 px whose actions survive a flaky
+connection**. Everything it reads already existed — the task buckets, `leads.next_action_task_id`,
+the SLA clocks. What did not exist was a screen that is a **queue rather than a list**.
+
+**One endpoint, no parameters.** `GET /my/today` answers with five sections, nine counts and the
+workspace's timezone. It accepts no query string at all — not `mine`, not `assignedUserId`, not
+`limit` — because Today is not a question somebody asks but the answer, for the person holding the
+phone, and because it leaves exactly one shape to measure. `task:read` gates the route; `lead:read`
+and `sla:read` gate their own sections and **degrade** rather than refuse, since a role with the
+follow-up queue and nothing else must not make the landing page unreachable. A section the caller
+may not read says so (`available: false`): an empty list and a forbidden one look identical on a
+screen, and must not.
+
+**Measured, not asserted.** On `leads-100k.sql` + the new `work-100k.sql` — 109 716 leads, 10 862
+follow-ups, 21 600 clocks, 31 413 leads nobody has called — **p95 = 60 ms** (p50 47 ms, max 63 ms,
+payload 47 kB) against the 400 ms budget, as an executive and as the owner. Fifteen queries: the
+workspace's timezone first, then fourteen in parallel. The one index it needed is
+`leads_awaiting_first_contact`, a hand-written partial index for "which of the leads I can see has
+nobody spoken to yet": **3.4 ms** with it against **10.7 ms** without, and the gap widens with every
+lead somebody calls. It is registered in `schema-objects.int-spec.ts`, without which Prisma's next
+diff drops it silently.
+
+Its key is `(organization_id, created_at)` and **not** the assignee the query also filters on,
+which is the third thing this step got wrong before measuring it: the screen asks for "mine _or_
+unclaimed", an `OR` cannot be a range scan, and against the obvious index — keyed on the assignee —
+the planner ignored it and read eight thousand rows through a filter instead. Both indexes are
+correct; only one is used.
+
+**Three things found by running it rather than reading it** (the third is the index above):
+
+- **A lead nobody has been assigned appeared on nobody's Today.** The first implementation was
+  strictly "mine"; a workspace with no assignment rule leaves every captured lead unassigned, so
+  the new leads — and the first-response promises running out on them — were hidden from everybody.
+  The rule is now "mine, plus anything nobody has claimed", and the **data scope** finishes it
+  without a second rule: somebody scoped to their own rows cannot read an unclaimed row anyway, so
+  the branch cannot widen what they see. Found by the browser check, which is the only test that
+  had not been handed an assignee.
+- **"1 missed promises."** The summary sentence is assembled from four clauses and one of them had
+  been written without a plural helper. A screen that cannot count to one reads as machine output,
+  which is the one thing that sentence exists to avoid.
+
+**The taps are queued in the browser**, which is the part of `frontend-architecture.md` §5.1 that
+step 1 had listed as not shipped. A tap is recorded before the request leaves, retried at
+0 s / 1 s / 2 s / 4 s, persisted in `localStorage` across a reload, and shown as failed with a
+"Try again" button once it has run out of attempts. The queue decides the thing no form ever does:
+**whether trying again could possibly help** — a refusal (no outcome, a reason that needs a note, a
+follow-up somebody else already finished) is never retried, because sending it again buries the one
+sentence that explains it. It does not guarantee delivery; nothing in a browser tab can. It
+guarantees the tap is never lost _silently_.
+
+**Screens.** `/today`: a greeting, a sentence that omits what is zero, four tiles (two columns at
+375 px, each a link to the list behind its number), then `Overdue` — first, red, never collapsed —
+`Next up`, `Later today`, `Promises running out` and `New leads, nobody has called`. The promises sit
+above the new leads because a clock running out is a commitment the business has already made.
+`[Call]` and `[WhatsApp]` are `tel:` and `wa.me` hand-offs to the device, shown only for an E.164
+number and only where the lead consented — not the click-to-call abstraction that _logs_ the call,
+which still arrives with the channels. `Done` is a sheet with the outcome required and "plan the
+next follow-up" pre-ticked; `Move` requires a date, a time and a reason.
+
+**Landing is now resolved once, by permission.** `/` sends anybody holding `task:read` to `/today`
+and everybody else to `/dashboard`. The design doc had said "executive → /today", which rule 4
+forbids — roles are rows a tenant edits. Sign-in, invitation acceptance and the workspace switcher
+all redirect to `/` rather than each carrying a copy of the rule; the switcher has to, because
+permissions differ per workspace.
+
+**Two definitions became one.** `taskBucketWhere` moved from `tasks.service.ts` into
+`@leados/shared` beside `taskBucket`, because `/tasks` and `/today` now both count buckets and three
+sections of one screen disagreeing about "overdue" is the exact failure that function exists to
+prevent. A new spec evaluates the where-clause against the same tasks `taskBucket` labels and
+asserts each row is selected by exactly the one bucket it reports. `firstContactedAt` also joined
+the filter catalogue beside `lastContactedAt`, whose absence had been an oversight — so "nobody has
+called them" is a saved view and the link out of Today's capped section, rather than a fourth
+two-way boolean on `GET /leads`.
+
+Decisions in
+[ADR-0024](./decisions/ADR-0024-today-is-one-request-and-its-taps-are-queued.md).
+
+**Verified.** 1 603 tests green (729 unit, 874 integration) — 20 of them a new `/my/today` e2e
+suite — plus **39 browser checks** for this screen alone, at 375 px, which assert the latency-shaped
+things no unit test can: no sideways scroll, every action at least 44 px tall, the tiles in two
+columns, and the queue surviving a connection aborted once (it retries itself) and aborted four
+times (it fails loudly, keeps the tap in storage, and sends it when "Try again" is pressed).
+
+**Carried forward, named rather than assumed:** the **unread WhatsApp** section of the mock-up
+arrives with the inbox, as an addition to this payload rather than a second request; `⌘K` and the
+keyboard paths of `frontend-architecture.md` §4 are still unbuilt; the queue is per-viewer browser
+storage, so a tap made on a phone that never regains signal is lost when the tab closes (a service
+worker would fix it and belongs with the PWA, not with this screen); and neither sweep is
+quiet-hours aware, which still waits on `notification_preferences`.
+
 ---
 
 ## Phase 4 — Capture & developer platform
@@ -1337,23 +1430,34 @@ partially landed, with the specific gaps named.
 ## Immediate next step
 
 _This section names the next step only; what each landed step actually did is in the step entries
-above. Last reviewed 2026-10-07, after Phase 3 step 2._
+above. Last reviewed 2026-10-13, after Phase 3 step 3._
 
-**Phase 3, step 3 — `/today`, the executive workspace.** `GET /my/today` returning the entire screen
-in one request: the follow-up queue the `/tasks` page was built to be made from, the SLA clocks
-running out, the new leads with no first contact, and the counts beside each. It is the first screen
-in the product that is a **queue rather than a list**, and its exit criteria are the two that have
-not been met by anything yet — `p95 < 400 ms` on the 100 k fixture, and usable one-handed at 375 px.
-The data it needs now exists: `leads.next_action_task_id`, the task buckets and the SLA clocks were
-all built for it.
+**Phase 3, step 4 — the notification centre, and quiet hours.** `notification_preferences` exists
+and is read for nothing: every notification this product sends — a reminder, an overdue sweep, an
+SLA escalation — goes out whatever the hour and whatever the person asked for. That is the item
+carried forward from both of the last two steps, and it is the one the rest of Phase 3 keeps
+tripping over: the reminder dispatcher and the SLA sweep both need to ask "is this a moment I may
+tell somebody", and neither can until the preference rows carry quiet hours and a channel choice.
+The screen is `/notifications`, which exists as a list and needs its preferences half; the harder
+part is the **deferral**, because a notification held until 09:00 must not arrive as a surprise
+about something that has since been dealt with.
 
-Three items are carried forward from Phase 3 and named rather than left unsaid: neither sweep is
-quiet-hours aware (it needs `notification_preferences` to carry quiet hours, which is the
-notification-centre step later in this phase); the queue's actions are ordinary server actions
-rather than the optimistic, queued, retried ones `docs/frontend-architecture.md` §5.1 describes for
-`/today`; and `next_response` SLA clocks and `sla_clocks.paused_ms` wait for the Phase 5 inbox.
+After that, Phase 3 has left: manager oversight views and the leaderboard (both reads over data
+that already exists), call logging with the click-to-call abstraction — which is what turns
+`/today`'s `tel:` hand-off into a logged call — and the email sending adapter with
+bounce → suppression.
+
+Three items are carried forward from step 3 and named rather than left unsaid: the **unread
+WhatsApp** section of the Today mock-up arrives with the Phase 5 inbox, as an addition to the same
+payload rather than a second request; `⌘K` and the keyboard paths of
+`docs/frontend-architecture.md` §4 are unbuilt; and the Today action queue is per-viewer browser
+storage, so a tap made on a phone that never regains signal is lost when the tab closes — a service
+worker would fix it and belongs with the PWA work, not with that screen. `next_response` SLA clocks
+and `sla_clocks.paused_ms` still wait for the inbox.
 
 Two Phase 2 items are still open, both named in that phase's exit-criteria review: there is no
-settings screen for custom fields (they are created through the API or by a template), and nothing
-has been measured against a latency budget at 100 000 leads — which belongs with the Phase 12
-performance work, where the budget itself should be written down.
+settings screen for custom fields (they are created through the API or by a template), and the lead
+list itself has not been measured against a latency budget at 100 000 leads — the fixture now
+carries follow-ups and clocks as well (`packages/db/perf/work-100k.sql`), and `/my/today` has been
+measured on it, but the lead list, the board and the rendered pages have not; that belongs with the
+Phase 12 performance work, where the budget itself should be written down.

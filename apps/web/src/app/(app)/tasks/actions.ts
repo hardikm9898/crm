@@ -17,6 +17,7 @@ import type { ActionState } from '@/lib/action-state';
  */
 function refresh(paths: readonly (string | null | undefined)[] = []): void {
   revalidatePath('/tasks');
+  revalidatePath('/today');
   revalidatePath('/leads');
   revalidatePath('/dashboard');
   for (const path of paths) if (path) revalidatePath(path);

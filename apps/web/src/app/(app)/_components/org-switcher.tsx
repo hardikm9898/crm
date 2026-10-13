@@ -52,7 +52,9 @@ export function OrgSwitcher({
         return;
       }
       // Everything on screen belongs to the previous tenant, so the whole tree is refetched.
-      router.replace('/dashboard');
+      // `/`, not `/dashboard`: permissions differ per workspace, so where somebody lands has to
+      // be resolved again for the workspace they just switched into.
+      router.replace('/');
       router.refresh();
     } catch {
       setError('Could not reach the server.');

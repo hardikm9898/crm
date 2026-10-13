@@ -14,6 +14,7 @@ import {
   reminderInstants,
   systemPrincipal,
   taskBucket,
+  taskBucketWhere,
   tenantContext,
   withPlatformScope,
   type ActorType,
@@ -118,7 +119,7 @@ export class TasksService {
           }
         : {}),
       ...(query.search ? { title: { contains: query.search, mode: 'insensitive' } } : {}),
-      ...bucketWhere(query.bucket, now, timeZone),
+      ...taskBucketWhere(query.bucket, now, timeZone),
     };
 
     const where = applyScopeFilter(baseWhere, filter);
@@ -196,7 +197,7 @@ export class TasksService {
           [
             bucket,
             await this.db.client.task.count({
-              where: { ...where, ...bucketWhere(bucket, now, timeZone) },
+              where: { ...where, ...taskBucketWhere(bucket, now, timeZone) },
             }),
           ] as const,
       ),
@@ -1352,52 +1353,6 @@ function subjectOf(row: {
   dealId: string | null;
 }): { leadId: string | null; customerId: string | null; dealId: string | null } {
   return { leadId: row.leadId, customerId: row.customerId, dealId: row.dealId };
-}
-
-/**
- * A bucket as a `where` clause.
- *
- * The same definitions `taskBucket` uses, expressed for the database — which is what lets the
- * counters be aggregates over the whole filter rather than a tally of the loaded page, without the
- * two disagreeing. Kept beside each other here on purpose: they are one definition in two
- * languages, and a change to one that misses the other is a screen whose counts contradict its
- * own list.
- */
-function bucketWhere(
-  bucket: TaskBucket | undefined,
-  now: Date,
-  timeZone: string,
-): Record<string, unknown> {
-  if (bucket === undefined) return {};
-  const open = { status: { in: [...OPEN_TASK_STATUSES] } };
-  switch (bucket) {
-    case 'completed':
-      return { status: 'completed' };
-    case 'cancelled':
-      return { status: 'cancelled' };
-    case 'overdue':
-      return { ...open, dueAt: { lt: now } };
-    case 'due_now':
-      return { ...open, dueAt: { gte: now, lte: new Date(now.getTime() + 30 * 60_000) } };
-    case 'due_today': {
-      // "The rest of the workspace's day", which is where `due_date` earns its place: the
-      // alternative is `due_at AT TIME ZONE …` on every row, and that cannot use an index.
-      const today = dueParts(now, timeZone).dueDate;
-      return {
-        ...open,
-        dueAt: { gt: new Date(now.getTime() + 30 * 60_000) },
-        dueDate: new Date(`${today}T00:00:00.000Z`),
-      };
-    }
-    case 'upcoming': {
-      const today = dueParts(now, timeZone).dueDate;
-      return {
-        ...open,
-        dueAt: { gt: new Date(now.getTime() + 30 * 60_000) },
-        dueDate: { gt: new Date(`${today}T00:00:00.000Z`) },
-      };
-    }
-  }
 }
 
 function emptyCounts(): Record<TaskBucket, number> {

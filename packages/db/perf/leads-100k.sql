@@ -8,8 +8,12 @@
 -- and would be measuring the wrong thing. The rows are shaped like real ones — spread across
 -- stages, statuses, owners, cities and three months of capture dates — because a fixture where
 -- every row is identical makes every index look good.
+-- One transaction: `psql` commits every statement as it goes, so a script that is refused part-way
+-- through otherwise leaves the rows above the failure behind (CLAUDE.md records what that cost).
 \set ON_ERROR_STOP on
 \timing off
+
+BEGIN;
 
 CREATE TEMP TABLE scratch AS
 SELECT o.id AS organization_id,
@@ -69,3 +73,5 @@ JOIN LATERAL (
 ANALYZE leads;
 SELECT count(*) AS leads_in_fixture FROM leads
 WHERE organization_id = (SELECT id FROM organizations WHERE slug = :'slug');
+
+COMMIT;

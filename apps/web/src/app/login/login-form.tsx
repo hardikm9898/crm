@@ -50,7 +50,9 @@ export function LoginForm({ expired }: { expired: boolean }) {
         return;
       }
 
-      router.replace('/dashboard');
+      // `/` rather than `/dashboard`: landing is resolved in one place, by permission, and a
+      // second copy of that rule here is a second thing to forget when it changes.
+      router.replace('/');
       router.refresh();
     } catch {
       setError('Could not reach the server. Please try again.');

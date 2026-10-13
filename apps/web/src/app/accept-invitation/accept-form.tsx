@@ -43,7 +43,8 @@ export function AcceptForm({ token }: { token: string }) {
         setError(payload.error?.message ?? 'This invitation could not be accepted.');
         return;
       }
-      router.replace('/dashboard');
+      // `/` resolves where this person lands from their permissions — see `app/page.tsx`.
+      router.replace('/');
       router.refresh();
     } catch {
       setError('Could not reach the server. Please try again.');

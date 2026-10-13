@@ -197,6 +197,13 @@ export const LEAD_FILTER_FIELDS: readonly FilterField[] = [
   { field: 'createdAt', label: 'Captured', kind: 'date', operators: DATE_OPS },
   { field: 'updatedAt', label: 'Last updated', kind: 'date', operators: DATE_OPS },
   { field: 'lastActivityAt', label: 'Last activity', kind: 'date', operators: DATE_OPS },
+  {
+    field: 'firstContactedAt',
+    label: 'First contacted',
+    kind: 'date',
+    operators: DATE_OPS,
+    describe: 'Use “is empty” to find the leads nobody has spoken to yet.',
+  },
   { field: 'lastContactedAt', label: 'Last contacted', kind: 'date', operators: DATE_OPS },
   {
     field: 'nextActionAt',

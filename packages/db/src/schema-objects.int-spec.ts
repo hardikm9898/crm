@@ -128,6 +128,10 @@ const REQUIRED_INDEXES = [
   'sla_clocks_open',
   'escalations_clock',
   'escalations_unacknowledged',
+  // `/my/today`'s third section (`FR-TSK-7`): the leads nobody has spoken to yet. Partial because
+  // the answer is a shrinking slice of a large table, and because the screen it serves is the one
+  // with a latency budget written into the roadmap's exit criteria.
+  'leads_awaiting_first_contact',
 ];
 
 /**

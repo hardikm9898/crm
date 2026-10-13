@@ -420,6 +420,49 @@ prisma migrate deploy` after generating a migration.
   harness's lead failed on a constraint it had nothing to do with. Each test creates its own
   subject — the same lesson as "a test that finds its fixture passes for the wrong reason", one step
   earlier.
+- **`psql` commits every statement as it goes.** A fixture script refused by a check constraint two
+  thirds of the way down leaves the two thirds above it committed, and the next run inserts them
+  again — `packages/db/perf/work-100k.sql` produced three copies of every follow-up that way, and
+  the symptom was a row count three times what the script's own closing `SELECT` said it should be.
+  `\set ON_ERROR_STOP on` stops the _script_, not the work it already did. Wrap a load script in
+  `BEGIN; … COMMIT;` and guard its inserts with `NOT EXISTS` so a second run is a no-op.
+- **An index keyed on a column an `OR` filters on is not used.** `/my/today` asks for "leads
+  assigned to me **or** to nobody", and the obvious partial index —
+  `(organization_id, assigned_user_id, created_at)` — was ignored outright: an `OR` cannot be a
+  range scan, so with an `ORDER BY … LIMIT` the planner fell back to another index and removed
+  eight thousand rows by filter. Keyed `(organization_id, created_at)` instead, the same partial
+  index is an ordered scan the `LIMIT` stops early, and serves the plain equality an own-scoped
+  caller produces as well. Both versions are correct; only one is fast, and nothing but
+  `EXPLAIN ANALYZE` on the fixture says which.
+- **A relative-time fixture drifts.** `work-100k.sql` writes due instants as `now() + 25 minutes`,
+  so a measurement taken an hour after loading it finds nothing "due now" and an overdue section
+  that has swallowed the lot — a different workload, measured confidently. Remove and reload before
+  measuring; its inserts are guarded, so a bare re-run changes nothing.
+- **A screen that is "mine" hides the rows nobody has claimed.** `/my/today` filtered on
+  `assigned_user_id = me`, and a workspace with no assignment rule leaves every captured lead
+  unassigned — so the new leads, and the first-response promises running out on them, appeared on
+  **nobody's** Today. The leads at the greatest risk of never being called were the ones the screen
+  hid. "Mine, plus anything unclaimed" is the predicate, and `applyScopeFilter` then narrows it
+  correctly without a second rule: somebody scoped to their own rows cannot read an unclaimed row
+  anyway. Found by the browser check — the only test that had not been handed an assignee, because
+  every e2e fixture passes one.
+- **Two `OR` keys at one level of a Prisma `where` silently replace each other.** An ownership
+  predicate written as a bare `OR` and an SLA state predicate written as another both want the same
+  key. Put one of them under `AND: [{ OR: [...] }]`; the planner does not care and the composition
+  stops depending on which spread came last.
+- **A sentence assembled from clauses needs a plural helper in every clause.** `/today`'s summary
+  read "1 missed promises" in front of a browser check, because three of its four clauses used one
+  and the fourth did not. A screen that cannot count to one reads as machine output, which is the
+  one thing a hand-written sentence exists to avoid.
+- **A section capped at ten rows needs somewhere to send the other nine thousand.** Today's
+  new-leads list links to `/leads` — which does not read query parameters at all: that screen's
+  state is the encoded filter DSL (`?f=firstContactedAt:is_null`) or a saved view id. Adding
+  `?uncontacted=true` to `GET /leads` made the API agree and the screen ignore it. The field went
+  into the **filter catalogue** instead, where it is also a saved view and a chip.
+- **`lib/lead-format.ts` already has `telHref` and `whatsappHref`.** Both were written a second
+  time, with different null-handling, in a new module forty lines long. The existing pair returns
+  `null` for anything that is not E.164 — which is the behaviour a card wants, and not what a
+  fresh implementation guesses.
 - **A browser check must use `localhost`, not `127.0.0.1`.** Against `127.0.0.1:3000` the login form
   submitted as a native GET with the password in the query string — the client bundle had not
   hydrated — and the check failed with a URL that explains itself only if you read it closely.

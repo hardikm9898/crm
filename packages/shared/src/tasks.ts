@@ -78,6 +78,59 @@ export function isOverdue(task: BucketableTask, now: Date): boolean {
 }
 
 /**
+ * A bucket as a `where` clause — the same definitions `taskBucket` uses, expressed for a query.
+ *
+ * Here beside `taskBucket` rather than in the API, because they are **one definition in two
+ * languages** and a change to one that misses the other is a screen whose counts contradict its own
+ * list. Two consumers now ask: `/tasks` and its summary counters, and `/my/today`, whose three
+ * sections are a single query grouped by the bucket each row reports. A second copy in the second
+ * consumer is how "overdue" comes to mean something slightly different on the screen that matters
+ * most.
+ *
+ * Returned as a plain object so nothing here depends on Prisma: the keys are column names from
+ * `schema.prisma`, and `dueDate` is the stored local date that makes "due today" indexable.
+ */
+export function taskBucketWhere(
+  bucket: TaskBucket | undefined,
+  now: Date,
+  timeZone: string,
+): Record<string, unknown> {
+  if (bucket === undefined) return {};
+  const open = { status: { in: [...OPEN_TASK_STATUSES] } };
+  const dueNowEnds = new Date(now.getTime() + DUE_NOW_WINDOW_MINUTES * 60_000);
+  switch (bucket) {
+    case 'completed':
+      return { status: 'completed' };
+    case 'cancelled':
+      return { status: 'cancelled' };
+    case 'overdue':
+      return { ...open, dueAt: { lt: now } };
+    case 'due_now':
+      return { ...open, dueAt: { gte: now, lte: dueNowEnds } };
+    case 'due_today': {
+      // "The rest of the workspace's day", which is where `due_date` earns its place: the
+      // alternative is `due_at AT TIME ZONE …` on every row, and that cannot use an index.
+      return {
+        ...open,
+        dueAt: { gt: dueNowEnds },
+        dueDate: localDate(now, timeZone),
+      };
+    }
+    case 'upcoming':
+      return {
+        ...open,
+        dueAt: { gt: dueNowEnds },
+        dueDate: { gt: localDate(now, timeZone) },
+      };
+  }
+}
+
+/** The workspace's own calendar day, as the midnight-UTC instant a `date` column stores. */
+function localDate(now: Date, timeZone: string): Date {
+  return new Date(`${dueParts(now, timeZone).dueDate}T00:00:00.000Z`);
+}
+
+/**
  * `due_at` as the workspace's own calendar date and wall-clock time.
  *
  * Stored alongside the instant because "due today" is a question about a *day*, and the day depends

@@ -37,6 +37,7 @@ import { QuotationsModule } from './modules/quotations/quotations.module.js';
 import { PaymentsModule } from './modules/payments/payments.module.js';
 import { TasksModule } from './modules/tasks/tasks.module.js';
 import { SlaModule } from './modules/sla/sla.module.js';
+import { TodayModule } from './modules/today/today.module.js';
 import { ExportsModule } from './modules/exports/exports.module.js';
 import { ImportsModule } from './modules/imports/imports.module.js';
 import { StorageModule } from './infra/storage/storage.module.js';
@@ -81,6 +82,7 @@ import { HealthModule } from './modules/health/health.module.js';
     PaymentsModule,
     TasksModule,
     SlaModule,
+    TodayModule,
     DocumentsModule,
     ImportsModule,
     ExportsModule,

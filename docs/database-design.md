@@ -445,6 +445,44 @@ source_event_id) WHERE source_event_id IS NOT NULL`, and `delta <> 0` keeps rows
 > NULL is _satisfied_, so a row claiming somebody was told when nobody was went straight in.
 > `20261007103000_escalation_notified_check` corrects it to `cardinality`.
 
+> **Amendment, 2026-10-13 (implementation, Phase 3 step 3 — `/my/today`).** The Today screen stores
+> nothing of its own: it reads rows these tables and `leads` already hold, so `schema.prisma` is
+> unchanged and nothing was generated — and so there were no spurious DROPs to strip this time.
+>
+> It added **one hand-written object**, in `20261013143000_phase3_today`:
+>
+> ```sql
+> CREATE INDEX leads_awaiting_first_contact
+>   ON leads (organization_id, created_at)
+>   WHERE deleted_at IS NULL
+>     AND first_contacted_at IS NULL
+>     AND converted_at IS NULL
+>     AND lost_at IS NULL;
+> ```
+>
+> "Which of the leads I can see has nobody spoken to yet?" — the screen's third section, and the
+> question behind every first-response promise in the product. Partial rather than complete because
+> the answer is a small, _shrinking_ slice of a large table while the contacted population it would
+> otherwise be read past only grows: on the 100 k fixture the section's query is **3.4 ms** with
+> this index and **10.7 ms** without. Every predicate in it is also in the query, which is what
+> lets the planner use it at all.
+>
+> **`assigned_user_id` is deliberately not in the key**, although the query filters on it. The
+> screen asks for "mine, or whatever nobody has claimed" — an `OR`, which cannot be a range scan,
+> so against an index keyed on the assignee the planner ignores it entirely and falls back to
+> `leads_live_created_at` with eight thousand rows removed by filter. The first version of this
+> index was keyed `(organization_id, assigned_user_id, created_at)` and went unused; reading the
+> plan is the only thing that said so, because both versions are correct and only one is fast.
+>
+> Prisma has no syntax for a partial index, so it is listed in
+> `packages/db/src/schema-objects.int-spec.ts` like the others. Without that entry the next
+> generated migration proposes dropping it and every test still passes.
+>
+> `firstContactedAt` also joined the **filter catalogue** beside `lastContactedAt`, whose absence
+> had been an oversight: `firstContactedAt is_null` now works in the filter DSL, in a saved view and
+> as the link out of Today's capped section, which is better than the fourth two-way boolean on
+> `GET /leads` that the first attempt added.
+
 `documents` moved to [§6.8](#68-files-imports-and-exports), where it sits with the import and export
 jobs that are its only writers today.
 

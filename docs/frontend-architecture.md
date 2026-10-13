@@ -66,9 +66,17 @@ apps/web/src/app/
 
 **Landing route resolution** (server-side, on the authenticated layout): `executive → /today`,
 `manager → /dashboard?scope=team`, `owner/admin → /dashboard`, `marketing → /marketing`,
-`platform → /admin/overview`; overridable per user. Onboarding-incomplete orgs are redirected to the
-wizard; suspended/expired orgs land on a dedicated billing screen that keeps read access where the
-plan allows (`FR-BIL-3`).
+`platform → /admin/overview`; overridable per user.
+
+> **Amendment, 2026-10-13 (implementation, Phase 3 step 3).** Resolved by **permission**, in one
+> place (`app/page.tsx`): `task:read` → `/today`, everybody else → `/dashboard`. Branching on the
+> word "executive" is what rule 4 forbids — roles are rows a tenant edits, and the code would break
+> the day somebody renames one. `task:read` is the honest test of "does this person have work owed
+> to them". Sign-in, invitation acceptance and the workspace switcher all redirect to `/` rather
+> than carrying a copy of the rule; the switcher in particular must, because permissions differ per
+> workspace. Onboarding-incomplete orgs are redirected to the
+> wizard; suspended/expired orgs land on a dedicated billing screen that keeps read access where the
+> plan allows (`FR-BIL-3`).
 
 ### Rendering strategy
 
@@ -199,6 +207,35 @@ connection is never lost, and the card shows a retry state if the request ultima
 >
 > The promise appears on the lead's own screen and not only on the manager's board, because a board
 > a manager reads is no use to the person who could still answer in time.
+
+> **Amendment, 2026-10-13 (implementation, Phase 3 step 3).** `/today` **is** built, and the
+> mock-up above is now a fair description of it with four differences. What shipped:
+>
+> - **One request.** `GET /my/today` returns all five sections and nine counts. There is no
+>   swallowing loader behind it: a Today screen that renders empty because the request failed is
+>   the worst thing this product can do, so a failure takes the whole screen with it and says so.
+> - **Four tiles, two columns at 375 px**, each a link to the full list behind its number. The
+>   sections are `Overdue` (first, red, never collapsed), `Next up`, `Later today`, then
+>   `Promises running out` and `New leads, nobody has called`. The promises come **above** the new
+>   leads: a clock running out is a commitment the business has already made, and it outranks a
+>   lead nobody has promised anything to yet.
+> - **`[Call]` and `[WhatsApp]` are on the card after all**, as `tel:` and `wa.me` hand-offs to
+>   the device — which is what somebody on a phone wants today, and is not the click-to-call
+>   abstraction that _logs_ the call (that still arrives with the channels). WhatsApp appears only
+>   for a lead who consented, and neither appears for a number that is not E.164.
+> - **The actions are optimistic, queued and retried**, which is the part of the paragraph above
+>   that step 1 listed as not shipped. A tap is recorded before the request leaves, retried at
+>   0 s / 1 s / 2 s / 4 s, kept in `localStorage` across a reload, and shown as failed with a
+>   "Try again" button once it has run out of attempts. A _refusal_ is never retried — see
+>   [ADR-0024](./decisions/ADR-0024-today-is-one-request-and-its-taps-are-queued.md).
+> - **`Done` is a sheet, not a dialog**, with the outcome required and "plan the next follow-up"
+>   pre-ticked. A modal on a 375 px screen covers the thing somebody is deciding about.
+>
+> What did not ship: the **unread WhatsApp** section, which arrives with the inbox as an addition
+> to the same payload; and `⌘K` and the keyboard paths of §4, which are still phase-later.
+>
+> Measured: `p95 = 60 ms` on the 100 k fixture against the 400 ms budget; no sideways scroll at
+> 375 px; every card action at least 44 px tall. All three are asserted in the browser check.
 
 > The due time is **two inputs, a date and a time**, not one `datetime-local`: that control renders
 > differently in every browser, is close to unusable on an Indian Android keyboard, and cannot be

@@ -29,6 +29,9 @@ export const NAV_SECTIONS: readonly NavSection[] = [
   {
     heading: 'Work',
     items: [
+      // First, because it is where an executive lands and the first thing they look for. The
+      // dashboard is the manager's screen and sits under it.
+      { label: 'Today', href: '/today', permissions: ['task:read'] },
       { label: 'Dashboard', href: '/dashboard', permissions: [] },
       { label: 'Leads', href: '/leads', permissions: ['lead:read'] },
       { label: 'Pipeline', href: '/pipeline', permissions: ['lead:read'] },

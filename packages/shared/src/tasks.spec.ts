@@ -10,6 +10,7 @@ import {
   normaliseReminderOffsets,
   reminderInstants,
   taskBucket,
+  taskBucketWhere,
 } from './tasks.js';
 
 const KOLKATA = 'Asia/Kolkata';
@@ -169,5 +170,85 @@ describe('compareTasksForQueue', () => {
     const odd = { priority: 'whenever', dueAt: new Date('2026-03-10T09:00:00.000Z') };
     const normal = { priority: 'medium', dueAt: new Date('2026-03-10T10:00:00.000Z') };
     expect([odd, normal].sort(compareTasksForQueue)).toEqual([normal, odd]);
+  });
+});
+
+/**
+ * The two definitions of a bucket, held against each other.
+ *
+ * `taskBucket` answers "which section is this row in" and `taskBucketWhere` answers "which rows are
+ * in this section", and the counters on `/tasks` and `/my/today` are only believable while the two
+ * agree. So rather than testing the where-clause's shape — which would pass while meaning the
+ * wrong thing — this evaluates it against the same tasks `taskBucket` is asked about, and asserts
+ * that each row is selected by exactly the one bucket it reports.
+ */
+describe('taskBucketWhere, against taskBucket', () => {
+  const now = new Date('2026-03-10T09:00:00.000Z'); // 14:30 in Kolkata
+
+  /** Evaluates the subset of the where-shape these clauses actually use. */
+  function selects(
+    clause: Record<string, unknown>,
+    task: { status: string; dueAt: Date },
+  ): boolean {
+    const status = clause['status'] as { in?: string[] } | string | undefined;
+    if (typeof status === 'string' && task.status !== status) return false;
+    if (typeof status === 'object' && status?.in && !status.in.includes(task.status)) return false;
+
+    const dueAt = clause['dueAt'] as Record<string, Date> | undefined;
+    if (dueAt?.['lt'] && !(task.dueAt < dueAt['lt'])) return false;
+    if (dueAt?.['gt'] && !(task.dueAt > dueAt['gt'])) return false;
+    if (dueAt?.['gte'] && !(task.dueAt >= dueAt['gte'])) return false;
+    if (dueAt?.['lte'] && !(task.dueAt <= dueAt['lte'])) return false;
+
+    // `due_date` is the stored local day, as the midnight-UTC instant a `date` column holds.
+    const stored = new Date(`${dueParts(task.dueAt, KOLKATA).dueDate}T00:00:00.000Z`);
+    const dueDate = clause['dueDate'] as Date | Record<string, Date> | undefined;
+    if (dueDate instanceof Date && stored.getTime() !== dueDate.getTime()) return false;
+    if (dueDate && !(dueDate instanceof Date)) {
+      const bound = (dueDate as Record<string, Date>)['gt'];
+      if (bound && !(stored > bound)) return false;
+    }
+    return true;
+  }
+
+  const tasks = [
+    { what: 'two days late', status: 'pending', dueAt: new Date('2026-03-08T09:00:00.000Z') },
+    { what: 'a minute ago', status: 'in_progress', dueAt: new Date('2026-03-10T08:59:00.000Z') },
+    { what: 'in twenty minutes', status: 'pending', dueAt: new Date('2026-03-10T09:20:00.000Z') },
+    {
+      what: 'at the half-hour edge',
+      status: 'pending',
+      dueAt: new Date('2026-03-10T09:30:00.000Z'),
+    },
+    { what: 'later this evening', status: 'pending', dueAt: new Date('2026-03-10T15:00:00.000Z') },
+    { what: 'tomorrow morning', status: 'pending', dueAt: new Date('2026-03-11T04:30:00.000Z') },
+    { what: 'done last week', status: 'completed', dueAt: new Date('2026-03-03T09:00:00.000Z') },
+    { what: 'called off', status: 'cancelled', dueAt: new Date('2026-03-03T09:00:00.000Z') },
+  ] as const;
+
+  for (const task of tasks) {
+    it(`selects a task due ${task.what} in exactly the bucket it reports`, () => {
+      const reported = taskBucket(task, now, KOLKATA);
+      const selecting = TASK_BUCKETS.filter((bucket) =>
+        selects(taskBucketWhere(bucket, now, KOLKATA), task),
+      );
+      expect(selecting).toEqual([reported]);
+    });
+  }
+
+  it('selects everything when no bucket is asked for', () => {
+    expect(taskBucketWhere(undefined, now, KOLKATA)).toEqual({});
+  });
+
+  it('crosses midnight in the workspace’s zone, not in UTC', () => {
+    // 23:30 Kolkata on the 10th is 18:00 UTC on the 10th; 00:30 Kolkata on the 11th is 19:00 UTC
+    // on the *same* UTC day, and a bucket computed in UTC would call both "today".
+    const tonight = { status: 'pending', dueAt: new Date('2026-03-10T18:00:00.000Z') };
+    const afterMidnight = { status: 'pending', dueAt: new Date('2026-03-10T19:00:00.000Z') };
+    expect(taskBucket(tonight, now, KOLKATA)).toBe('due_today');
+    expect(taskBucket(afterMidnight, now, KOLKATA)).toBe('upcoming');
+    expect(selects(taskBucketWhere('due_today', now, KOLKATA), tonight)).toBe(true);
+    expect(selects(taskBucketWhere('due_today', now, KOLKATA), afterMidnight)).toBe(false);
+    expect(selects(taskBucketWhere('upcoming', now, KOLKATA), afterMidnight)).toBe(true);
   });
 });

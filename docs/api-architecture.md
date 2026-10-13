@@ -301,6 +301,36 @@ GET  /sla/board                              at-risk + breached (manager)  `sla:
 > each an aggregate over the whole filter. `answered_late` is separate from `breached` because a
 > clock somebody eventually got to is a different management problem from one still sitting there.
 
+> **Amendment, 2026-10-13 (implementation, Phase 3 step 3).** `GET /my/today` is built. `/my/leads`
+> and `/my/conversations` are not, and are not planned as separate endpoints: the first is
+> `GET /leads?assignedUserId=`, which already data-scopes, and the second arrives with the inbox.
+>
+> - **It takes no parameters.** Not `mine`, not `assignedUserId`, not `limit`. Today is not a
+>   question somebody asks — it is the answer, for the person holding the phone, and a screen whose
+>   contents depend on a query string is one two colleagues describe differently while helping each
+>   other over a call. It also leaves exactly one shape to measure, so the `p95 < 400 ms` exit
+>   criterion means something. A manager wanting somebody else's queue has `/tasks?assignedUserId=`
+>   and `/sla/board`.
+> - **One response, five sections, nine counts.** Each section is `{ count, items, truncated,
+available }`: `count` is an aggregate over the whole set, `items` is capped (twenty for the
+>   three queue sections, ten for the two lists under them), and `available` is `false` when the
+>   caller's role withholds the permission that section reads. `task:read` gates the route;
+>   `lead:read` and `sla:read` gate their sections and **degrade** rather than refuse, because a
+>   role with the follow-up queue and nothing else is a configuration the catalogue has always
+>   offered and must not make the landing page unreachable.
+> - **"Mine" includes whatever nobody has claimed.** A workspace with no assignment rule leaves
+>   captured leads unassigned, and a Today that is strictly "mine" shows those to nobody. The data
+>   scope narrows it: somebody scoped to their own rows cannot read an unclaimed row at all.
+> - **Nothing on it writes.** The screen's actions are `POST /tasks/{id}/complete` and
+>   `POST /tasks/{id}/reschedule`, which already carry the preconditions, the timeline entries and
+>   the effect on the lead's next action.
+>
+> `GET /leads` gained no new flag for "nobody has called them". The question is a **filter field**
+> instead — `firstContactedAt` joined the catalogue beside `lastContactedAt`, so
+> `firstContactedAt is_null` works in the filter DSL, in a saved view, and as the link out of
+> Today's capped section. A fourth two-way boolean beside `unassigned` and `noNextAction` would have
+> been a second way to ask one question.
+
 ### Pipeline & deals
 
 ```
