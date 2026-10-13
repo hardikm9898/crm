@@ -1330,6 +1330,85 @@ that control nothing); the release cron is the only deliverer, so a worker that 
 notifications indefinitely; and there is no digest or "mark everything from before X read" for
 somebody who comes back from a fortnight's leave to four hundred rows.
 
+### Step 5 — manager oversight, and a leaderboard that ranks nothing ✅ _(landed 2026-10-13)_
+
+Brief §4's "Which leads are being missed?" and `docs/frontend-architecture.md` §5.4's manager
+dashboard: "SLA board, overdue by executive, unassigned queue, no-next-action list, leaderboard,
+response times", with the rule the whole screen rests on — "every number has a drill-through to the
+filtered list behind it (a metric you cannot click is a dead end)".
+
+Everything it reads already existed. **The risk in this step was the word "leaderboard"**, and the
+decision is the step:
+
+**No rank, no score, no total column, and nothing that counts activity.** A single number hides
+which dimension somebody is behind on — "Priya: 63" says nothing a manager can act on, while
+"11 overdue, 2 never called, 92 % answered on time" is three different conversations and only one of
+them is a problem — and the moment a score exists it gets optimised. Every column is an **outcome**
+(answered on time, median reply, converted) or a **cost** (overdue, moved, never called, nothing
+planned). A leaderboard ranked by calls logged teaches everybody to log calls, and this product
+already writes every touch to the timeline automatically, so an activity count would have measured
+the diligence of somebody's data entry and called it performance. `reschedule_count` is there
+because `FR-TSK-5` asks for it, framed as one cost among others rather than as a headline.
+
+**A rate computed from nothing is `null`.** Somebody who answered no promises in the period is not
+at 0 % and not at 100 %; the screen shows "—". A hundred per cent is the more dangerous of the two,
+because it reads as excellent.
+
+**A median, not a mean** — one lead answered three days late drags a mean across a team of ten into
+uselessness. That is the module's one piece of raw SQL (`percentile_cont`, which Prisma has no
+aggregate for), with `organization_id` passed explicitly because raw SQL does not pass through the
+tenant-scoping extension.
+
+**One endpoint, scoped, not one per role.** `GET /oversight` read with `report:read` through
+`DataScopeService`: a branch manager sees their branch and the owner the workspace, from the same
+route. `docs/api-architecture.md` had sketched `GET /dashboard/{owner|manager|executive|…}`; a path
+named after a role is what rule 4 forbids. `report:read` was **already** in the catalogue and
+already granted to the manager, marketing-manager and auditor templates, so this is the first step
+in a while that needed no permission and no data migration — and no schema change either: the three
+tables are already indexed on `(organization_id, assigned_user_id, …)` by the steps that built them.
+
+**The people come from the member list, not from the work.** Somebody nobody has given anything to
+has no tasks, no leads and no clocks, and would be invisible on the one screen whose job is to
+notice that. For the same reason the **unassigned** backlog is a tile of its own: a lead with no
+owner is in nobody's row, which makes it the number a manager would otherwise never see.
+
+**Every number is a link, and the link is defined beside the number.** Each column in
+`lib/oversight.ts` carries its label, its hint, its kind and a function producing its destination, so
+a figure and the list behind it cannot drift; a spec asserts every column produces a link carrying
+that person's own id. The lead links are filter-DSL URLs, because `/leads` has no query-parameter
+filters at all — the trap `/today` paid for two steps ago. `/tasks` and `/sla` gained an
+`assignedUserId` parameter on the **web** side so "Priya: 7 overdue" has somewhere to land.
+
+**One real bug, found by measuring rather than by reading.** The headline median had no person
+filter while every count beside it was data-scoped, so a branch manager would have read their
+branch's counts next to the whole workspace's median — a number on a filtered screen that was not
+filtered, which is this codebase's recurring failure one layer at a time. Caught on the 100 k
+fixture by noticing the headline disagree with every row under it.
+
+Measured there too: **p95 = 110 ms** at thirty days and 111 ms at ninety (109 716 leads, 10 719
+follow-ups, 21 411 clocks), with fourteen grouped aggregates — one `groupBy` per question rather
+than one query per person, so the shape does not change when the team doubles — plus one percentile
+query per person who answered anything. The work fixture now also marks a fifth of its clocks
+**answered**, because a workspace where nothing was ever answered exercises neither the on-time rate
+nor the median, which are the two numbers on this screen that cost anything to compute.
+
+Decisions in [ADR-0026](./decisions/ADR-0026-oversight-has-no-single-score.md).
+
+**Verified.** 1 704 tests green (779 unit, 925 integration), 46 of them new: 16 e2e over HTTP
+(including a branch-scoped manager seeing one row where the owner sees three, a count of 25 that is
+not 20, and an on-time rate that is `null` rather than zero) and 15 in the web vocabulary spec
+(every column produces a link, no column named rank/score/total, and no lead link that uses a query
+parameter the screen ignores). Plus **30 browser checks** which drive the screen and then click the
+numbers: "2 overdue" lands on exactly those two follow-ups and nobody else's, "never called" on her
+one uncontacted lead, and the unassigned tile on the lead nobody owns.
+
+**Carried forward, named rather than assumed:** these cards read live aggregates and §5.4 says they
+will read rollups — that is Phase 10, and inventing the rollups now would mean two definitions of
+every number here; teams are not a dimension yet (rows are people, the scope narrows by branch);
+the table cannot answer "who is best", and will be asked to — the honest answer is that it shows the
+five things somebody could be best at; and the other two things the brief lists for this role are
+the pipeline board (built, at `/pipeline`) and conversation oversight (with the inbox).
+
 ---
 
 ## Phase 4 — Capture & developer platform
@@ -1528,39 +1607,38 @@ partially landed, with the specific gaps named.
 ## Immediate next step
 
 _This section names the next step only; what each landed step actually did is in the step entries
-above. Last reviewed 2026-10-13, after Phase 3 step 4._
+above. Last reviewed 2026-10-13, after Phase 3 step 5._
 
-**Phase 3, step 5 — manager oversight and the leaderboard.** The two reads Phase 3 still owes, and
-the first screens in the product written for somebody who manages rather than works a queue: who is
-behind, whose follow-ups keep moving, whose promises get answered, and the leaderboard the brief
-asks for. Both are reads over data that already exists — `tasks.reschedule_count`, the SLA clocks,
-`activities` — which is what makes them a step rather than a phase: the risk is not the query but
-the framing, because a leaderboard that ranks people by activity count teaches everybody to log
-activities.
+**Phase 3, step 6 — call logging and the click-to-call abstraction.** The first of the two channels
+Phase 3 still owes, and the one several landed steps are waiting on: `/today` hands a phone number
+to the device with `tel:`, which is useful and logs nothing, so "what happened on those forty calls"
+is still unanswerable. The step is a `calls` table (direction, outcome, duration, recording
+reference, the lead and the task it belongs to), a provider-agnostic click-to-call port with a
+manual-logging driver so the feature works before anybody buys a telephony plan, the timeline
+entries that make a call visible on the lead (rule 6), and `calls.*` notification types. It also
+closes the loop `FR-TSK-6` opened: completing a follow-up and logging the call that finished it are
+the same action from the person's point of view.
 
-After that, Phase 3 has two items left, both of which bring a **channel** with them and therefore
-unblock things named as carried-forward all over this phase: **call logging with the click-to-call
-abstraction** (which turns `/today`'s `tel:` hand-off into a logged call) and the **email sending
-adapter with bounce → suppression** (which is what `digest`, the `email` notification channel and
-the preferences screen's greyed-out half are waiting for).
+After that Phase 3 has one item left: the **email sending adapter with bounce → suppression**, which
+is what `digest`, the `email` notification channel and the preferences screen's greyed-out half are
+all waiting for.
 
-Three items are carried forward from step 4 and named rather than left unsaid: `digest` is not
-implemented and has no column, because a digest is an email feature; six of the thirteen notification
-types `FR-NOT-2` lists do not exist, because the modules behind them do not; and the release cron is
-the only deliverer of a held notification, so a worker that stays down holds them indefinitely —
-visible in the inbox's absence rather than as an error, and the same failure reminders and outgoing
-mail already have.
+Carried forward from step 5: the oversight cards read live aggregates where
+`docs/frontend-architecture.md` §5.4 says they will read rollups (Phase 10, ADR-0010); teams are not
+a dimension on that screen yet; and it deliberately cannot answer "who is best".
 
-From step 3: the **unread WhatsApp** section of the Today mock-up arrives with the Phase 5 inbox, as
-an addition to the same payload rather than a second request; `⌘K` and the keyboard paths of
-`docs/frontend-architecture.md` §4 are unbuilt; and the Today action queue is per-viewer browser
-storage, so a tap made on a phone that never regains signal is lost when the tab closes — a service
-worker would fix it and belongs with the PWA work. `next_response` SLA clocks and
-`sla_clocks.paused_ms` still wait for the Phase 5 inbox.
+From step 4: `digest` is not implemented and has no column; six of the thirteen notification types
+`FR-NOT-2` lists do not exist because the modules behind them do not; and the release cron is the
+only deliverer of a held notification, so a worker that stays down holds them indefinitely.
+
+From step 3: the **unread WhatsApp** section of the Today mock-up arrives with the Phase 5 inbox;
+`⌘K` and the keyboard paths of §4 are unbuilt; and the Today action queue is per-viewer browser
+storage, so a tap made on a phone that never regains signal is lost when the tab closes.
+`next_response` SLA clocks and `sla_clocks.paused_ms` still wait for the inbox.
 
 Two Phase 2 items are still open, both named in that phase's exit-criteria review: there is no
 settings screen for custom fields (they are created through the API or by a template), and the lead
-list itself has not been measured against a latency budget at 100 000 leads — the fixture now
-carries follow-ups and clocks as well (`packages/db/perf/work-100k.sql`), and `/my/today` has been
-measured on it, but the lead list, the board and the rendered pages have not; that belongs with the
-Phase 12 performance work, where the budget itself should be written down.
+list itself has not been measured against a latency budget at 100 000 leads — `/my/today` and
+`/oversight` have been measured on that fixture, but the lead list, the board and the rendered pages
+have not; that belongs with the Phase 12 performance work, where the budget itself should be written
+down.

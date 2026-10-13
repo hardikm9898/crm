@@ -25,3 +25,4 @@ export * from './tasks.js';
 export * from './business-hours.js';
 export * from './sla.js';
 export * from './notifications.js';
+export * from './oversight.js';

@@ -101,8 +101,8 @@ WHERE t.lead_id = l.id
 -- ── 3. A promise on every eighth lead, in every state ─────────────────────────
 INSERT INTO sla_clocks (
   id, organization_id, policy_id, subject_type, subject_id, lead_id, target,
-  assigned_user_id, started_at, due_at, warn_at, target_minutes, state, breached_at,
-  created_at, updated_at
+  assigned_user_id, started_at, due_at, warn_at, target_minutes, state, breached_at, satisfied_at,
+  satisfied_by, created_at, updated_at
 )
 SELECT
   (lpad(to_hex((extract(epoch from now())*1000)::bigint), 12, '0') || '7' ||
@@ -120,14 +120,16 @@ SELECT
   60,
   span.state::sla_clock_state,
   -- `sla_clocks_breached_has_timestamp` is a `CASE`, not a biconditional, and it is right: a clock
-  -- that says it was missed has to say when.
+  -- that says it was missed has to say when. The satisfied pair below is the same shape.
   CASE WHEN span.state = 'breached' THEN span.due ELSE NULL END,
+  span.answered,
+  CASE WHEN span.state = 'satisfied' THEN 'a call was logged' ELSE NULL END,
   now(),
   now()
 FROM leads l
 CROSS JOIN scratch s
 JOIN LATERAL (
-  SELECT (('x' || substr(md5(l.id::text || 'sla'), 1, 8))::bit(32)::int & 3) AS kind
+  SELECT (('x' || substr(md5(l.id::text || 'sla'), 1, 8))::bit(32)::int % 5) AS kind
 ) k ON true
 JOIN LATERAL (
   SELECT
@@ -139,6 +141,10 @@ JOIN LATERAL (
       WHEN 1 THEN now() - interval '70 minutes'
       -- Inside the warning window.
       WHEN 2 THEN now() - interval '55 minutes'
+      -- Answered. A fifth state, because a workspace where nothing was ever answered exercises
+      -- neither the on-time rate nor the median response time — the two numbers on the oversight
+      -- screen that cost anything to compute.
+      WHEN 3 THEN now() - ((1 + (('x' || substr(md5(l.id::text || 'ans'), 1, 8))::bit(32)::int % 20)) || ' days')::interval
       -- Comfortable.
       ELSE now() - interval '5 minutes'
     END AS started,
@@ -146,9 +152,19 @@ JOIN LATERAL (
       WHEN 0 THEN now() - interval '3 hours'
       WHEN 1 THEN now() - interval '10 minutes'
       WHEN 2 THEN now() + interval '5 minutes'
+      WHEN 3 THEN now() - ((1 + (('x' || substr(md5(l.id::text || 'ans'), 1, 8))::bit(32)::int % 20)) || ' days')::interval + interval '60 minutes'
       ELSE now() + interval '55 minutes'
     END AS due,
-    CASE k.kind WHEN 0 THEN 'breached' ELSE 'running' END AS state
+    CASE k.kind WHEN 0 THEN 'breached' WHEN 3 THEN 'satisfied' ELSE 'running' END AS state,
+    -- Answered somewhere between four minutes and two hours after the promise started, so the
+    -- median is a real percentile over a spread rather than one repeated number, and a fifth of
+    -- them are late.
+    CASE k.kind
+      WHEN 3 THEN now()
+        - ((1 + (('x' || substr(md5(l.id::text || 'ans'), 1, 8))::bit(32)::int % 20)) || ' days')::interval
+        + ((4 + (('x' || substr(md5(l.id::text || 'spd'), 1, 8))::bit(32)::int % 116)) || ' minutes')::interval
+      ELSE NULL
+    END AS answered
 ) span ON true
 WHERE l.organization_id = s.organization_id
   AND l.full_name LIKE 'Perf Lead %'

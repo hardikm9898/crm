@@ -426,6 +426,24 @@ prisma migrate deploy` after generating a migration.
   the symptom was a row count three times what the script's own closing `SELECT` said it should be.
   `\set ON_ERROR_STOP on` stops the _script_, not the work it already did. Wrap a load script in
   `BEGIN; … COMMIT;` and guard its inserts with `NOT EXISTS` so a second run is a no-op.
+- **A figure on a filtered screen that is not itself filtered is the recurring bug in this
+  codebase.** `/oversight`'s headline median response time was raw SQL scoped only by
+  `organization_id`, while every count beside it went through `DataScopeService` — so a branch
+  manager would have read their branch's counts next to the whole workspace's median. The same
+  shape as a board totalling its page, one layer down, and found the same way: by measuring on the
+  100 k fixture and noticing the headline disagree with every row under it. Raw SQL does not pass
+  through the tenant-scoping extension **or** the data scope; both have to be written out by hand.
+- **A fixture with no _answered_ work exercises none of the arithmetic.** `work-100k.sql` created
+  breached, at-risk and comfortable SLA clocks and nothing satisfied, so `/oversight`'s on-time rate
+  and median — the only two numbers on that screen that cost anything — measured an empty set and
+  came back `null` at a confident 118 ms. A fifth state was added. A performance fixture has to
+  contain the rows the expensive query reads, not just the rows the cheap ones do.
+- **A screen's figures and the links behind them belong in one definition.** "Every number has a
+  drill-through to the filtered list behind it; a metric you cannot click is a dead end"
+  (`frontend-architecture.md` §5.4), and a number rendered in one file with its destination written
+  in another is a link that eventually shows a different count from the one that was clicked. The
+  oversight columns carry label, hint, kind and an `href(person)` together, and a spec asserts every
+  column produces one carrying that person's own id.
 - **A column a feature reads has to be read by _one_ thing.** `notification_preferences` carried
   `quiet_hours` on a per-type row — one copy of the person's quiet hours per notification type,
   which is one copy per type that can disagree with the others. Quiet hours are a property of the

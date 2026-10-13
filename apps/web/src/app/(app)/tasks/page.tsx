@@ -52,19 +52,31 @@ export default async function TasksPage({
   // form once a subject is named — which is what the link from a lead does.
   const forLeadId = typeof params['leadId'] === 'string' ? params['leadId'] : undefined;
   const everyone = params['everyone'] === 'true';
+  // One person's queue. Where the oversight screen's "Priya: 7 overdue" lands, because a number a
+  // manager cannot click through to the rows behind it is a dead end.
+  const assignedUserId =
+    typeof params['assignedUserId'] === 'string' ? params['assignedUserId'] : undefined;
   const token = await readAccessToken();
 
   const query = new URLSearchParams({ limit: '50', direction: 'asc' });
   if (bucket && isQueueBucket(bucket)) query.set('bucket', bucket);
   else query.set('open', 'true');
-  if (!everyone) query.set('mine', 'true');
+  if (assignedUserId) query.set('assignedUserId', assignedUserId);
+  else if (!everyone) query.set('mine', 'true');
 
   let page: Awaited<ReturnType<typeof loadTasks>>;
   let counts: Awaited<ReturnType<typeof loadTaskCounts>>;
   try {
     [page, counts] = await Promise.all([
       loadTasks(`?${query.toString()}`, token),
-      loadTaskCounts(token, everyone ? '?mine=false' : '?mine=true'),
+      loadTaskCounts(
+        token,
+        assignedUserId
+          ? `?assignedUserId=${assignedUserId}`
+          : everyone
+            ? '?mine=false'
+            : '?mine=true',
+      ),
     ]);
   } catch (error) {
     return (

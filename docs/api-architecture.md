@@ -647,6 +647,34 @@ POST /ai/{summarize-lead|summarize-conversation|suggest-reply|next-best-action} 
 > per-minute `notifications.release` sweep — see
 > [ADR-0025](./decisions/ADR-0025-quiet-hours-hold-a-notification-and-the-release-re-checks-it.md).
 
+> **Amendment, 2026-10-13 (implementation, Phase 3 step 5).** The manager's dashboard is built as
+> **`GET /oversight`**, not as `GET /dashboard/manager`. A path named after a role is what rule 4
+> forbids — roles are rows a tenant edits — and the breadth of the answer is already a predicate
+> `DataScopeService` owns: `report:read` at branch scope answers for a branch and at organization
+> scope for the workspace, from the same route. The arrangement `/sla/board` settled in step 2.
+>
+> `GET /dashboard/{owner|executive|marketing|whatsapp}` remain unbuilt. `/today` is the executive's
+> and arrived in step 3; the marketing and WhatsApp ones arrive with their modules. The owner's is
+> the same question as the manager's with a wider scope, which this route already answers.
+>
+> - **`?days=` takes 7, 30 or 90 and nothing else.** A period _is_ a question a manager asks, unlike
+>   anything on `/my/today` — but every figure is a live aggregate, and an arbitrary range is how
+>   somebody asks for two years of aggregation by accident. Free ranges arrive with the rollups.
+> - **One response**: the backlog nobody owns, the promises over the period, and a row per person in
+>   scope. The people come from the **member list**, so somebody who has been given nothing is a row
+>   of zeroes rather than an absence.
+> - **A rate computed from nothing is `null`**, not 0 and not 100 — the screen shows "—". And the
+>   response-time figure is a **median** (`percentile_cont`, the one piece of raw SQL in the module),
+>   because one answer three days late drags a mean across a team into uselessness.
+> - **`report:read` was already in the catalogue and already granted** to the manager,
+>   marketing-manager and auditor templates, so this route needed no permission and no data
+>   migration — worth saying, because every previous step that added one needed both.
+>
+> `GET /tasks` and `GET /sla/board` already took `assignedUserId`; the **web** pages for both now
+> read it too, because every number on the oversight screen has to click through to the rows behind
+> it. Decisions in
+> [ADR-0026](./decisions/ADR-0026-oversight-has-no-single-score.md).
+
 ### Platform admin (`/api/admin/v1`)
 
 ```

@@ -41,6 +41,8 @@ export const NAV_SECTIONS: readonly NavSection[] = [
       { label: 'Payments', href: '/payments', permissions: ['payment:read'] },
       { label: 'Follow-ups', href: '/tasks', permissions: ['task:read'] },
       { label: 'Response times', href: '/sla', permissions: ['sla:read'] },
+      // The manager's screen. `report:read` is the honest gate: it is about other people's work.
+      { label: 'Oversight', href: '/oversight', permissions: ['report:read'] },
       { label: 'Inbox', href: '/inbox', permissions: ['conversation:read'], phase: 5 },
     ],
   },

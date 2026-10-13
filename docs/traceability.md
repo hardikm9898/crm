@@ -45,6 +45,7 @@ place to check "where is this specified?". `PRD` = `product-requirements.md`.
 | 36      | Mobile responsiveness                   | `NFR-UX-1`                              | `frontend-architecture.md` §1, §5.1                                                        |
 | 37      | Business dashboards                     | `FR-SA-2`, `FR-MKT-3`                   | `frontend-architecture.md` §5.4                                                            |
 | 38      | Sales executive dashboard               | `FR-TSK-7`                              | `frontend-architecture.md` §5.1; ADR-0024; `apps/api/src/modules/today/README.md`          |
+| 38a     | Manager oversight and leaderboard       | brief §4, `FR-TSK-5/8`                  | ADR-0026; `apps/api/src/modules/oversight/README.md`; `frontend-architecture.md` §5.4      |
 | 39      | Global search                           | `FR-VIEW-1`                             | `database-design.md` §15; ADR-0007                                                         |
 | 40      | Filters & saved views                   | `FR-VIEW-2/3`                           | `api-architecture.md` §4; `database-design.md` §6.2                                        |
 | 41      | Import / export                         | `FR-IO-1..3`                            | `database-design.md` §13; roadmap Phase 2                                                  |

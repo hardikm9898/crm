@@ -37,11 +37,18 @@ export default async function SlaPage({
 }) {
   const params = await searchParams;
   const mine = params['mine'] === 'true';
+  // One person's promises. The link the oversight screen's per-person numbers point at — a figure
+  // on a manager's dashboard that cannot be clicked through to the rows behind it is a dead end.
+  const assignedUserId =
+    typeof params['assignedUserId'] === 'string' ? params['assignedUserId'] : undefined;
   const token = await readAccessToken();
 
   let board: Awaited<ReturnType<typeof loadSlaBoard>>;
   try {
-    board = await loadSlaBoard(token, mine ? '?mine=true' : '');
+    const query = new URLSearchParams();
+    if (mine) query.set('mine', 'true');
+    if (assignedUserId) query.set('assignedUserId', assignedUserId);
+    board = await loadSlaBoard(token, query.toString() ? `?${query.toString()}` : '');
   } catch (error) {
     return (
       <>

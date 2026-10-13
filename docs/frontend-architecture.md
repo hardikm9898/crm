@@ -284,6 +284,34 @@ first-response time, unread, resolved, template performance. All cards read roll
 cached; every number has a drill-through to the filtered list behind it (a metric you cannot click
 is a dead end).
 
+> **Amendment, 2026-10-13 (implementation, Phase 3 step 5).** The manager's half is built, as
+> **`/oversight`** — one screen, `report:read`, narrowed by the reader's own scope.
+>
+> - **"Leaderboard" is a table with no rank, no score and no total**, and nothing on it counts
+>   activity. A single number hides which dimension somebody is behind on and gets optimised the
+>   moment it exists; an activity count would measure data-entry diligence and call it performance.
+>   Every column is an outcome (answered on time, median reply, converted) or a cost (overdue,
+>   moved, never called, nothing planned), and the screen says so where a reader would look for the
+>   ranking. See
+>   [ADR-0026](./decisions/ADR-0026-oversight-has-no-single-score.md).
+> - **Every number is a link, and the link is defined beside the number.** `lib/oversight.ts` holds
+>   each column's label, hint, kind and a function producing its destination; a spec asserts every
+>   column produces one carrying that person's own id. The lead links are filter-DSL URLs, because
+>   `/leads` has no query-parameter filters — a `?uncontacted=true` link renders the _unfiltered_
+>   list, which is worse than no link, and `/today` paid for that once.
+> - **"—", not 0 % and not 100 %**, for somebody who has answered nothing yet. A cost above zero is
+>   the only thing on the table that is coloured, so the eye lands on the two numbers that need a
+>   conversation rather than the forty that do not.
+> - **The unassigned backlog is a tile of its own**, above the table: a lead with no owner is in
+>   nobody's row, which makes it the number a manager would otherwise never see.
+> - **The table scrolls sideways on a phone** rather than reflowing. These columns only mean
+>   anything next to each other, and a stack of ten labelled numbers per person is not a table.
+>
+> `/dashboard` is still the Phase-1 screen it was: it has never pretended to have data it does not
+> have, and the owner's funnel and revenue cards arrive with the rollups. The cards here read live
+> aggregates for now, which §5.4 above says will become rollup reads — stated rather than quietly
+> deviated from, because inventing the rollups now would mean two definitions of every number.
+
 ### 5.5 Settings & automation
 
 Settings is a two-level nav with search, each page a small focused form with inline help and a
