@@ -1232,6 +1232,104 @@ storage, so a tap made on a phone that never regains signal is lost when the tab
 worker would fix it and belongs with the PWA, not with this screen); and neither sweep is
 quiet-hours aware, which still waits on `notification_preferences`.
 
+### Step 4 — the notification centre, and quiet hours ✅ _(landed 2026-10-13)_
+
+`FR-NOT-1..3`, and the item the last two steps both carried forward. `notification_preferences` has
+existed since the very first migration, with `channels` and `quiet_hours` columns, and **nothing
+has ever read it**: every notification this product sends went out whatever the hour and whatever
+the person had asked for.
+
+**The gate is one method, not five.** Five producers write notifications and every one of them
+calls `NotificationsService.create`, so that is where preferences and quiet hours are enforced. It
+has three answers: write and deliver, write and **hold**, or do not write at all. A type somebody
+switched off leaves **no row** — a notification nobody will ever see is not a record worth keeping,
+and leaving one would make the unread badge and the inbox disagree about what "off" means. The
+sixth producer somebody adds next month gets all of this without knowing it exists.
+
+**Quiet hours moved off the per-type row.** `docs/database-design.md` §13 put `quiet_hours` and
+`digest` on `notification_preferences`, whose key is `(organization_id, user_id, type)` — one copy
+of the person's quiet hours per notification type, and copies can disagree. The two facts are now
+split by their real cardinality: `notification_settings` is one row per person per workspace (the
+window, and the zone to read it in), and `notification_preferences` keeps what is genuinely
+per-type. Per **workspace** on purpose: somebody consulting for two businesses in different
+timezones has two sets of working hours and two sets of quiet ones.
+
+**The release is the hard half, and it is the half that makes this worth having.** Holding a
+notification is arithmetic; the question holding one creates is what to do at 07:00 with a warning
+written at 21:40 about a follow-up somebody finished at 08:15. Delivering it is worse than never
+holding it — it reads as the product being a day behind. So every held notification is re-checked
+against its subject at the moment it is released, by the kind of check its type declares:
+
+- `task_still_open` — a reminder or an overdue notice is dropped if the follow-up is finished,
+  cancelled or gone;
+- `clock_still_running` — a near-breach warning is dropped if the promise has since been answered;
+- `never` — delivered as written. **The breach notice is `never`**, because a missed promise is a
+  fact about the past and the morning after is exactly when somebody should hear about it.
+
+A type with no registry entry is never stale either: a producer added without one should deliver and
+be noticed, not disappear. A dropped notification is marked `superseded_at` rather than deleted, so
+"was I ever told?" has an answer — "no, it was held until 07:00, and by then you had already done
+it".
+
+**Both DST nights are tested.** `quietHoursHold` returns the end of the window **in the person's own
+zone**, not `now + n hours`: adding a duration delivers at 06:00 on the spring-forward morning and
+08:00 on the autumn one, and the second is an hour late on the day somebody has an extra hour to
+read it. The same storage decision the working-hours calendar made, and the second consumer of it —
+`nextDateKey` moved into `time.ts` so the two walk local days through one definition.
+
+**Visibility is the sweep's write, not the passage of time**, and the cost is named rather than
+hidden: with no worker running, held notifications are not released. That is the failure the product
+already has for reminders, overdue sweeps and outgoing mail, and it is why the release cron runs
+every minute. Showing a row the moment its instant passed would make it visible before anything had
+checked whether it still mattered.
+
+**Only `in_app` is offered**, and the screen says why. The email adapter and the WhatsApp sender are
+later steps; a tick box for a channel that silently drops every message is worse than one that says
+the channel is not here yet, because somebody would turn the in-app notification off in favour of
+an email that never arrives. `digest` is **not** implemented and no column was added for it: a
+digest is an email feature, and a daily summary of an inbox somebody is already looking at is not
+one.
+
+**The screen.** `/notifications` is now the centre: the inbox, the quiet-hours form, then a switch
+per type under "Your work", "Leads" and "The workspace". One form per switch rather than seven
+checkboxes and a Save button — a screen where somebody flips a switch, walks away and is woken at
+midnight by the one they thought they had turned off is worse than one that costs a tap per change.
+Each row prints its state as text beside its button, because a settings row whose value lives only
+inside a control is one nothing can read back. A held notification says so in the list, or a 21:40
+timestamp read at nine in the morning looks like the product being a night behind. `trial.expired`
+shows as "Always on" with the reason: it is the one notice `FR-NOT-3` exempts, and somebody who had
+switched it off would experience an expired trial as the product breaking with the only message
+that explains it suppressed by their own setting.
+
+Decisions in
+[ADR-0025](./decisions/ADR-0025-quiet-hours-hold-a-notification-and-the-release-re-checks-it.md).
+
+**Two things the tooling caught, rather than a human:**
+
+- Prisma generated **fifteen** spurious statements above the first real one — two three-column
+  composite FKs and thirteen GIN, trigram and partial indexes. All fifteen were deleted by hand;
+  `schema-objects.int-spec.ts` is what makes that safe to get wrong once.
+- The **generated route-authorization suite** failed on `PATCH /notifications/preferences` the
+  moment it existed, because it is a write that declares no permission. That is exactly its job: the
+  reviewed set of self-scoped writes must never grow silently, and quiet hours belong in it — a
+  person whose employer can stop them silencing midnight notifications has no setting at all.
+
+**Verified.** 1 673 tests green (764 unit, 909 integration), of which 70 are new: 24 for the quiet-
+hours arithmetic and the type registry in `@leados/shared` (both DST nights, a midnight-crossing
+window from both halves, and a `parseMinuteOfDay` that refuses what `Number()` accepts), 24 e2e over
+HTTP, 11 in the web vocabulary spec, and 11 in the tenant-isolation and schema-object suites. Plus
+**33 browser checks** which drive the screen and then the whole loop through the **real per-minute
+crons**: `task.reminder-dispatch` writes the notification, the gate holds it, and
+`notifications.release` delivers one and drops the other. Nothing in that section calls a service
+method.
+
+**Carried forward, named rather than assumed:** `digest` and the email and WhatsApp channels arrive
+with the email adapter and the WhatsApp sender; six of the thirteen types `FR-NOT-2` lists do not
+exist yet, because the modules behind them do not (listing them would give the screen six switches
+that control nothing); the release cron is the only deliverer, so a worker that is down holds
+notifications indefinitely; and there is no digest or "mark everything from before X read" for
+somebody who comes back from a fortnight's leave to four hundred rows.
+
 ---
 
 ## Phase 4 — Capture & developer platform
@@ -1430,30 +1528,35 @@ partially landed, with the specific gaps named.
 ## Immediate next step
 
 _This section names the next step only; what each landed step actually did is in the step entries
-above. Last reviewed 2026-10-13, after Phase 3 step 3._
+above. Last reviewed 2026-10-13, after Phase 3 step 4._
 
-**Phase 3, step 4 — the notification centre, and quiet hours.** `notification_preferences` exists
-and is read for nothing: every notification this product sends — a reminder, an overdue sweep, an
-SLA escalation — goes out whatever the hour and whatever the person asked for. That is the item
-carried forward from both of the last two steps, and it is the one the rest of Phase 3 keeps
-tripping over: the reminder dispatcher and the SLA sweep both need to ask "is this a moment I may
-tell somebody", and neither can until the preference rows carry quiet hours and a channel choice.
-The screen is `/notifications`, which exists as a list and needs its preferences half; the harder
-part is the **deferral**, because a notification held until 09:00 must not arrive as a surprise
-about something that has since been dealt with.
+**Phase 3, step 5 — manager oversight and the leaderboard.** The two reads Phase 3 still owes, and
+the first screens in the product written for somebody who manages rather than works a queue: who is
+behind, whose follow-ups keep moving, whose promises get answered, and the leaderboard the brief
+asks for. Both are reads over data that already exists — `tasks.reschedule_count`, the SLA clocks,
+`activities` — which is what makes them a step rather than a phase: the risk is not the query but
+the framing, because a leaderboard that ranks people by activity count teaches everybody to log
+activities.
 
-After that, Phase 3 has left: manager oversight views and the leaderboard (both reads over data
-that already exists), call logging with the click-to-call abstraction — which is what turns
-`/today`'s `tel:` hand-off into a logged call — and the email sending adapter with
-bounce → suppression.
+After that, Phase 3 has two items left, both of which bring a **channel** with them and therefore
+unblock things named as carried-forward all over this phase: **call logging with the click-to-call
+abstraction** (which turns `/today`'s `tel:` hand-off into a logged call) and the **email sending
+adapter with bounce → suppression** (which is what `digest`, the `email` notification channel and
+the preferences screen's greyed-out half are waiting for).
 
-Three items are carried forward from step 3 and named rather than left unsaid: the **unread
-WhatsApp** section of the Today mock-up arrives with the Phase 5 inbox, as an addition to the same
-payload rather than a second request; `⌘K` and the keyboard paths of
+Three items are carried forward from step 4 and named rather than left unsaid: `digest` is not
+implemented and has no column, because a digest is an email feature; six of the thirteen notification
+types `FR-NOT-2` lists do not exist, because the modules behind them do not; and the release cron is
+the only deliverer of a held notification, so a worker that stays down holds them indefinitely —
+visible in the inbox's absence rather than as an error, and the same failure reminders and outgoing
+mail already have.
+
+From step 3: the **unread WhatsApp** section of the Today mock-up arrives with the Phase 5 inbox, as
+an addition to the same payload rather than a second request; `⌘K` and the keyboard paths of
 `docs/frontend-architecture.md` §4 are unbuilt; and the Today action queue is per-viewer browser
 storage, so a tap made on a phone that never regains signal is lost when the tab closes — a service
-worker would fix it and belongs with the PWA work, not with that screen. `next_response` SLA clocks
-and `sla_clocks.paused_ms` still wait for the inbox.
+worker would fix it and belongs with the PWA work. `next_response` SLA clocks and
+`sla_clocks.paused_ms` still wait for the Phase 5 inbox.
 
 Two Phase 2 items are still open, both named in that phase's exit-criteria review: there is no
 settings screen for custom fields (they are created through the API or by a template), and the lead

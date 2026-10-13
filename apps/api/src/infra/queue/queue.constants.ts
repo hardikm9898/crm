@@ -45,6 +45,12 @@ export const JOBS = {
   NOTIFY_TASK_OVERDUE: 'notify.task-overdue',
   NOTIFY_SLA_ESCALATION: 'notify.sla-escalation',
 
+  /**
+   * Releases the notifications quiet hours held, re-checking each against its subject first
+   * (`FR-NOT-3`). On `maintenance` because it is a platform-wide sweep, like the SLA one.
+   */
+  NOTIFICATION_RELEASE: 'notifications.release',
+
   SESSION_PRUNE: 'maintenance.session-prune',
   INVITATION_EXPIRE: 'maintenance.invitation-expire',
   TRIAL_CHECK: 'maintenance.trial-check',

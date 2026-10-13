@@ -912,6 +912,48 @@ affected day, not by mutating counters).
 | `retention_policies`                      | org, `entity_type`, `retain_days`, `action (purge                                                                                                                                   | anonymize)`, `is_active`, `last_run_at?`     |
 | `ai_requests` / `ai_outputs` / `ai_usage` | org, feature, `entity`, `prompt_hash`, model, `tokens_in/out`, `cost_minor`, latency, `output JSONB`, `accepted_by_user_id?`, `edited BOOL` (`FR-AI-4`)                             |
 
+> **Amendment, 2026-10-13 (implementation, Phase 3 step 4 — the notification centre).** The row
+> above puts `quiet_hours` and `digest` on `notification_preferences`, whose key is
+> `(organization_id, user_id, type)`. That is **one copy of the person's quiet hours per
+> notification type**, and copies can disagree with each other. The two facts are now split by
+> their real cardinality:
+>
+> | Table                      | Cardinality                 | Holds                                                   |
+> | -------------------------- | --------------------------- | ------------------------------------------------------- |
+> | `notification_settings`    | one row per person per org  | `quiet_start_minute`, `quiet_end_minute`, `time_zone?`  |
+> | `notification_preferences` | one row per type, as before | `channels JSONB` — which channels that type goes out on |
+>
+> Per **workspace**, not per person globally: somebody consulting for two businesses in different
+> timezones has two sets of working hours and two sets of quiet ones. Through `Membership`, so
+> "settings for somebody in another tenant" is unrepresentable, and `ON DELETE CASCADE` so a person
+> removed from a workspace leaves no row behind for a future member with the same user id.
+>
+> Quiet hours are stored as **wall-clock minutes on a local day**, like the working-hours calendar
+> and for the same reason: "21:30 to 07:00" has to survive a clock change, and an instant does not.
+>
+> `notifications` gained **`deferred_until`** (the instant the quiet window closes — the row exists
+> and is not in the inbox until then) and **`superseded_at`** (set when a held notification turned
+> out to be about something already dealt with; kept rather than deleted, so "was I ever told?" has
+> an answer). Both the list and the unread _count_ filter on the pair, because a badge that counts
+> rows the list hides is how a screen stops being believed.
+>
+> `digest` is **not** implemented and no column was added for it: a digest is an email feature, and
+> a daily summary of an inbox somebody is already looking at is not one. It arrives with the email
+> adapter.
+>
+> Hand-written objects: `notification_settings_quiet_minutes_range`,
+> `notification_settings_quiet_hours_pair` (both ends or neither — half a window would force the
+> reader to invent the other end), `notification_settings_quiet_hours_distinct` (equal ends are
+> ambiguous: "never quiet" or "always quiet"?), the composite FK
+> `notification_settings_membership_same_org_fk`, and the partial index
+> `notifications_awaiting_release`, which is deliberately **not** prefixed by `organization_id`
+> because the release sweep runs platform-wide — the same shape as `sla_clocks_awaiting_breach`.
+>
+> The range checks are written as `IS NULL OR (…)` rather than `BETWEEN`: a CHECK that evaluates to
+> NULL is _satisfied_, and null is legal here, so the shape has to say so out loud rather than rely
+> on it. Decisions in
+> [ADR-0025](./decisions/ADR-0025-quiet-hours-hold-a-notification-and-the-release-re-checks-it.md).
+
 `import_jobs`, `import_rows`, `export_jobs` and `documents` are defined in
 [§6.8](#68-files-imports-and-exports). A DSR export (`dsr_requests.result_document_id`) will be a
 `documents` row like any other, which is the reason that table is not private to the import module.

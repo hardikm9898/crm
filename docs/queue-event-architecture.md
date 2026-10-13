@@ -184,6 +184,7 @@ can retune cadence.
 | ------------------ | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | every minute       | `task.reminder-dispatch`                                              | Due reminders → notifications                                                                                                             |
 | every minute       | `wf.reconcile-waiting`                                                | Resume workflow runs whose `resume_at` passed (safety net for lost delayed jobs)                                                          |
+| every minute       | `notifications.release`                                               | Deliver the notifications quiet hours held, dropping the ones now out of date (`FR-NOT-3`). Built                                         |
 | every 5 min        | `sla.sweep`                                                           | At-risk → warn, breached → escalate (`FR-TSK-8`). Built; breaches handled before warnings in a tick                                       |
 | every 5 min        | `rollup.*-daily` (today's partial)                                    | Near-real-time dashboards                                                                                                                 |
 | every 10 min       | `integration.health-check`                                            | Per-connection probes → `integration_health_checks`                                                                                       |
@@ -238,6 +239,30 @@ All schedules are working-hours/timezone aware where they touch humans — a fol
 > (`notify.task-overdue` → the assignee and whoever holds `task:manage_others`). `task.created`,
 > `task.completed`, `task.rescheduled` and `task.cancelled` are recorded and listed with no
 > subscribers, so a typo in an event name shows up as "unsubscribed" rather than as silence.
+
+> **Amendment, 2026-10-13 (implementation, Phase 3 step 4).** `notifications.release` is built, on
+> `maintenance` with the other platform-wide sweeps, **every minute**.
+>
+> Every minute rather than every five, for the same reason as the reminder dispatcher: a quiet
+> window that closes at 07:00 should deliver at 07:00, not "some time in the first five minutes of
+> your morning". It is an indexed read of nothing on almost every tick
+> (`notifications_awaiting_release`).
+>
+> It does two jobs, and the second is the one worth the sweep existing: it **re-checks each held
+> notification against its subject** before delivering it, so a warning written at 21:40 about a
+> follow-up finished at 08:15 is dropped rather than delivered. What counts as stale is declared per
+> type in `NOTIFICATION_TYPES`; a type with no entry is never stale, because a producer added
+> without one should deliver and be noticed rather than disappear.
+>
+> **Visibility is this sweep's write, not the passage of time.** The inbox filters
+> `deferred_until IS NULL`, so with no worker running, held notifications are not released — the
+> same failure this product already has for reminders, overdue sweeps and outgoing mail, and the
+> reason the sweep is per-minute. Showing a row the moment its instant passed would make it visible
+> before anything had checked whether it still mattered.
+>
+> Holding is not a job: it is decided inside `NotificationsService.create`, which every producer
+> already goes through
+> ([ADR-0025](./decisions/ADR-0025-quiet-hours-hold-a-notification-and-the-release-re-checks-it.md)).
 
 ---
 

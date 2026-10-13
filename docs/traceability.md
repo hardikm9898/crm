@@ -41,7 +41,7 @@ place to check "where is this specified?". `PRD` = `product-requirements.md`.
 | 32      | Super Admin dashboard                   | `FR-SA-2`                               | `api-architecture.md` §5 (admin); `database-design.md` §10 (`daily_platform_metrics`)      |
 | 33      | Super Admin automation/alerts           | `FR-SA-5`                               | `queue-event-architecture.md` §5/§6; `deployment-architecture.md` §7                       |
 | 34      | Audit log                               | `FR-AUD-1/2`                            | `security.md` §10; `database-design.md` §4, §16.8                                          |
-| 35      | Notification center                     | `FR-NOT-1..3`                           | `database-design.md` §13; `queue-event-architecture.md` §3                                 |
+| 35      | Notification center                     | `FR-NOT-1..3`                           | `database-design.md` §13; ADR-0025; `apps/api/src/modules/notifications/README.md`         |
 | 36      | Mobile responsiveness                   | `NFR-UX-1`                              | `frontend-architecture.md` §1, §5.1                                                        |
 | 37      | Business dashboards                     | `FR-SA-2`, `FR-MKT-3`                   | `frontend-architecture.md` §5.4                                                            |
 | 38      | Sales executive dashboard               | `FR-TSK-7`                              | `frontend-architecture.md` §5.1; ADR-0024; `apps/api/src/modules/today/README.md`          |

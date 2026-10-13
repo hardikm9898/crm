@@ -616,6 +616,37 @@ GET/POST /privacy/{consents|suppressions|dsr-requests|retention-policies}
 POST /ai/{summarize-lead|summarize-conversation|suggest-reply|next-best-action}   (optional layer)
 ```
 
+> **Amendment, 2026-10-13 (implementation, Phase 3 step 4).** The notification preference routes are
+> built, at `/notifications/preferences` rather than `/notification-preferences`: they are the
+> settings behind the inbox and belong beside it, and a second top-level noun for the same subject
+> is a second place to look.
+>
+> - **`GET /notifications/preferences`** returns the person's quiet window, the zone it is read in
+>   (and the workspace's, so a screen can say which it is falling back to), the channels that can
+>   actually be delivered today, and every notification type the product sends — each with its
+>   label, its sentence, whether it can be switched off, and both the stored and the effective
+>   channel list. `channels: null` means "never touched", which is how the screen can say "default"
+>   rather than inventing a state.
+> - **`PATCH`, not `PUT`.** An absent key means "unchanged", `quietHours: null` clears the window.
+>   A whole-screen `PUT` would let a tab open on the quiet-hours half overwrite a type somebody
+>   switched off on their phone five minutes earlier.
+> - **Neither route takes a permission**, and both are scoped to the caller. There is deliberately
+>   no route by which a manager reads or writes somebody else's: a preference somebody else can
+>   change is not a preference. The generated route-authorization suite lists the `PATCH` among its
+>   reviewed self-scoped writes — which is how it caught the route on the commit that added it.
+> - **Refusals are sentences.** A window whose ends are equal ("never quiet" or "always quiet"?), a
+>   time that is not one (`9:00`, `24:00`, `21:60`), a zone the runtime does not know, a type the
+>   product does not send, a channel nothing can deliver on, and switching off a notice `FR-NOT-3`
+>   exempts — each is refused with the reason, not with a constraint name.
+>
+> Only `in_app` is deliverable. `digest` is **not** implemented: a digest is an email feature, and a
+> daily summary of an inbox somebody is already looking at is not one.
+>
+> There is no endpoint that holds or releases a notification. Holding is decided inside
+> `NotificationsService.create`, which every producer already goes through, and releasing is the
+> per-minute `notifications.release` sweep — see
+> [ADR-0025](./decisions/ADR-0025-quiet-hours-hold-a-notification-and-the-release-re-checks-it.md).
+
 ### Platform admin (`/api/admin/v1`)
 
 ```

@@ -403,17 +403,44 @@ a plan that is contradicted by the code is worse than no plan.
 ### 10.2 Routes that exist
 
 ```
-/                          resolves by session → /dashboard or /login
+/                          resolves by session → /today, /dashboard or /login
 /login                     sign-in (two-factor completion not built — the form says so)
 /accept-invitation         the page invitation emails link to
 (app)/dashboard            what exists in phase 1, honestly — no invented charts
-(app)/notifications        the caller's own inbox
+(app)/notifications        the caller's own inbox, and the settings behind it
 (app)/settings             organization profile, plan, ingestion key, onboarding wizard
 (app)/settings/members     people, seat usage, invite, revoke, role and status changes
 (app)/settings/roles       roles and a read-only permission × role matrix with scopes
 (app)/settings/security    own sessions, end one or all, account security summary
 api/session/*              sign-in, sign-out, org switch, invitation accept (cookie handling)
 ```
+
+> **Amendment, 2026-10-13 (implementation, Phase 3 step 4).** `/notifications` is now the
+> notification **centre**: the inbox, then the quiet-hours form, then a switch per notification
+> type grouped under "Your work", "Leads" and "The workspace".
+>
+> - **The settings are on the same screen as the list, under it.** Somebody comes here because of a
+>   notification they did or did not want, and making them find a second screen to act on that is
+>   how a preferences page goes unused.
+> - **One form per switch, no Save button over all of them.** A screen where somebody flips seven
+>   switches, walks away, and is woken at midnight by the one they thought they had turned off is
+>   worse than one that costs a tap per change. Each row prints its state as **text** beside the
+>   button (`On`, `Off`, `Always on`) — a settings row whose value lives only inside a control is
+>   one nothing can read back, which is the lesson the payment-methods list paid for.
+> - **A held notification says so in the list** ("held for your quiet hours until 07:00"), because
+>   the alternative is somebody reading a 21:40 timestamp at nine in the morning and concluding the
+>   product is a night behind.
+> - **The quiet-hours form is two `time` inputs and a zone**, with the zone a plain text box: the
+>   API validates it against the runtime's own list and refuses anything else, and the common case
+>   is leaving it blank to follow the workspace. The sentence above the form says what the window
+>   does, and says when it crosses midnight — "between 21:30 and 07:00" otherwise reads as a
+>   mistake somebody made typing it.
+> - **There is no loader that swallows a failure here.** On this screen "nothing is configured" and
+>   "the request failed" look identical, and the second would invite somebody to re-save settings
+>   they already have — which on this screen means being woken up.
+>
+> Only in-app is offered, and the screen says why: a tick box for a channel that silently drops
+> every message is worse than saying the channel is not here yet.
 
 Navigation lists Phase 2–9 destinations as inert rows labelled with their phase, rather than omitting
 them. An honest "arrives in phase 5" beats a link that 404s and beats a menu that hides the product's

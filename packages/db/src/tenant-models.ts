@@ -29,6 +29,7 @@ export const TENANT_MODELS = [
   'OutboxEvent',
   'Notification',
   'NotificationPreference',
+  'NotificationSetting',
   // Phase 2 — CRM core
   'CustomFieldSection',
   'CustomFieldDefinition',

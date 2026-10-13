@@ -419,13 +419,20 @@ describe('every route declares its authorization', () => {
 
   /**
    * Writes outside `/auth` that legitimately need no permission because they only touch the
-   * caller's own record — marking your own notifications read. A permission here would have to be
-   * one every role holds, which is a permission that decides nothing.
+   * caller's own record — marking your own notifications read, and setting your own quiet hours. A
+   * permission here would have to be one every role holds, which is a permission that decides
+   * nothing; and quiet hours in particular must *not* be something a role can withhold, because a
+   * person whose employer can stop them silencing midnight notifications has no setting at all.
    *
    * The list is asserted below, so adding an exempt write fails this suite until someone has looked
-   * at it. That is the point: this set must never grow silently.
+   * at it. That is the point: this set must never grow silently — and it caught
+   * `PATCH /notifications/preferences` on the commit that added it.
    */
-  const SELF_SCOPED_WRITES = ['POST /notifications/:id/read', 'POST /notifications/read-all'];
+  const SELF_SCOPED_WRITES = [
+    'POST /notifications/:id/read',
+    'POST /notifications/read-all',
+    'PATCH /notifications/preferences',
+  ];
 
   it('gates every write outside /auth behind a permission', () => {
     // Authentication endpoints are necessarily public or self-scoped; everything else that

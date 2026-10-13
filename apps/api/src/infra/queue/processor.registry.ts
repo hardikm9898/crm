@@ -16,6 +16,7 @@ import {
 } from '../../modules/maintenance/maintenance.processors.js';
 import {
   MemberJoinedNotificationProcessor,
+  NotificationReleaseProcessor,
   TrialExpiredNotificationProcessor,
   UnassignedLeadNotificationProcessor,
 } from '../../modules/notifications/notifications.processor.js';
@@ -56,6 +57,7 @@ export const PROCESSOR_TYPES: readonly Type<JobProcessor>[] = [
   PasswordResetMailProcessor,
   SecurityNoticeMailProcessor,
   MemberJoinedNotificationProcessor,
+  NotificationReleaseProcessor,
   TrialExpiredNotificationProcessor,
   UnassignedLeadNotificationProcessor,
   TaskOverdueNotificationProcessor,

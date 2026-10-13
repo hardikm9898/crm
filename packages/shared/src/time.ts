@@ -125,3 +125,23 @@ function offsetAt(date: Date, timeZone: string): number {
 function pad(value: number): string {
   return String(value).padStart(2, '0');
 }
+
+/**
+ * The local day after this one, as a date key.
+ *
+ * Arithmetic on the *key* rather than on an instant, because "the next day" in a zone is not
+ * "+24 hours": on a spring-forward day it is 23 hours, and on the autumn one 25. Two callers need
+ * it — the business-hours walk and the quiet-hours window that crosses midnight — and a second
+ * copy is a second thing to get wrong about a clock change.
+ */
+export function nextDateKey(dateKey: string): string {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  /* c8 ignore next */
+  if (!year || !month || !day) return dateKey;
+  const next = new Date(Date.UTC(year, month - 1, day + 1));
+  return `${next.getUTCFullYear()}-${padTwo(next.getUTCMonth() + 1)}-${padTwo(next.getUTCDate())}`;
+}
+
+function padTwo(value: number): string {
+  return String(value).padStart(2, '0');
+}

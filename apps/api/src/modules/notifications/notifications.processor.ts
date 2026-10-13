@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { PERMISSIONS, withPlatformScope } from '@leados/shared';
+import { PERMISSIONS, isOpenStatus, notificationType, withPlatformScope } from '@leados/shared';
 import type { Job } from 'bullmq';
 import type { Logger } from 'pino';
 import { DbService } from '../../infra/db/db.service.js';
@@ -160,5 +160,115 @@ export class UnassignedLeadNotificationProcessor implements JobProcessor<EventJo
         data: { leadId, ruleName: body['ruleName'] ?? null },
       });
     }
+  }
+}
+
+/**
+ * Releases the notifications quiet hours held — and drops the ones that stopped mattering.
+ *
+ * **The hard half of quiet hours.** Holding a notification is arithmetic; the question holding it
+ * creates is what to do at 07:00 with a warning written at 21:40 about a follow-up somebody
+ * finished at 08:15. Delivering it is worse than not holding it at all: it reads as the product
+ * being a day behind, and the one thing a notification must be is current.
+ *
+ * So every held notification is re-checked against its subject at the moment it is released, by
+ * the kind of check its type declares (`NOTIFICATION_TYPES[].staleness`):
+ *
+ *  * `task_still_open` — a reminder or an overdue notice is dropped if the follow-up is finished,
+ *    cancelled or gone.
+ *  * `clock_still_running` — a near-breach warning is dropped if the promise has since been
+ *    answered. The **breach** notice is `never`, because a missed promise is a fact about the past
+ *    and the morning after is exactly when somebody should hear about it.
+ *  * `never` — released as written.
+ *
+ * A dropped one is marked `superseded_at`, not deleted: "was I ever told?" then has an answer, and
+ * the answer is "no, it was held until 07:00 and by then you had already done it".
+ *
+ * Platform-wide, like the SLA sweep, through `notifications_awaiting_release`.
+ */
+@Injectable()
+export class NotificationReleaseProcessor implements JobProcessor<JobPayload> {
+  readonly queue = QUEUES.MAINTENANCE;
+  readonly jobName = JOBS.NOTIFICATION_RELEASE;
+
+  constructor(
+    private readonly db: DbService,
+    @Inject(LOGGER) private readonly logger: Logger,
+  ) {}
+
+  async process(_payload: JobPayload, _job: Job): Promise<void> {
+    const { released, superseded } = await this.release();
+    if (released > 0 || superseded > 0) {
+      this.logger.debug({ released, superseded }, 'notifications released from quiet hours');
+    }
+  }
+
+  /** Exposed so a test can run exactly what the cron runs. */
+  async release(limit = 500): Promise<{ released: number; superseded: number }> {
+    const now = new Date();
+    const due = await withPlatformScope('notifications: release held', async () =>
+      this.db.client.notification.findMany({
+        where: { deferredUntil: { lte: now }, supersededAt: null },
+        orderBy: { deferredUntil: 'asc' },
+        take: limit,
+        select: { id: true, organizationId: true, type: true, data: true },
+      }),
+    );
+
+    let released = 0;
+    let superseded = 0;
+    for (const row of due) {
+      const stale = await this.isStale(row.type, row.data);
+      await withPlatformScope('notifications: settle held notification', async () => {
+        if (stale) {
+          await this.db.client.notification.update({
+            where: { id: row.id },
+            data: { supersededAt: now, deferredUntil: null },
+          });
+        } else {
+          await this.db.client.notification.update({
+            where: { id: row.id },
+            data: { deferredUntil: null },
+          });
+        }
+      });
+      if (stale) superseded += 1;
+      else released += 1;
+    }
+    return { released, superseded };
+  }
+
+  /**
+   * Whether the thing this notification is about has stopped needing attention.
+   *
+   * A type with no registry entry is **never** stale: a producer added without one should deliver
+   * and be noticed, not disappear. The same default the timeline registry takes, for the same
+   * reason — silence is the one failure nobody debugs.
+   */
+  private async isStale(type: string, data: unknown): Promise<boolean> {
+    const spec = notificationType(type);
+    if (!spec || spec.staleness === 'never') return false;
+    const payload = (data ?? {}) as Record<string, unknown>;
+
+    if (spec.staleness === 'task_still_open') {
+      const taskId = typeof payload['taskId'] === 'string' ? payload['taskId'] : null;
+      if (!taskId) return false;
+      const task = await withPlatformScope('notifications: re-check task', async () =>
+        this.db.client.task.findFirst({
+          where: { id: taskId },
+          select: { status: true, deletedAt: true },
+        }),
+      );
+      if (!task) return true;
+      return task.deletedAt !== null || !isOpenStatus(task.status);
+    }
+
+    const clockId = typeof payload['clockId'] === 'string' ? payload['clockId'] : null;
+    if (!clockId) return false;
+    const clock = await withPlatformScope('notifications: re-check clock', async () =>
+      this.db.client.slaClock.findFirst({ where: { id: clockId }, select: { state: true } }),
+    );
+    if (!clock) return true;
+    return clock.state !== 'running';
   }
 }

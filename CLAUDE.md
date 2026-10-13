@@ -426,6 +426,43 @@ prisma migrate deploy` after generating a migration.
   the symptom was a row count three times what the script's own closing `SELECT` said it should be.
   `\set ON_ERROR_STOP on` stops the _script_, not the work it already did. Wrap a load script in
   `BEGIN; … COMMIT;` and guard its inserts with `NOT EXISTS` so a second run is a no-op.
+- **A column a feature reads has to be read by _one_ thing.** `notification_preferences` carried
+  `quiet_hours` on a per-type row — one copy of the person's quiet hours per notification type,
+  which is one copy per type that can disagree with the others. Quiet hours are a property of the
+  **person**, so they live on `notification_settings` (one row per person per workspace) and the
+  per-type row keeps only what is genuinely per-type. The contract said otherwise and the contract
+  was the thing that was wrong; both were changed in the same commit.
+- **A preference has to be enforced where every producer already goes**, which is one method, not
+  five call sites. The quiet-hours and per-type gate lives inside `NotificationsService.create`
+  because all five producers call it; a check in each would be five places to forget it and the
+  sixth producer would ship without one. The cost is that `create` can answer `null`, which callers
+  already had to handle for "not a member of this workspace".
+- **Holding a notification creates a question that holding it cannot answer.** A warning written at
+  21:40 about a follow-up finished at 08:15 must not arrive at 09:00 — it reads as the product being
+  a day behind, which is worse than never having held it. So the release sweep re-checks each held
+  row against its subject, by a `staleness` kind declared per type, and marks the ones that stopped
+  mattering `superseded_at` rather than deleting them: "was I ever told?" then has an answer. A type
+  with **no** registry entry is never stale, because a producer added without one should deliver and
+  be noticed rather than disappear.
+- **A deferred row's visibility must be a write, not the passage of time.** `deferred_until <= now()`
+  as the inbox predicate makes a held notification visible _before_ anything has checked whether it
+  still matters, so somebody opening the app at 07:00:10 reads the warning the 07:01 sweep was about
+  to drop. The inbox filters `deferred_until IS NULL` and the sweep is the deliverer — which means a
+  worker that is down holds notifications indefinitely, the same failure reminders and mail already
+  have, and the reason that sweep runs every minute rather than every five.
+- **An unread _count_ and the list it belongs to must share one predicate.** The inbox hides held
+  and superseded rows; a `count` that forgot either would put a badge on a screen that shows nothing
+  — the same shape as a board totalling its page, one layer down.
+- **A reminder whose moment has already passed is dropped, not fired late**, and a fixture asking
+  for one gets no row at all. `reminderInstants` filters on `remindAt > now`, so a task due in two
+  minutes with a two-minute offset schedules **nothing** — the browser check waited 200 seconds for
+  a notification that was never going to come. Give a reminder a moment genuinely in the future, and
+  assert the `task_reminders` row exists before waiting on what it produces.
+- **Postgres and Redis do not survive a long session.** Both went down mid-run with 14 GB of memory
+  free and the whole integration suite reported as failed _suites_ — every spec failing in
+  `beforeAll`, which looks like a code catastrophe and is a dead socket. `pg_isready` and
+  `redis-cli ping` before concluding anything from a mass failure, and remember that the test
+  harness needs Redis as much as Postgres (`REDIS_URL_TEST`).
 - **An index keyed on a column an `OR` filters on is not used.** `/my/today` asks for "leads
   assigned to me **or** to nobody", and the obvious partial index —
   `(organization_id, assigned_user_id, created_at)` — was ignored outright: an `OR` cannot be a

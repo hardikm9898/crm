@@ -615,6 +615,7 @@ model Organization {
   outboxEvents            OutboxEvent[]
   notifications           Notification[]
   notificationPreferences NotificationPreference[]
+  notificationSettings    NotificationSetting[]
   subscription            Subscription?
   usageCounters           UsageCounter[]
   entitlementOverrides    EntitlementOverride[]
@@ -800,6 +801,7 @@ model Membership {
   roles                   UserRole[]
   notifications           Notification[]
   notificationPreferences NotificationPreference[]
+  notificationSettings    NotificationSetting[]
   availability            UserAvailability[]
   workingHours            WorkingHours[]
   assignedLeads           Lead[]                   @relation("lead_assignee")
@@ -1047,6 +1049,12 @@ model Notification {
   link           String?
   data           Json      @default("{}") @db.JsonB
   readAt         DateTime? @map("read_at") @db.Timestamptz(6)
+  /// Set when the recipient's quiet hours were open as this arrived (`FR-NOT-3`): the row exists
+  /// but is not in their inbox until this instant. The release sweep clears it.
+  deferredUntil  DateTime? @map("deferred_until") @db.Timestamptz(6)
+  /// Set when a held notification turned out to be about something already dealt with. The row is
+  /// kept rather than deleted, so "was I ever told?" has an answer — "no, and here is why".
+  supersededAt   DateTime? @map("superseded_at") @db.Timestamptz(6)
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -1056,6 +1064,37 @@ model Notification {
   @@index([organizationId, userId, readAt, createdAt(sort: Desc)])
   @@index([organizationId, type])
   @@map("notifications")
+}
+
+/// A person's own notification settings in one workspace (`FR-NOT-3`).
+///
+/// Separate from `notification_preferences` because the two have different cardinalities and the
+/// first version of the design conflated them: quiet hours are a property of the **person**, and
+/// putting them on a per-type row means one copy per type, which can disagree with itself. The
+/// per-type row keeps what is genuinely per-type — which channels that notification goes out on.
+model NotificationSetting {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+  userId         String @map("user_id") @db.Uuid
+
+  /// Wall-clock minutes on the person's local day. Null means no quiet window at all. Both are set
+  /// together or neither is, which `notification_settings_quiet_hours_pair` enforces.
+  quietStartMinute Int? @map("quiet_start_minute")
+  quietEndMinute   Int? @map("quiet_end_minute")
+  /// The zone those minutes are read in. Null means the workspace's own, which is the sane default
+  /// and the only one a new member can be given before they have said where they are.
+  timeZone         String? @map("time_zone")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// Through `Membership`, so "settings for somebody in another tenant" is unrepresentable.
+  membership   Membership   @relation(fields: [organizationId, userId], references: [organizationId, userId], onDelete: Cascade, map: "notification_settings_membership_same_org_fk")
+
+  @@unique([organizationId, id], name: "notification_setting_tenant_key")
+  @@unique([organizationId, userId], name: "notification_setting_person_key")
+  @@map("notification_settings")
 }
 
 /// Per-user, per-type channel preferences (FR-NOT-3).

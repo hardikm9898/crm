@@ -132,6 +132,9 @@ const REQUIRED_INDEXES = [
   // the answer is a shrinking slice of a large table, and because the screen it serves is the one
   // with a latency budget written into the roadmap's exit criteria.
   'leads_awaiting_first_contact',
+  // What the notification release sweep scans (`FR-NOT-3`). Un-prefixed by `organization_id`
+  // deliberately: the sweep is platform-wide, like the two SLA ones.
+  'notifications_awaiting_release',
 ];
 
 /**
@@ -395,6 +398,14 @@ const REQUIRED_CONSTRAINTS = [
   'escalations_acknowledged_pair',
   'escalations_clock_same_org_fk',
   'escalations_policy_same_org_fk',
+  // Quiet hours (`FR-NOT-3`). The range checks are written as `IS NULL OR …` rather than `BETWEEN`
+  // because a CHECK evaluating to NULL is satisfied, and null is legal here; the pair check is what
+  // stops half a window being stored, and the distinct check settles whether equal ends mean
+  // "never quiet" or "always quiet" by refusing them.
+  'notification_settings_quiet_minutes_range',
+  'notification_settings_quiet_hours_pair',
+  'notification_settings_quiet_hours_distinct',
+  'notification_settings_membership_same_org_fk',
 ];
 
 describe('hand-written indexes survive every generated migration', () => {

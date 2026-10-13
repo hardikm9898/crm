@@ -114,6 +114,16 @@ export const SCHEDULES: readonly ScheduleDefinition[] = [
     description: 'Warn on SLA clocks running out and escalate the ones that have breached',
   },
   {
+    queue: QUEUES.MAINTENANCE,
+    jobName: JOBS.NOTIFICATION_RELEASE,
+    // Every minute, like the reminder dispatcher and for the same reason: a quiet window that
+    // closes at 07:00 has to deliver at 07:00, and a five-minute sweep would make the promise
+    // "some time in the first five minutes of your morning". An indexed read of nothing on almost
+    // every tick (`notifications_awaiting_release`).
+    cron: '* * * * *',
+    description: 'Release the notifications quiet hours held, dropping the ones now out of date',
+  },
+  {
     queue: QUEUES.SCORING,
     jobName: JOBS.SCORE_DECAY_SWEEP,
     // Overnight, before anyone opens the app: a score that decayed at 1am is right when the first

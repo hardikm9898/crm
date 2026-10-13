@@ -1,4 +1,4 @@
-import { dateKeyInZone, zonedInstant, zonedParts } from './time.js';
+import { dateKeyInZone, nextDateKey, zonedInstant, zonedParts } from './time.js';
 
 /**
  * Business-hours arithmetic (`FR-TSK-8`).
@@ -237,16 +237,4 @@ function weekdayOf(dateKey: string): number {
   /* c8 ignore next */
   if (!year || !month || !day) return 0;
   return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
-}
-
-function nextDateKey(dateKey: string): string {
-  const [year, month, day] = dateKey.split('-').map(Number);
-  /* c8 ignore next */
-  if (!year || !month || !day) return dateKey;
-  const next = new Date(Date.UTC(year, month - 1, day + 1));
-  return `${next.getUTCFullYear()}-${pad(next.getUTCMonth() + 1)}-${pad(next.getUTCDate())}`;
-}
-
-function pad(value: number): string {
-  return String(value).padStart(2, '0');
 }

@@ -2252,3 +2252,156 @@ describe('layer 3 — the industry template catalogue is platform data, not a te
     ).rejects.toThrow(/industry_templates_description_present/i);
   });
 });
+
+describe('layer 3 — notification settings belong to one person in one tenant (FR-NOT-3)', () => {
+  async function settings(organizationId: string, userId: string, quietStartMinute = 21 * 60) {
+    const id = newId();
+    await h.unscoped.notificationSetting.create({
+      data: {
+        id,
+        organizationId,
+        userId,
+        quietStartMinute,
+        quietEndMinute: 7 * 60,
+        timeZone: 'Asia/Kolkata',
+      },
+    });
+    return id;
+  }
+
+  it('refuses settings for somebody who is not a member of the tenant', async () => {
+    // The composite FK through `Membership` is what makes this unrepresentable: without it, one
+    // workspace could hold quiet hours for a person who has never been in it — and the gate would
+    // then read them while deciding whether to notify somebody else's colleague.
+    await expect(settings(h.orgA.organizationId, h.orgB.userId)).rejects.toThrow(
+      /notification_settings_membership_same_org_fk/i,
+    );
+  });
+
+  it('allows the same person one row per workspace, and only one', async () => {
+    const bothOrgs = newId();
+    await h.unscoped.user.create({
+      data: { id: bothOrgs, email: `${bothOrgs}@test.local`, name: 'In both', status: 'active' },
+    });
+    for (const tenant of [h.orgA, h.orgB]) {
+      const role = await h.unscoped.role.findFirstOrThrow({
+        where: { organizationId: tenant.organizationId },
+      });
+      await h.unscoped.membership.create({
+        data: {
+          id: newId(),
+          organizationId: tenant.organizationId,
+          userId: bothOrgs,
+          status: 'active',
+        },
+      });
+      await h.unscoped.userRole.create({
+        data: {
+          id: newId(),
+          organizationId: tenant.organizationId,
+          userId: bothOrgs,
+          roleId: role.id,
+        },
+      });
+    }
+
+    // Quiet hours are per workspace on purpose: somebody consulting for two businesses in
+    // different timezones has two sets of working hours and two sets of quiet ones.
+    await settings(h.orgA.organizationId, bothOrgs, 20 * 60);
+    await settings(h.orgB.organizationId, bothOrgs, 22 * 60);
+    await expect(settings(h.orgA.organizationId, bothOrgs, 19 * 60)).rejects.toThrow(
+      /notification_settings_organization_id_user_id_key/i,
+    );
+
+    await h.unscoped.notificationSetting.deleteMany({ where: { userId: bothOrgs } });
+    await h.unscoped.userRole.deleteMany({ where: { userId: bothOrgs } });
+    await h.unscoped.membership.deleteMany({ where: { userId: bothOrgs } });
+    await h.unscoped.user.delete({ where: { id: bothOrgs } });
+  });
+
+  it('is invisible to the other tenant through the scoped client', async () => {
+    await h.unscoped.notificationSetting.deleteMany({
+      where: { organizationId: h.orgA.organizationId },
+    });
+    await settings(h.orgA.organizationId, h.orgA.userId);
+
+    const seenByB = await tenantContext.run(h.orgB.principal, async () =>
+      h.db.notificationSetting.findMany({}),
+    );
+    expect(seenByB).toHaveLength(0);
+    const seenByA = await tenantContext.run(h.orgA.principal, async () =>
+      h.db.notificationSetting.findMany({}),
+    );
+    expect(seenByA).toHaveLength(1);
+  });
+
+  it('refuses half a quiet window, and a window whose ends are equal', async () => {
+    // Half a window would force the reader to invent the other end, which is how one person's
+    // quiet hours silently become "until midnight". Equal ends are ambiguous — "never quiet" or
+    // "always quiet" — and guessing would be guessing about when to wake somebody up.
+    await h.unscoped.notificationSetting.deleteMany({
+      where: { organizationId: h.orgA.organizationId },
+    });
+    await expect(
+      h.unscoped.notificationSetting.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          userId: h.orgA.userId,
+          quietStartMinute: 21 * 60,
+        },
+      }),
+    ).rejects.toThrow(/notification_settings_quiet_hours_pair/i);
+
+    await expect(
+      h.unscoped.notificationSetting.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          userId: h.orgA.userId,
+          quietStartMinute: 540,
+          quietEndMinute: 540,
+        },
+      }),
+    ).rejects.toThrow(/notification_settings_quiet_hours_distinct/i);
+  });
+
+  it('refuses a minute that is not one of the day', async () => {
+    await expect(
+      h.unscoped.notificationSetting.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          userId: h.orgA.userId,
+          quietStartMinute: 1440,
+          quietEndMinute: 420,
+        },
+      }),
+    ).rejects.toThrow(/notification_settings_quiet_minutes_range/i);
+  });
+
+  it('keeps no settings behind when the membership goes', async () => {
+    // `ON DELETE CASCADE` on the membership FK: somebody removed from a workspace leaves no
+    // quiet-hours row behind for a future member with the same user id to inherit.
+    const leaving = newId();
+    await h.unscoped.user.create({
+      data: { id: leaving, email: `${leaving}@test.local`, name: 'Leaving', status: 'active' },
+    });
+    await h.unscoped.membership.create({
+      data: {
+        id: newId(),
+        organizationId: h.orgA.organizationId,
+        userId: leaving,
+        status: 'active',
+      },
+    });
+    await settings(h.orgA.organizationId, leaving);
+
+    await h.unscoped.membership.deleteMany({
+      where: { organizationId: h.orgA.organizationId, userId: leaving },
+    });
+    const left = await h.unscoped.notificationSetting.count({ where: { userId: leaving } });
+    expect(left).toBe(0);
+    await h.unscoped.user.delete({ where: { id: leaving } });
+  });
+});
