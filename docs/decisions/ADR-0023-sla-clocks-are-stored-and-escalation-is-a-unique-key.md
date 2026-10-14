@@ -86,8 +86,10 @@ of later phases can each call it without coordinating.
 ## Consequences
 
 - A lead captured out of hours comes due in business hours, which is the whole feature. The
-  arithmetic is a pure function with 26 tests of its own, three of them across a DST boundary in
-  both directions.
+  arithmetic is a pure function with 26 tests of its own, a four-case block of them across a DST
+  boundary in both directions — and, since Phase 3 step 8, five integration cases that assert the
+  **stored** `due_at` in three timezones, because a bug in the rows, the calendar reader or the
+  holiday date-key conversion would be invisible to a test of the arithmetic alone.
 - `business_hours_only = false` is an always-open calendar rather than a separate code path, so the
   elapsed-time case is the same function with different data.
 - Starting a clock **never throws**. A lead the business paid for must not fail to be created

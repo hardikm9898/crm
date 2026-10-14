@@ -116,7 +116,43 @@ describe('describeDay', () => {
   });
 
   it('says something useful when there is nothing owed at all', () => {
-    expect(describeDay(zero)).toMatch(/Nothing is owed today/);
+    expect(describeDay(zero)).toBe('Nothing is owed today, and every new lead has been called.');
+  });
+
+  it('never reports a nought beside a contradiction — the walk-through’s finding', () => {
+    // "0 follow-ups left today · 1 overdue" was the sentence a tester read on a screen with one
+    // late follow-up on it. The count of today's work is not a field to be filled in with a zero.
+    expect(describeDay({ ...zero, overdue: 1 })).toBe(
+      '1 overdue follow-up, and nothing else today.',
+    );
+    expect(describeDay({ ...zero, overdue: 3, awaitingFirstContact: 2 })).toBe(
+      '3 overdue follow-ups, and nothing else today · 2 new leads to call.',
+    );
+    expect(describeDay({ ...zero, overdue: 1, laterToday: 1 })).toBe(
+      '1 follow-up left today · 1 overdue.',
+    );
+  });
+
+  it('offers the advice only when there is somebody to take it', () => {
+    // The old condition fired when *no other clause* was true, which the uncalled-lead clause
+    // itself breaks: the suggestion to call the leads nobody has reached was shown only on days
+    // when there were none of them.
+    expect(describeDay({ ...zero, awaitingFirstContact: 1 })).toBe(
+      'Nothing is owed today. A good moment to call the lead nobody has reached.',
+    );
+    expect(describeDay({ ...zero, awaitingFirstContact: 4 })).toBe(
+      'Nothing is owed today. A good moment to call the 4 leads nobody has reached.',
+    );
+    expect(describeDay(zero)).not.toMatch(/good moment/);
+  });
+
+  it('still says what is running out on a day with nothing due', () => {
+    expect(describeDay({ ...zero, promisesBreached: 2 })).toBe(
+      'Nothing is owed today · 2 missed promises.',
+    );
+    expect(describeDay({ ...zero, awaitingFirstContact: 1, promisesAtRisk: 1 })).toBe(
+      'Nothing is owed today · 1 new lead to call · 1 promise running out.',
+    );
   });
 
   it('counts one follow-up in the singular, which is where this kind of sentence usually breaks', () => {

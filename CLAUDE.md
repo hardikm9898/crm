@@ -581,6 +581,28 @@ prisma migrate deploy` after generating a migration.
 - **A browser check must use `localhost`, not `127.0.0.1`.** Against `127.0.0.1:3000` the login form
   submitted as a native GET with the password in the query string — the client bundle had not
   hydrated — and the check failed with a URL that explains itself only if you read it closely.
+- **A service handed an _unscoped_ transaction reads every workspace's rows.** `SlaService.startForLead`
+  takes the `tx` its caller is already inside and reads the active SLA policies off it, which is
+  right in production — the caller's transaction comes from the tenant-scoped `DbService`. A test
+  that drove it through the e2e harness's **unscoped** client matched somebody else's policy and
+  died on `sla_clocks_policy_same_org_fk`: the composite FK caught what the missing scope would
+  otherwise have written. An integration test that calls a service directly has to enter the
+  context _and_ use `ctx.app.get(DbService).client`, or it is testing a client the product never
+  uses.
+- **Tapping a `tel:` link wedges the tab in headless Chromium.** The navigation is aborted rather
+  than handed to a dialler, and after that no click runs a React handler again — not after a
+  reload, not after a fresh `goto`. A second tab in the same context is fine, which is how you know
+  it is the harness and not the screen. A browser check that taps [Call] therefore continues in a
+  new tab, which is also the honest stand-in for putting the phone down. The same will apply to
+  `wa.me` and `mailto:`.
+- **Advice on a screen has to be shown when somebody can take it.** Today's summary offered "a good
+  moment to call the leads nobody has reached" under the condition "no other clause is true" — and
+  the uncalled-lead clause is itself one of those clauses, so the suggestion appeared **only** on
+  days when there were none of them. The same sentence also read "0 follow-ups left today · 1
+  overdue", a nought beside a contradiction, because the first clause was pushed unconditionally.
+  Both were invisible to the existing browser check, whose "omits what is zero" assertion tested
+  `/ 0 /` against a string whose zero was the first character. A sentence assembled from clauses
+  needs a test per shape, not per clause.
 
 ## Reporting work
 

@@ -58,6 +58,12 @@ In short:
 - **A promise that stopped applying is cancelled, not satisfied** — a deleted lead, a merged
   duplicate, a lead marked `invalid`. Counting a wrong number as a kept promise makes the report
   flattering and useless.
+- **The calendar is asserted at two levels, because a bug can live between them.** The arithmetic is
+  a pure function with its own clock-change block in `@leados/shared`; `sla.e2e-spec.ts` then builds
+  real workspaces in Europe/Berlin, Asia/Kolkata and America/New_York, writes real `working_hours`
+  rows, and asserts the **stored** `due_at` across both clock changes, across a declared holiday
+  (whose `date` column is midnight UTC — reading its key in the workspace's zone would close the
+  wrong day) and for a lead that arrives at the weekend.
 - **A completed follow-up is the first response**, and it is also what finally writes
   `leads.first_contacted_at` / `last_contacted_at`, which had no writer at all until this step.
 

@@ -698,3 +698,162 @@ describe('tenancy', () => {
     expect(clocks.body.data).toHaveLength(0);
   });
 });
+
+describe('the clock across timezones, including a clock change (the phase exit criterion)', () => {
+  /**
+   * The exit criterion asks that **clocks** respect working hours and holidays across timezones
+   * with a DST case — and the pure arithmetic in `@leados/shared` already covers a clock change
+   * exhaustively. What has never been exercised is everything *between*: the workspace's own
+   * `working_hours` rows, `SlaCalendarService` turning them into a calendar, the holiday date-key
+   * conversion, and the `due_at` that ends up stored on the row.
+   *
+   * A bug in any of those would be invisible to a calendar-level test. The holiday read is the
+   * clearest example: `holidays.date` is a `date` column whose instant is midnight **UTC**, and
+   * reading its key in the workspace's own zone shifts it a day west of Greenwich — a closure the
+   * clock would apply to the wrong day, in exactly the timezones this block uses.
+   *
+   * So each case builds a real workspace, writes real hours, and asserts the stored instant.
+   */
+  const NINE_TO_SIX = [1, 2, 3, 4, 5].map((dayOfWeek) => ({
+    dayOfWeek,
+    startMinute: 9 * 60,
+    endMinute: 18 * 60,
+  }));
+
+  /** A workspace in a named timezone, with Mon–Fri 09:00–18:00 and nothing else. */
+  async function workspaceIn(label: string, timeZone: string): Promise<Tenant> {
+    const tenant = await createTenant(label);
+    const { newId } = await import('@leados/shared');
+    await ctx.db.organization.update({
+      where: { id: tenant.organizationId },
+      data: { timezone: timeZone },
+    });
+    // Provisioning writes the *owner's* hours and a workspace-wide set; replace the workspace-wide
+    // rows so the calendar under test is exactly the one this test describes.
+    await ctx.db.workingHours.deleteMany({
+      where: { organizationId: tenant.organizationId, userId: null },
+    });
+    await ctx.db.workingHours.createMany({
+      data: NINE_TO_SIX.map((window) => ({
+        id: newId(),
+        organizationId: tenant.organizationId,
+        userId: null,
+        branchId: null,
+        dayOfWeek: window.dayOfWeek,
+        startMinute: window.startMinute,
+        endMinute: window.endMinute,
+        isWorking: true,
+      })),
+    });
+    return tenant;
+  }
+
+  /**
+   * Starts a first-response clock at a chosen instant and answers the row.
+   *
+   * Through `SlaService.startForLead`, which is the method capture calls — the difference being
+   * that capture passes `now()` and a DST case needs a specific Friday.
+   */
+  async function clockStartedAt(tenant: Tenant, leadId: string, startedAt: Date) {
+    const { SlaService } = await import('../src/modules/sla/sla.service.js');
+    const { DbService } = await import('../src/infra/db/db.service.js');
+    const { tenantContext, systemPrincipal, newId } = await import('@leados/shared');
+    const lead = await ctx.db.lead.findFirstOrThrow({ where: { id: leadId } });
+    // The clock the capture wrote was started at `now()`; this block is about a chosen instant.
+    await ctx.db.slaClock.deleteMany({ where: { subjectId: leadId } });
+
+    // Through the **app's** client, not the harness's unscoped one. `startForLead` reads the
+    // active policies off the transaction it is handed, so an unscoped `tx` reads every
+    // workspace's policies and matches one belonging to somebody else — which the composite FK
+    // `sla_clocks_policy_same_org_fk` then refuses. The production caller always passes a scoped
+    // transaction, and so must this.
+    const db = ctx.app.get(DbService);
+    await tenantContext.run(systemPrincipal(tenant.organizationId, newId()), async () => {
+      await db.client.$transaction(async (tx) => {
+        await ctx.app.get(SlaService).startForLead(tx as never, lead as never, startedAt);
+      });
+    });
+    return ctx.db.slaClock.findFirstOrThrow({
+      where: { subjectId: leadId, target: 'first_response' },
+    });
+  }
+
+  it('carries a promise across the spring clock change without losing an hour', async () => {
+    const berlin = await workspaceIn('berlin', 'Europe/Berlin');
+    const leadId = await createLead(berlin, 'Springforward');
+
+    // Friday 2026-03-27 at 17:30 CET (UTC+1). 60 working minutes = 30 before closing and 30 on the
+    // next working morning — Monday the 30th, by which time the clocks have gone forward and local
+    // 09:30 is 07:30 UTC rather than 08:30. An offset read once, on the start day, would be an
+    // hour out; this is the assertion that it is not.
+    const clock = await clockStartedAt(berlin, leadId, new Date('2026-03-27T16:30:00.000Z'));
+    expect(clock.targetMinutes).toBe(60);
+    expect(clock.dueAt.toISOString()).toBe('2026-03-30T07:30:00.000Z');
+  });
+
+  it('and the same in the autumn, when they go back', async () => {
+    const berlin = await workspaceIn('berlinautumn', 'Europe/Berlin');
+    const leadId = await createLead(berlin, 'Fallback');
+    // Friday 2026-10-23 at 17:30 CEST (UTC+2) → Monday the 26th at 09:30 CET (UTC+1).
+    const clock = await clockStartedAt(berlin, leadId, new Date('2026-10-23T15:30:00.000Z'));
+    expect(clock.dueAt.toISOString()).toBe('2026-10-26T08:30:00.000Z');
+  });
+
+  it('gives the same local answer in two timezones, which is a different instant in each', async () => {
+    const kolkata = await workspaceIn('kolkata', 'Asia/Kolkata');
+    const newYork = await workspaceIn('newyork', 'America/New_York');
+    const kolkataLead = await createLead(kolkata, 'Kolkataclock');
+    const newYorkLead = await createLead(newYork, 'Newyorkclock');
+
+    // Both captured at 10:00 local on Tuesday 2026-06-16, both promised 60 working minutes, both
+    // due at 11:00 local — which is 05:30 UTC in Kolkata (UTC+5:30, no DST) and 15:00 UTC in New
+    // York (UTC-4, on EDT). One calendar, two instants: that is what "across timezones" means.
+    const kolkataClock = await clockStartedAt(
+      kolkata,
+      kolkataLead,
+      new Date('2026-06-16T04:30:00.000Z'),
+    );
+    const newYorkClock = await clockStartedAt(
+      newYork,
+      newYorkLead,
+      new Date('2026-06-16T14:00:00.000Z'),
+    );
+    expect(kolkataClock.dueAt.toISOString()).toBe('2026-06-16T05:30:00.000Z');
+    expect(newYorkClock.dueAt.toISOString()).toBe('2026-06-16T15:00:00.000Z');
+  });
+
+  it('skips a holiday the workspace declared, on the day the workspace means', async () => {
+    const newYork = await workspaceIn('holiday', 'America/New_York');
+    const leadId = await createLead(newYork, 'Holidayclock');
+    const { newId } = await import('@leados/shared');
+    // Thursday 2026-07-02 is a working day; Friday the 3rd is declared closed. A promise started at
+    // 17:30 EDT on the Thursday therefore lands on **Monday** the 6th, not the Friday.
+    //
+    // The date is written as midnight UTC, which is how a `date` column stores it — and reading
+    // that key back in New York's zone would call it the 2nd and close the wrong day. This is the
+    // assertion that it does not.
+    await ctx.db.holiday.create({
+      data: {
+        id: newId(),
+        organizationId: newYork.organizationId,
+        branchId: null,
+        date: new Date('2026-07-03T00:00:00.000Z'),
+        name: 'Independence Day (observed)',
+        isWorking: false,
+      },
+    });
+
+    const clock = await clockStartedAt(newYork, leadId, new Date('2026-07-02T21:30:00.000Z'));
+    expect(clock.dueAt.toISOString()).toBe('2026-07-06T13:30:00.000Z'); // 09:30 EDT Monday
+  });
+
+  it('starts the clock at the next opening when the lead arrives at the weekend', async () => {
+    const berlin = await workspaceIn('weekend', 'Europe/Berlin');
+    const leadId = await createLead(berlin, 'Weekend');
+    // Sunday 2026-06-14 at 11:00 CEST. The first working minute is Monday 09:00, so the promise is
+    // due at 10:00 local — 08:00 UTC. A clock that counted from the capture instant would have
+    // come due while the business was closed, which is the whole reason the calendar exists.
+    const clock = await clockStartedAt(berlin, leadId, new Date('2026-06-14T09:00:00.000Z'));
+    expect(clock.dueAt.toISOString()).toBe('2026-06-15T08:00:00.000Z');
+  });
+});

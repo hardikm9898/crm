@@ -192,24 +192,49 @@ export function describeMinutes(minutes: number): string {
  */
 export function describeDay(counts: Today['counts']): string {
   const today = counts.dueNow + counts.laterToday;
-  const parts: string[] = [];
-  parts.push(today === 1 ? '1 follow-up left today' : `${today} follow-ups left today`);
-  if (counts.overdue > 0) parts.push(`${counts.overdue} overdue`);
+  const extras: string[] = [];
   if (counts.awaitingFirstContact > 0) {
-    parts.push(
-      counts.awaitingFirstContact === 1
-        ? '1 new lead to call'
-        : `${counts.awaitingFirstContact} new leads to call`,
+    extras.push(`${plural(counts.awaitingFirstContact, 'new lead')} to call`);
+  }
+  if (counts.promisesBreached > 0) extras.push(plural(counts.promisesBreached, 'missed promise'));
+  else if (counts.promisesAtRisk > 0) {
+    extras.push(`${plural(counts.promisesAtRisk, 'promise')} running out`);
+  }
+
+  if (today > 0)
+    return (
+      [`${plural(today, 'follow-up')} left today`, ...overdueOf(counts), ...extras].join(' · ') +
+      '.'
+    );
+
+  // Nothing due *today* is not the same as nothing to do, and the two cases below are where this
+  // sentence was found reading as machine output by the zero-training walk-through.
+  //
+  // "0 follow-ups left today · 1 overdue" is a form with an empty field beside a contradiction:
+  // there plainly is a follow-up, it is simply late. So when nothing is due today the late work
+  // becomes the sentence instead of a clause appended to a nought.
+  if (counts.overdue > 0) {
+    return (
+      [`${plural(counts.overdue, 'overdue follow-up')}, and nothing else today`, ...extras].join(
+        ' · ',
+      ) + '.'
     );
   }
-  if (counts.promisesBreached > 0) parts.push(plural(counts.promisesBreached, 'missed promise'));
-  else if (counts.promisesAtRisk > 0) {
-    parts.push(`${plural(counts.promisesAtRisk, 'promise')} running out`);
+  // And the advice to call the leads nobody has reached used to appear **only** when there were
+  // none of them — its condition was "no other clause", which the uncalled-lead clause itself
+  // breaks. Said to somebody looking at an empty screen, it is a dead end.
+  if (counts.awaitingFirstContact > 0 && extras.length === 1) {
+    return counts.awaitingFirstContact === 1
+      ? 'Nothing is owed today. A good moment to call the lead nobody has reached.'
+      : `Nothing is owed today. A good moment to call the ${counts.awaitingFirstContact} leads nobody has reached.`;
   }
-  if (today === 0 && counts.overdue === 0 && parts.length === 1) {
-    return 'Nothing is owed today. A good moment to call the leads nobody has reached.';
-  }
-  return `${parts.join(' · ')}.`;
+  if (extras.length > 0) return `Nothing is owed today · ${extras.join(' · ')}.`;
+  return 'Nothing is owed today, and every new lead has been called.';
+}
+
+/** The overdue clause, which is a count rather than a sentence when there is work due today too. */
+function overdueOf(counts: Today['counts']): string[] {
+  return counts.overdue > 0 ? [`${counts.overdue} overdue`] : [];
 }
 
 /**

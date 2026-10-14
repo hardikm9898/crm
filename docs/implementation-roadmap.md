@@ -988,12 +988,16 @@ click-to-call abstraction; email sending adapter + bounce→suppression.
 **Exit criteria**
 
 - `GET /my/today` returns the entire executive screen in one request, p95 < 400 ms on the 100 k fixture.
-- Reschedule **cannot** be completed without date, time and reason (API + UI tested).
+  ✅ _(110 ms p95, step 3)_
+- Reschedule **cannot** be completed without date, time and reason (API + UI tested). ✅ _(step 1)_
 - SLA clocks respect working hours and holidays across timezones (DST case included in tests).
-- Overdue and near-breach escalate to the manager exactly once (idempotency tested).
+  ✅ _(step 8: four Europe/Berlin cases as arithmetic, five more as stored `due_at` instants)_
+- Overdue and near-breach escalate to the manager exactly once (idempotency tested). ✅ _(step 2)_
 - Today workspace usable one-handed at 375 px; actions survive a flaky connection (queued + retried).
+  ✅ _(step 3)_
 - Zero-training usability check: a non-technical tester completes "call the overdue lead, log the
-  outcome, schedule tomorrow's follow-up" without help.
+  outcome, schedule tomorrow's follow-up" without help. ✅ _(step 8: a scripted walk-through that
+  types no URL after the sign-in link, and found two copy defects)_
 
 ### Step 1 — tasks and follow-ups ✅ _(landed 2026-10-07)_
 
@@ -1084,9 +1088,10 @@ existed — the trap `payment:read` paid for.
 `businessMinutesBetween`, `nextBusinessStart` and `isWithinBusinessHours` in `@leados/shared` walk
 the workspace's own local days rather than adding milliseconds, because a working window is a pair
 of **wall-clock minutes on a local day** and that is what makes "09:00–18:00" survive a clock
-change. Three of the tests cross a DST boundary in both directions; one asserts that
+change. A four-case clock-change block crosses a boundary in both directions; one asserts that
 `businessMinutesBetween` is the exact inverse of `addBusinessMinutes`, which is what makes a breach
-report trustworthy.
+report trustworthy. (Step 8 adds the level this cannot reach: the same arithmetic asserted as a
+**stored** `due_at`, through real `working_hours` rows and `SlaCalendarService`.)
 
 Two bugs the arithmetic had, both found by running it rather than by reading it:
 
@@ -1650,6 +1655,76 @@ belongs to the Phase 10 operator console. And the platform list is shared, so on
 stops another's send to the same dead mailbox — the intent, and a behaviour to revisit if the product
 ever sends from per-workspace domains.
 
+### Step 8 — the phase gate: the clock across a clock change, and the journey a tester walks ✅ _(landed 2026-10-14)_
+
+Not a feature. Phase 3's scope was finished by step 7; this step is the **two exit criteria that
+were not met**, done rather than declared — and both found something.
+
+**The DST criterion was half true, and the roadmap said so wrongly.** The previous entry claimed
+"the arithmetic … converts each window boundary on its own local day, but no test crosses one". The
+first half is right and the second was not: `packages/shared/src/business-hours.spec.ts` has had a
+`describe('a clock change')` block with four Europe/Berlin cases since step 2. What had never been
+exercised was everything *between* the arithmetic and the database — the workspace's own
+`working_hours` rows, `SlaCalendarService` turning them into a calendar, the holiday date-key
+conversion, and the instant that ends up stored in `sla_clocks.due_at`. A calendar-level test cannot
+see any of it. So `sla.e2e-spec.ts` gained five cases that each build a real workspace in a named
+timezone, write real hours, start a real clock through `SlaService.startForLead`, and assert the
+stored instant to the minute:
+
+- **Spring forward.** A promise made at 17:30 CET on Friday 27 March 2026 — 30 working minutes
+  before closing — comes due at 09:30 on Monday the 30th, which is `07:30Z` because the clocks moved
+  that weekend. An offset read once, on the start day, would be an hour out.
+- **Autumn back.** The same shape on 23 October, landing at `08:30Z`.
+- **Two timezones, one promise.** 10:00 local in Asia/Kolkata and in America/New_York, both due at
+  11:00 local, which is `05:30Z` and `15:00Z`. One calendar definition, two instants.
+- **A holiday on the day the workspace means.** `holidays.date` is a `date` column whose instant is
+  midnight **UTC**; read in New York's zone that key is the day before. A Friday declared closed has
+  to close the Friday, so a Thursday-evening promise lands on Monday.
+- **A weekend arrival.** Sunday 11:00 CEST comes due at 10:00 on Monday: the clock starts when the
+  business opens, not when the lead arrives.
+
+Writing them found the trap now in `CLAUDE.md`: driving `startForLead` through the e2e harness's
+**unscoped** client made it read every workspace's SLA policies and match somebody else's, which
+`sla_clocks_policy_same_org_fk` refused. The composite FK caught what a missing tenant scope would
+otherwise have written — the first time one of those FKs has fired in anger.
+
+**The zero-training criterion, done as a scripted walk-through.** "A non-technical tester completes
+*call the overdue lead, log the outcome, schedule tomorrow's follow-up* without help" cannot be
+asserted by a test that navigates by URL: that proves the endpoints work and says nothing about
+whether anybody could find them. So the walk-through types **nothing but the sign-in link** — every
+step after it is a tap on something the previous screen offered, on a 375 px phone, and every
+assertion is about what the screen *says*. 38 checks, all passing: the first sentence on Today names
+the overdue work; the card carries the person, the number and "2 days late"; the actions are `Call`,
+`Done`, `Move`; `[Call]` is wired to that lead's own number; the finish form asks one question in
+the workspace's own words; saving too early is refused in a sentence rather than a code; the next
+follow-up is offered on the same form, already ticked, already filled with tomorrow at 10:00, so
+nothing has to be typed; and the same tap both completes the call and plans the next one, to the
+minute. Then the second route to the same journey — the menu, the list, the person's name, the dial
+button that hands the number to the phone *and* records the attempt, the amber row that asks what
+happened before being asked, and the follow-up planned from the lead's own card.
+
+**It found two copy defects, which is what the criterion is for.** Today's summary sentence read
+**"0 follow-ups left today · 1 overdue · 1 new lead to call"** — a nought beside a contradiction, on
+a screen with a late follow-up plainly on it. And the sentence's one piece of advice, "a good moment
+to call the leads nobody has reached", was shown under the condition "no other clause is true" —
+but the uncalled-lead clause *is* one of those clauses, so the suggestion appeared **only** on days
+when there were none of them to call. Both were invisible to the existing browser check, whose
+"omits what is zero" assertion tested `/ 0 /` against a string whose zero was the first character:
+a sentence assembled from clauses needs a test per shape, not per clause. `describeDay` now leads
+with the late work when nothing is due today, offers the advice only when somebody can take it, and
+says "Nothing is owed today, and every new lead has been called." when that is the truth.
+
+**Verified.** 1 868 tests green (832 unit, 1 036 integration), 8 of them new: the five clock cases
+above and three `describeDay` shapes. Then the **38-check walk-through** against a running API,
+worker, scheduler and web app, and the Today browser check (39 checks) re-run unchanged to confirm
+the new copy. The walk-through also paid for a harness trap worth the note in `CLAUDE.md`: tapping a
+`tel:` link in headless Chromium aborts the navigation and leaves the tab permanently inert — no
+click runs a React handler again, not after a reload, not after a fresh `goto` — while a second tab
+in the same context is fine. That is the harness, not the screen, and it is also the honest stand-in
+for putting the phone down.
+
+**Phase 3 is complete**: every item of scope built, and all six exit criteria met and tested.
+
 ---
 
 ## Phase 4 — Capture & developer platform
@@ -1848,39 +1923,35 @@ partially landed, with the specific gaps named.
 ## Immediate next step
 
 _This section names the next step only; what each landed step actually did is in the step entries
-above. Last reviewed 2026-10-14, after Phase 3 step 7._
+above. Last reviewed 2026-10-14, after Phase 3 step 8._
 
-**Phase 3's exit criteria, and the two that are not met.** Every item in Phase 3's _scope_ is now
-built — tasks, reminders, reschedule with a mandatory reason, complete-with-next-follow-up, "no next
-action", the overdue sweeps, SLA policies and working-hours-aware clocks, escalation, the manager
-board, the notification centre with preferences and quiet hours, the Today workspace, oversight,
-calls with click-to-call, and the email adapter with bounce → suppression. The next step is the
-phase gate itself, which means doing the two criteria that are **not** done rather than declaring
-the phase finished:
+**Phase 3 is finished, exit criteria included.** Every item of scope is built — tasks, reminders,
+reschedule with a mandatory reason, complete-with-next-follow-up, "no next action", the overdue
+sweeps, SLA policies and working-hours-aware clocks, escalation, the manager board, the notification
+centre with preferences and quiet hours, the Today workspace, oversight, calls with click-to-call,
+and the email adapter with bounce → suppression — and step 8 closed the two criteria that were
+outstanding: the clock is now asserted across both clock changes and in three timezones as a
+**stored** `due_at`, and the zero-training journey is a scripted walk-through that types no URL
+after the sign-in link. The other four were already met and tested: `/my/today` in one request
+(p95 110 ms on the 100 k fixture), a reschedule that cannot complete without date, time and reason,
+overdue and near-breach escalating exactly once, and Today usable one-handed at 375 px with queued
+actions.
 
-- **"SLA clocks respect working hours and holidays across timezones (DST case included in
-  tests)."** The arithmetic walks instants and converts each window boundary on its own local day —
-  which is what makes a DST day correct — but no test crosses one. It needs a workspace in a
-  timezone that observes DST, a clock started the evening before the shift, and the assertion that
-  the promise lands where a person would expect it to. That is an afternoon's work and it is the
-  difference between "written to be correct" and "known to be".
-- **"Zero-training usability check: a non-technical tester completes _call the overdue lead, log the
-  outcome, schedule tomorrow's follow-up_ without help."** Step 6 made this possible end to end for
-  the first time: the call is dialled from the lead, the outcome form is on the same card, and
-  closing the follow-up is a tick box in it. It has never been _watched_ being done by somebody who
-  did not build it. The honest version of this criterion is a scripted walk-through with the
-  screens' own wording checked against what the tester says out loud.
+The next step is therefore the first step of **Phase 4 — capture and the developer platform**: the
+dynamic form builder and the public form renderer, which is where "never lose a lead" starts being
+a promise about somebody else's traffic rather than about our own screens.
 
-The other four are met and tested: `/my/today` in one request (p95 110 ms on the 100 k fixture), a
-reschedule that cannot complete without date, time and reason, overdue and near-breach escalating
-exactly once, and Today usable one-handed at 375 px with queued actions.
-
-Then **Phase 4 — capture and the developer platform**: dynamic forms and the public form renderer,
-the public lead API with HMAC and idempotency, the raw-payload store that makes "never lose a lead"
-true, API keys, outbound webhooks, OpenAPI, the integration framework, and Meta/Google lead ads. The
+Then the rest of **Phase 4**: the public lead API with HMAC and idempotency, the raw-payload store
+that makes "never lose a lead" true, API keys, outbound webhooks, OpenAPI, the integration
+framework, and Meta/Google lead ads. The
 inbound webhook built in step 7 is the first of that shape and deliberately not under
 `/wh/{provider}/{connectionId}`: connection ids arrive with the framework, and the email webhook has
 no per-tenant connection to name.
+
+Carried forward from step 8: the walk-through and the thirteen browser checks before it are run by
+hand from scripts that are not in the repository — the same arrangement every phase has used, and
+one that will have to become a committed harness before a release the team does not personally
+drive. Nothing in Phase 3 remains open otherwise.
 
 Carried forward from step 7: `digest` is still not implemented and has no column — a daily roll-up
 is a different feature from a channel, and `FR-NOT-3` asks for both. The tenant-scoped
