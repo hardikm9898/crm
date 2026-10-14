@@ -1508,10 +1508,22 @@ over real HTTP (the contact columns and the SLA clock, "spoke to them" on a call
 connect, a second outcome on one call, the nudge asking exactly once however often the sweep runs,
 and a follow-up closed by a call), 12 new cross-tenant and constraint guarantees against real
 PostgreSQL, 5 new database objects registered in `schema-objects.int-spec.ts`, and the shared and
-web vocabularies reconciled against each other. Then **41 HTTP checks** against a running API and
+web vocabularies reconciled against each other. Then **45 HTTP checks** against a running API and
 worker, **42 browser checks** driving the screens in Chromium, and **9 more as an auditor** — whose
 `call:read` without `call:log` is the configuration the two permissions exist for: they read the log
 and are offered no dial button, and the API answers 403 either way.
+
+The nudge was also watched through the real cron, with the scheduler, the worker and the API all
+running: a call dialled and backdated twenty minutes produced, on the next ten-minute tick, exactly
+one `call.outcome_missing` notification — "What happened with Anjali Rao? You dialled from the
+product and the call has no outcome recorded yet" — linking to the lead, with
+`calls.outcome_prompted_at` written.
+
+Four of those HTTP checks are the ones that make `FR-CALL-3`'s "outcomes feed scoring" a tested
+claim rather than an asserted one: a rule on `call.logged` whose only condition is
+`event.outcomeCategory eq connected` scored a conversation 15 and left a no-answer at 0, and the
+lead's score breakdown names the rule that did it. That is the whole reason there is no second
+per-outcome score delta.
 
 Three defects were found only by that verification: the panel's summary read "no time on the call on
 the phone" (a sentence nobody wrote, assembled from clauses that each have a case where they are

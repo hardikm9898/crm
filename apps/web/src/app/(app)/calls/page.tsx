@@ -36,8 +36,18 @@ export default async function CallsPage({
   if (cursor) query.set('cursor', cursor);
 
   let page: Awaited<ReturnType<typeof loadCalls>>;
+  // Its own request rather than a filter over the page: the calls awaiting an outcome are the point
+  // of the screen, and the ones on page three are exactly the ones somebody has forgotten.
+  //
+  // **Not swallowed**, deliberately. A catch that produced an empty list here would render "No
+  // outcome yet: 0" — which is the one number on this screen somebody acts on, and a loader whose
+  // failure is indistinguishable from an empty result is the trap the product catalogue paid for.
+  let open: Awaited<ReturnType<typeof loadCalls>>;
   try {
-    page = await loadCalls(`?${query.toString()}`, token);
+    [page, open] = await Promise.all([
+      loadCalls(`?${query.toString()}`, token),
+      loadCalls(`?open=true&limit=10${mine ? '&mine=true' : ''}`, token),
+    ]);
   } catch (error) {
     return (
       <>
@@ -47,12 +57,9 @@ export default async function CallsPage({
     );
   }
 
-  // Its own request rather than a filter over the page: the calls awaiting an outcome are the point
-  // of the screen, and the ones on page three are exactly the ones somebody has forgotten.
-  const [open, config] = await Promise.all([
-    loadCalls(`?open=true&limit=10${mine ? '&mine=true' : ''}`, token).catch(() => null),
-    loadCallConfig(token),
-  ]);
+  // The outcome list *is* swallowed: it only fills a dropdown, and a screen that will not open
+  // because a vocabulary request failed is worse than one whose form says it has nothing to offer.
+  const config = await loadCallConfig(token);
   const now = new Date();
 
   return (
@@ -89,12 +96,12 @@ export default async function CallsPage({
         />
         <StatCard
           label="No outcome yet"
-          value={String(open?.total ?? 0)}
+          value={String(open.total)}
           hint="Dialled from the product and never recorded."
         />
       </div>
 
-      {open && open.items.length > 0 && (
+      {open.items.length > 0 && (
         <div className="mb-5">
           <Card
             title="These calls need an outcome"

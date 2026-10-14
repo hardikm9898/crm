@@ -937,12 +937,16 @@ describe('the outcome list is configuration in use (rule 4)', () => {
     });
     expect(added.statusCode).toBe(201);
 
-    const list = await api<{ id: string; name: string; category: string; callCount: number }[]>(
-      'GET',
-      '/settings/call-outcomes',
-      { token: orgB.token },
-    );
+    const list = await api<
+      { id: string; name: string; category: string; isContact: boolean; callCount: number }[]
+    >('GET', '/settings/call-outcomes', { token: orgB.token });
     expect(list.body.data.map((row) => row.name)).toContain(`Wants a test drive ${SUFFIX}`);
+    // The settings list derives `isContact` too, not only `/calls/config`: the screen where
+    // somebody picks a category is where "which of these count as having reached them" matters,
+    // and making the reader infer it from the category name is asking them to know it by heart.
+    const justAdded = list.body.data.find((row) => row.name === `Wants a test drive ${SUFFIX}`);
+    expect(justAdded?.isContact).toBe(true);
+    expect(list.body.data.find((row) => row.category === 'wrong_number')?.isContact).toBe(false);
   });
 
   it('refuses to destroy an outcome calls still carry', async () => {

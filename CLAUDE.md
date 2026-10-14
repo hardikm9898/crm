@@ -536,6 +536,11 @@ prisma migrate deploy` after generating a migration.
   pointed at a row whose state the endpoint refuses (`POST /calls/:id/outcome` on a call that is
   already settled) answers 422 before the guard matters, and the sweep records a refusal it never
   earned. Aim it at a row in the state the endpoint expects: a call that was _dialled_, not logged.
+- **A cron does not fire with only the API and the worker running.** The repeatable jobs are
+  registered by a **third** process — `pnpm dev:scheduler` — so a sweep verified by hand against an
+  API and a worker alone waits for a tick that will never come, and the symptom is a feature that
+  works in its integration test and appears dead over HTTP. The worker's own startup log lists the
+  job names it will _consume_, which reads exactly like the job being scheduled.
 - **`pnpm test:int -- calls` does not filter anything** — the argument lands past vitest's file
   pattern and the whole suite runs, which is three minutes before the first assertion you wanted.
   `cd apps/api && pnpm exec vitest run calls.e2e-spec` is the form that does.
