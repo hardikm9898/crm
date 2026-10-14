@@ -846,6 +846,39 @@ message search (`FR-VIEW-1`).
 | `outbox_events`             | **Transactional outbox.** org?, `event_name`, `event_id UUID UQ`, `aggregate_type`, `aggregate_id`, `payload JSONB`, `occurred_at`, `published_at?`, `attempts`, `error?`. Index `(published_at NULLS FIRST, occurred_at)` for the dispatcher |
 | `idempotency_keys`          | org, `key`, `endpoint`, `request_hash`, `response_status`, `response_body JSONB`, `expires_at`. `UNIQUE (organization_id, endpoint, key)` (`FR-API-5`)                                                                                        |
 
+> **Amendment, 2026-10-14 (implementation, Phase 4 step 1 — capture forms).** `forms`, `form_fields`
+> and `form_submissions` are built as specified above, with five changes
+> ([ADR-0029](./decisions/ADR-0029-a-public-form-is-identified-by-its-own-key.md)):
+>
+> - **`forms.public_key` was added, and it is what the public URL carries.** The specification gave
+>   `forms` a `slug UQ per org`, which is the right identifier for the workspace to read and the
+>   wrong one for a public URL: `/f/contact-us` would belong to every workspace that ever named a
+>   form that. The key is 24 random bytes as base64url, unique across the platform, rotatable, and
+>   floored at 16 characters by `forms_public_key_long_enough` — a database constraint rather than a
+>   service rule, because this value decides which workspace a stranger's submission lands in.
+> - **The slug is unique among _live_ forms only.** `forms_live_slug` is a partial unique index on
+>   `(organization_id, slug) WHERE deleted_at IS NULL`, hand-written because Prisma cannot express
+>   it. A plain `@@unique` would cover soft-deleted rows, so a workspace that deleted "contact-us"
+>   could never make another one.
+> - **`form_submissions.status` gained `received`**, as the default. The four statuses in the
+>   specification are all **outcomes**, and a row written only once an outcome is known is precisely
+>   the row that is missing when the capture failed — which is the one case `FR-CAP-3` exists for.
+>   The row is written before the capture is attempted and updated with the outcome.
+> - **`leads.form_id` and `lead_touchpoints.form_id` were added**, both with composite FKs
+>   (`leads_form_same_org_fk`, `lead_touchpoints_form_same_org_fk`) and `RESTRICT`: the attribution
+>   is read a year later, so a form with captures is deactivated rather than deleted. §6.2 already
+>   listed `form_id` among the lead's attribution columns; the column did not exist.
+> - **`form_fields` carries a CHECK, not a convention.** `form_fields_one_target` makes a row that
+>   names both a standard field and a custom definition — or neither — unrepresentable; a question
+>   with no answer to write to is not a question. Two unique indexes stop a form asking the same
+>   thing twice, and they work _because_ Postgres treats NULLs as distinct: one covers
+>   `(organization_id, form_id, standard_field_key)` and the other the custom column, so the many
+>   rows with a NULL in either do not collide.
+>
+> `inbound_payloads`, `ingestion_errors`, `api_keys`, `api_logs` and the webhook tables remain as
+> specified and unbuilt: they belong to the public lead API and the outbound webhook steps. A form's
+> own payload lives in `form_submissions`, which is the same guarantee for this channel.
+
 ---
 
 ## 9. Automation

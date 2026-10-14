@@ -87,6 +87,10 @@ export const TENANT_MODELS = [
   'SlaPolicy',
   'SlaClock',
   'Escalation',
+  // Phase 4, step 1 — capture forms
+  'Form',
+  'FormField',
+  'FormSubmission',
 ] as const;
 
 export type TenantModel = (typeof TENANT_MODELS)[number];

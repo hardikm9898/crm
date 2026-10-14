@@ -123,6 +123,44 @@ describe('an unknown type degrades to a sentence, which is the whole point', () 
     expect(hasDescriber('lead.created')).toBe(true);
     expect(hasDescriber('whatsapp.template_sent')).toBe(false);
   });
+
+  it('prints what somebody typed into a capture form, which is the point of the entry', () => {
+    const described = describeEntry(
+      entry({
+        type: 'lead.form_submitted',
+        module: 'lead',
+        payload: {
+          formName: 'Website enquiry',
+          answers: [
+            { label: 'What do you need?', value: 'A 3BHK in Baner, possession this year' },
+            { label: 'Budget', value: '₹85,00,000' },
+          ],
+        },
+      }),
+    );
+    expect(described.label).toBe('Form');
+    expect(described.description).toContain('Website enquiry');
+    expect(described.description).toContain('A 3BHK in Baner');
+    expect(described.description).toContain('Budget: ₹85,00,000');
+  });
+
+  it('still reads as a sentence when a form asked nothing but a phone number', () => {
+    const described = describeEntry(
+      entry({ type: 'lead.form_submitted', module: 'lead', payload: { formName: 'Popup' } }),
+    );
+    expect(described.description).toBe('Filled in Popup.');
+  });
+
+  it('ignores an answer whose shape is not what it expects', () => {
+    const described = describeEntry(
+      entry({
+        type: 'lead.form_submitted',
+        module: 'lead',
+        payload: { formName: 'Website enquiry', answers: [{ label: 'Budget' }, 'nonsense', null] },
+      }),
+    );
+    expect(described.description).toBe('Filled in Website enquiry.');
+  });
 });
 
 describe('actors and wording', () => {

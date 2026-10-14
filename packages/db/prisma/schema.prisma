@@ -768,15 +768,20 @@ model Organization {
   payments       Payment[]
 
   // Phase 3 — tasks, follow-ups and SLA
-  slaPolicies         SlaPolicy[]
-  slaClocks           SlaClock[]
-  escalations         Escalation[]
-  taskTypes           TaskType[]
-  taskOutcomes        TaskOutcome[]
-  rescheduleReasons   RescheduleReason[]
-  tasks               Task[]
-  taskReschedules     TaskReschedule[]
-  taskReminders       TaskReminder[]
+  slaPolicies       SlaPolicy[]
+  slaClocks         SlaClock[]
+  escalations       Escalation[]
+  taskTypes         TaskType[]
+  taskOutcomes      TaskOutcome[]
+  rescheduleReasons RescheduleReason[]
+  tasks             Task[]
+  taskReschedules   TaskReschedule[]
+  taskReminders     TaskReminder[]
+
+  // Phase 4 — capture
+  forms               Form[]
+  formFields          FormField[]
+  formSubmissions     FormSubmission[]
   /// Which industry template this workspace applied, if any (`FR-ONB-2`).
   ///
   /// Recorded so the onboarding screen can say what was installed, and so a support conversation
@@ -785,8 +790,8 @@ model Organization {
   /// than `Restrict` because retiring a template from the catalogue must not be blocked by the
   /// workspaces that once used it; this is a simple FK, not one of the composite ones where
   /// `SetNull` would null a NOT NULL `organization_id`.
-  industryTemplate    IndustryTemplate?  @relation(fields: [industryTemplateKey], references: [key], onDelete: SetNull)
-  industryTemplateKey String?            @map("industry_template_key")
+  industryTemplate    IndustryTemplate? @relation(fields: [industryTemplateKey], references: [key], onDelete: SetNull)
+  industryTemplateKey String?           @map("industry_template_key")
 
   @@index([status])
   @@index([createdAt])
@@ -922,6 +927,8 @@ model Membership {
   assignedTasks Task[] @relation("task_assignee")
 
   slaClocks SlaClock[] @relation("sla_clock_assignee")
+
+  createdForms Form[] @relation("form_creator")
 
   @@unique([organizationId, id], name: "membership_tenant_key")
   @@unique([organizationId, userId])
@@ -1354,6 +1361,7 @@ model CustomFieldDefinition {
   organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   section      CustomFieldSection? @relation(fields: [organizationId, sectionId], references: [organizationId, id], onDelete: Restrict, map: "custom_field_definitions_section_same_org_fk")
   options      CustomFieldOption[]
+  formFields   FormField[]
 
   @@unique([organizationId, id], name: "custom_field_definition_tenant_key")
   @@unique([organizationId, entityType, key])
@@ -1429,6 +1437,7 @@ model LeadSource {
   organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   leads        Lead[]
   touchpoints  LeadTouchpoint[]
+  forms        Form[]
 
   @@unique([organizationId, id], name: "lead_source_tenant_key")
   @@unique([organizationId, name])
@@ -1509,6 +1518,7 @@ model Pipeline {
   stages       PipelineStage[]
   leads        Lead[]
   deals        Deal[]
+  forms        Form[]
 
   @@unique([organizationId, id], name: "pipeline_tenant_key")
   @@unique([organizationId, entityType, name])
@@ -1590,6 +1600,8 @@ model Lead {
 
   // ── Attribution ──────────────────────────────────────────────────────────
   leadSourceId   String?        @map("lead_source_id") @db.Uuid
+  /// The capture form this lead came through, when it came through one (`FR-CAP-2`).
+  formId         String?        @map("form_id") @db.Uuid
   landingPageUrl String?        @map("landing_page_url")
   /// source/medium/campaign/term/content/gclid/fbclid, as captured.
   utm            Json           @default("{}") @db.JsonB
@@ -1685,13 +1697,17 @@ model Lead {
 
   payments Payment[]
 
-  tasks          Task[]
-  slaClocks      SlaClock[]
-  calls          Call[]
+  tasks           Task[]
+  slaClocks       SlaClock[]
+  calls           Call[]
+  formSubmissions FormSubmission[]
   /// `Restrict` rather than `SetNull`: this is a composite FK, and `SetNull` would null the NOT
   /// NULL `organization_id` with it. The pointer is cleared by the recompute before a task is ever
   /// hard-deleted.
-  nextActionTask Task?      @relation("lead_next_action", fields: [organizationId, nextActionTaskId], references: [organizationId, id], onDelete: Restrict, map: "leads_next_action_task_same_org_fk")
+  nextActionTask  Task?            @relation("lead_next_action", fields: [organizationId, nextActionTaskId], references: [organizationId, id], onDelete: Restrict, map: "leads_next_action_task_same_org_fk")
+  /// `Restrict`: a form with captured leads is deactivated, not deleted — the attribution a report
+  /// reads a year later is the whole point of the column.
+  form            Form?            @relation(fields: [organizationId, formId], references: [organizationId, id], onDelete: Restrict, map: "leads_form_same_org_fk")
 
   @@unique([organizationId, id], name: "lead_tenant_key")
   /// The default list.
@@ -1705,6 +1721,8 @@ model Lead {
   @@index([organizationId, phoneE164])
   @@index([organizationId, whatsappE164])
   @@index([organizationId, leadSourceId, createdAt])
+  /// "Which leads did this form bring", and the referencing side of the FK into `forms`.
+  @@index([organizationId, formId, createdAt(sort: Desc)])
   @@index([organizationId, score(sort: Desc)])
   /// Ageing and recycling.
   @@index([organizationId, lastActivityAt])
@@ -1725,6 +1743,9 @@ model LeadTouchpoint {
   occurredAt       DateTime          @map("occurred_at") @db.Timestamptz(6)
   channel          TouchpointChannel
   leadSourceId     String?           @map("lead_source_id") @db.Uuid
+  /// Which form this touch came through. Attribution asks "which form brought them back", and a
+  /// touchpoint that only knows the channel cannot answer it (`FR-ATT-1`).
+  formId           String?           @map("form_id") @db.Uuid
   landingPageUrl   String?           @map("landing_page_url")
   utm              Json              @default("{}") @db.JsonB
   sessionId        String?           @map("session_id")
@@ -1736,11 +1757,14 @@ model LeadTouchpoint {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   lead         Lead         @relation(fields: [organizationId, leadId], references: [organizationId, id], onDelete: Cascade, map: "lead_touchpoints_lead_same_org_fk")
   source       LeadSource?  @relation(fields: [organizationId, leadSourceId], references: [organizationId, id], onDelete: Restrict, map: "lead_touchpoints_source_same_org_fk")
+  form         Form?        @relation(fields: [organizationId, formId], references: [organizationId, id], onDelete: Restrict, map: "lead_touchpoints_form_same_org_fk")
 
   @@unique([organizationId, id], name: "lead_touchpoint_tenant_key")
   @@unique([organizationId, leadId, sequence])
   @@index([organizationId, leadId, occurredAt])
   @@index([organizationId, channel, occurredAt])
+  /// The referencing side of the FK into `forms`, which Postgres does not index for us.
+  @@index([organizationId, formId, occurredAt])
   @@map("lead_touchpoints")
 }
 
@@ -1989,6 +2013,7 @@ model AssignmentRule {
   organization    Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   conditions      AssignmentRuleCondition[]
   poolMembers     AssignmentPoolMember[]
+  forms           Form[]
   roundRobinState RoundRobinState?
 
   @@unique([organizationId, id], name: "assignment_rule_tenant_key")
@@ -3536,4 +3561,182 @@ model Escalation {
   @@index([organizationId, createdAt(sort: Desc)])
   @@index([organizationId, acknowledgedAt])
   @@map("escalations")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Phase 4, step 1 — capture forms (docs/database-design.md §8)
+// ═══════════════════════════════════════════════════════════════════════════
+
+enum FormType {
+  embed
+  landing
+  popup
+
+  @@map("form_type")
+}
+
+enum FormSubmissionStatus {
+  /// Written before the capture is attempted, which is what makes this a never-lose store: the
+  /// submission that crashes the pipeline is the one whose row has to exist (`FR-CAP-3`).
+  received
+  processed
+  duplicate
+  rejected
+  error
+
+  @@map("form_submission_status")
+}
+
+/// A capture form (`FR-CAP-2`): the tenant's own question list, rendered on somebody else's page.
+///
+/// Two identifiers, deliberately. `slug` is the one the workspace chooses and reads, unique **per
+/// organization** as the database design says. `public_key` is the one in the public URL: unique
+/// across the platform, random, and the only thing the renderer and the submit endpoint accept —
+/// because a public route has no session to resolve the tenant from, and `/f/contact-us` would
+/// belong to every workspace at once (ADR-0029).
+model Form {
+  id             String   @id @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  name           String
+  slug           String
+  /// URL-safe random token. Rotatable: a form whose key is being spammed gets a new one, and the
+  /// old URL stops answering.
+  publicKey      String   @map("public_key")
+  type           FormType @default(embed)
+
+  /// Where captures land. Null means the workspace's defaults, resolved at capture time, so a form
+  /// built before a pipeline existed keeps working.
+  pipelineId       String? @map("pipeline_id") @db.Uuid
+  leadSourceId     String? @map("lead_source_id") @db.Uuid
+  /// An assignment rule this form's captures go through regardless of the ordered rule set — "the
+  /// website form always goes to the inside-sales pool".
+  assignmentRuleId String? @map("assignment_rule_id") @db.Uuid
+
+  /// Redirect URL, thank-you message, submit label, consent sentence, honeypot and CAPTCHA
+  /// switches. JSONB because each is presentation the tenant edits, and none is ever filtered on.
+  settings Json @default("{}") @db.JsonB
+
+  isActive         Boolean   @default(true) @map("is_active")
+  /// Maintained by the capture path, so a list can show "412 submissions" without counting rows.
+  submissionCount  Int       @default(0) @map("submission_count")
+  lastSubmissionAt DateTime? @map("last_submission_at") @db.Timestamptz(6)
+
+  createdById String?   @map("created_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  pipeline       Pipeline?       @relation(fields: [organizationId, pipelineId], references: [organizationId, id], onDelete: Restrict, map: "forms_pipeline_same_org_fk")
+  source         LeadSource?     @relation(fields: [organizationId, leadSourceId], references: [organizationId, id], onDelete: Restrict, map: "forms_source_same_org_fk")
+  assignmentRule AssignmentRule? @relation(fields: [organizationId, assignmentRuleId], references: [organizationId, id], onDelete: Restrict, map: "forms_assignment_rule_same_org_fk")
+  creator        Membership?     @relation("form_creator", fields: [organizationId, createdById], references: [organizationId, userId], onDelete: Restrict, map: "forms_creator_same_org_fk")
+
+  fields      FormField[]
+  submissions FormSubmission[]
+  leads       Lead[]
+  touchpoints LeadTouchpoint[]
+
+  @@unique([organizationId, id], name: "form_tenant_key")
+  /// The slug is unique among **live** forms, which Prisma cannot express: a `@@unique` here would
+  /// cover soft-deleted rows too, so a workspace that deleted "contact-us" could never make
+  /// another one. The partial unique index `forms_live_slug` is hand-written in the migration and
+  /// guarded by `schema-objects.int-spec.ts`.
+  /// Global, because it is the public URL.
+  @@unique([publicKey], name: "form_public_key")
+  @@index([organizationId, isActive, updatedAt(sort: Desc)])
+  @@index([organizationId, deletedAt])
+  /// The referencing sides of this table's own FKs, which Postgres does not index.
+  @@index([organizationId, pipelineId])
+  @@index([organizationId, leadSourceId])
+  @@index([organizationId, assignmentRuleId])
+  @@map("forms")
+}
+
+/// One question on a form. Exactly one of `standard_field_key` and `custom_field_definition_id` is
+/// set, which a CHECK constraint enforces: a row that is both, or neither, is a question with no
+/// answer to write to.
+model FormField {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+  formId         String @map("form_id") @db.Uuid
+
+  /// One of `FORM_STANDARD_FIELDS` in `@leados/shared` — the deliberately short list of things a
+  /// stranger may set. Validated against that list by the API, not by the database, because the
+  /// list grows with the product.
+  standardFieldKey        String? @map("standard_field_key")
+  customFieldDefinitionId String? @map("custom_field_definition_id") @db.Uuid
+
+  /// What the visitor reads. Defaulted from the standard field or the definition, then editable:
+  /// "Mobile number" reads better than "Phone" on an Indian form.
+  label       String
+  placeholder String?
+  helpText    String? @map("help_text")
+  isRequired  Boolean @default(false) @map("is_required")
+  sortOrder   Int     @default(0) @map("sort_order")
+  /// 0-based. A multi-step form is several steps of one row set, not several forms.
+  stepIndex   Int     @default(0) @map("step_index")
+  /// Narrows a select's choices for this form without touching the definition everything else uses.
+  options     Json?   @db.JsonB
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  form         Form                   @relation(fields: [organizationId, formId], references: [organizationId, id], onDelete: Cascade, map: "form_fields_form_same_org_fk")
+  definition   CustomFieldDefinition? @relation(fields: [organizationId, customFieldDefinitionId], references: [organizationId, id], onDelete: Restrict, map: "form_fields_definition_same_org_fk")
+
+  @@unique([organizationId, id], name: "form_field_tenant_key")
+  /// A form must not ask the same question twice. Postgres treats NULLs as distinct, so one
+  /// constraint per kind of field is exactly right: many custom-field rows have a NULL standard key.
+  @@unique([organizationId, formId, standardFieldKey], name: "form_field_standard_key")
+  @@unique([organizationId, formId, customFieldDefinitionId], name: "form_field_custom_key")
+  @@index([organizationId, formId, stepIndex, sortOrder])
+  @@index([organizationId, customFieldDefinitionId])
+  @@map("form_fields")
+}
+
+/// Every submission, whatever happened to it (`FR-CAP-3`).
+///
+/// Written **before** the capture is attempted and updated with the outcome, so a submission that
+/// crashed the pipeline is still a row somebody can read and replay. The raw payload is kept as
+/// sent — including answers to fields that were since deleted, which is the only way to answer
+/// "what did they actually type".
+model FormSubmission {
+  id             String  @id @db.Uuid
+  organizationId String  @map("organization_id") @db.Uuid
+  formId         String  @map("form_id") @db.Uuid
+  leadId         String? @map("lead_id") @db.Uuid
+
+  rawPayload Json    @map("raw_payload") @db.JsonB
+  utm        Json    @default("{}") @db.JsonB
+  sessionId  String? @map("session_id")
+  visitorId  String? @map("visitor_id")
+  /// A salted hash, never the address: enough to rate-limit and to recognise a flood, and not a
+  /// record of where a member of the public was sitting (docs/security.md §9).
+  ipHash     String? @map("ip_hash")
+  userAgent  String? @map("user_agent")
+  pageUrl    String? @map("page_url")
+  referrer   String?
+
+  status FormSubmissionStatus @default(received)
+  /// Why it was refused or what broke, in the words the endpoint answered with.
+  error  String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  form         Form         @relation(fields: [organizationId, formId], references: [organizationId, id], onDelete: Cascade, map: "form_submissions_form_same_org_fk")
+  /// `Restrict`, like every composite FK here: `SetNull` would try to clear `organization_id`,
+  /// which is NOT NULL. A lead is soft-deleted in normal use; the retention purge clears this
+  /// pointer before the row goes, and the submission's raw payload outlives the lead by design
+  /// (`FR-CAP-3`).
+  lead         Lead?        @relation(fields: [organizationId, leadId], references: [organizationId, id], onDelete: Restrict, map: "form_submissions_lead_same_org_fk")
+
+  @@unique([organizationId, id], name: "form_submission_tenant_key")
+  @@index([organizationId, formId, createdAt(sort: Desc)])
+  @@index([organizationId, status, createdAt(sort: Desc)])
+  /// The referencing side of the FK into `leads`.
+  @@index([organizationId, leadId])
+  @@map("form_submissions")
 }

@@ -79,6 +79,8 @@ interface Tenant {
   // `POST /calls/:id/outcome` is aimed at a call that genuinely still owes an answer.
   callId: string;
   callOutcomeId: string;
+  // Phase 4, step 1 — capture forms.
+  formId: string;
 }
 
 let orgA: Tenant;
@@ -334,6 +336,18 @@ async function createTenant(label: string): Promise<Tenant> {
     token,
   });
 
+  // A form of org A's own, so the `/forms/:id` routes are aimed at a real row. One question, and
+  // it is a contact field — the builder refuses a form that cannot reach anybody.
+  const form = await call<EnvelopeBody<{ id: string }>>(ctx.app, {
+    method: 'POST',
+    url: '/api/v1/forms',
+    payload: {
+      name: `Sweep form ${label}`,
+      fields: [{ standardFieldKey: 'phone', label: 'Phone', isRequired: true }],
+    },
+    token,
+  });
+
   const slaClock = await ctx.db.slaClock.findFirstOrThrow({
     where: { organizationId, leadId: lead.body.data.id },
   });
@@ -401,6 +415,7 @@ async function createTenant(label: string): Promise<Tenant> {
     escalationId: escalation.id,
     callId: dialled.body.data.call.id,
     callOutcomeId: callConfig.body.data.outcomes[0]?.id ?? '',
+    formId: form.body.data.id,
   };
 }
 
@@ -470,6 +485,23 @@ describe('every route declares its authorization', () => {
    */
   const PROVIDER_WEBHOOK_WRITES = ['POST /webhooks/email'];
 
+  /**
+   * Writes a **member of the public** makes, from a page this product does not control.
+   *
+   * One route, reviewed on its own terms: a capture form's submit endpoint. Its authentication and
+   * its tenant resolution are the same thing — the 32-character random `public_key` in the path,
+   * globally unique, rotatable, and floored at 16 characters by `forms_public_key_long_enough` so
+   * a short one cannot be stored (ADR-0029). There is no session to carry a permission, and a form
+   * whose whole purpose is to be filled in by strangers cannot have one.
+   *
+   * What keeps it from being a hole: the key must match an **active, undeleted** form (and an
+   * inactive one answers 404, exactly as a made-up key does); the submission is rate-limited per
+   * form and per address before a row is written; a honeypot drops bots silently; the answers are
+   * validated against the form's own field set; and nothing the caller sends can choose the
+   * pipeline, the source, the assignment or the owner — those come from the form.
+   */
+  const PUBLIC_CAPTURE_WRITES = ['POST /public/forms/:key/submissions'];
+
   it('gates every write outside /auth behind a permission', () => {
     // Authentication endpoints are necessarily public or self-scoped; everything else that
     // changes state must name the permission it needs, or appear in the reviewed set above.
@@ -481,7 +513,8 @@ describe('every route declares its authorization', () => {
           !route.path.startsWith('/auth') &&
           route.declaration !== 'permission' &&
           !SELF_SCOPED_WRITES.includes(`${route.httpMethod} ${route.path}`) &&
-          !PROVIDER_WEBHOOK_WRITES.includes(`${route.httpMethod} ${route.path}`),
+          !PROVIDER_WEBHOOK_WRITES.includes(`${route.httpMethod} ${route.path}`) &&
+          !PUBLIC_CAPTURE_WRITES.includes(`${route.httpMethod} ${route.path}`),
       )
       .map((route) => `${route.httpMethod} ${route.path}`);
     expect(unguardedWrites).toEqual([]);
@@ -495,6 +528,18 @@ describe('every route declares its authorization', () => {
       // `public`, not `exempt`: there is no caller identity at all, which is a different claim from
       // "the caller is acting on their own record".
       expect(route?.declaration, key).toBe('public');
+    }
+  });
+
+  it('keeps the public-capture exemptions honest', () => {
+    const routes = audit.collect();
+    for (const key of PUBLIC_CAPTURE_WRITES) {
+      const route = routes.find((candidate) => `${candidate.httpMethod} ${candidate.path}` === key);
+      expect(route, `${key} is listed as a public capture but no longer exists`).toBeDefined();
+      expect(route?.declaration, key).toBe('public');
+      // The key in the path *is* the authentication, so a public capture route that took no
+      // parameter would be one anybody could post to without knowing anything at all.
+      expect(route?.path.includes(':'), `${key} must identify the form in its path`).toBe(true);
     }
   });
 
@@ -627,6 +672,10 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       '/calls/:id': `/calls/${orgA.callId}`,
       '/calls/:id/outcome': `/calls/${orgA.callId}/outcome`,
       '/settings/call-outcomes/:id': `/settings/call-outcomes/${orgA.callOutcomeId}`,
+      // Phase 4, step 1 — capture forms
+      '/forms/:id': `/forms/${orgA.formId}`,
+      '/forms/:id/fields': `/forms/${orgA.formId}/fields`,
+      '/forms/:id/rotate-key': `/forms/${orgA.formId}/rotate-key`,
     };
 
     // An unmapped parameter would test nothing meaningful, so it is reported instead.

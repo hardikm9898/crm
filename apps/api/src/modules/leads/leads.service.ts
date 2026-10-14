@@ -9,6 +9,7 @@ import {
   searchTextFor,
   tenantContext,
   validateCustomValues,
+  type ActivityType,
   type CountryCode,
 } from '@leados/shared';
 import type { TouchpointChannel } from '@leados/db';
@@ -39,6 +40,60 @@ import type {
   SetTagsInput,
   UpdateLeadInput,
 } from './leads.dto.js';
+
+/**
+ * The capture transaction's own limits.
+ *
+ * `timeout` is how long the whole of `FR-CAP-4` may take inside one transaction, and `maxWait` how
+ * long it may wait for a connection from the pool. See the comment at the `$transaction` call.
+ */
+const CAPTURE_TRANSACTION = { timeout: 20_000, maxWait: 10_000 } as const;
+
+/**
+ * Capture context the **channel** knows and a client may not claim.
+ *
+ * Deliberately not part of `createLeadSchema`: `POST /leads` is a public-facing endpoint and a
+ * caller that could set `formId` or `formAnswers` could fabricate a form submission that never
+ * happened, and with it the attribution a marketing report is built on. These fields are passed
+ * by the capture channels inside the API — the form endpoint today, the public lead API and the ad
+ * connectors in the steps after it — and the schema being `.strict()` is what keeps them internal.
+ */
+export interface CaptureContext {
+  readonly formId?: string | null;
+  readonly formName?: string | null;
+  /** Label and value, as the visitor answered them, for the timeline entry. */
+  readonly formAnswers?: readonly { readonly label: string; readonly value: string }[];
+  readonly sessionId?: string | null;
+  readonly visitorId?: string | null;
+}
+
+/**
+ * The timeline entry a form capture adds, or nothing when the capture did not come from a form.
+ *
+ * A function rather than an inline ternary because both capture paths — a new lead and a repeat
+ * capture attached to an existing one — need exactly the same entry, and the second one is where
+ * the answers matter most: enrichment only fills blanks, so the sentence on the timeline is the
+ * only place "they now want a bigger flat" survives.
+ */
+function formEntry(
+  input: CaptureContext,
+  leadId: string,
+  occurredAt: Date,
+): { type: ActivityType; leadId: string; occurredAt: Date; payload: Record<string, unknown> }[] {
+  if (!input.formId) return [];
+  return [
+    {
+      type: ACTIVITY_TYPES.LEAD_FORM_SUBMITTED,
+      leadId,
+      occurredAt,
+      payload: {
+        formId: input.formId,
+        formName: input.formName ?? null,
+        answers: input.formAnswers ?? [],
+      },
+    },
+  ];
+}
 
 /**
  * Leads.
@@ -319,7 +374,7 @@ export class LeadsService {
 
   // ── Creating ──────────────────────────────────────────────────────────────
 
-  async create(input: CreateLeadInput) {
+  async create(input: CreateLeadInput & CaptureContext) {
     const principal = tenantContext.require('leads.create');
     const organizationId = principal.organizationId;
 
@@ -400,6 +455,7 @@ export class LeadsService {
           country: input.country ?? null,
           postalCode: input.postalCode ?? null,
           leadSourceId: input.leadSourceId ?? null,
+          formId: input.formId ?? null,
           landingPageUrl: input.landingPageUrl ?? null,
           utm: (input.utm ?? {}) as never,
           createdVia: input.createdVia ?? 'manual',
@@ -440,8 +496,10 @@ export class LeadsService {
           occurredAt: now,
           channel: touchpointChannelFor(input.createdVia ?? 'manual'),
           leadSourceId: input.leadSourceId ?? null,
+          formId: input.formId ?? null,
           landingPageUrl: input.landingPageUrl ?? null,
           utm: (input.utm ?? {}) as never,
+          sessionId: input.sessionId ?? null,
           costAttributable: isPaidChannel(input.createdVia ?? 'manual'),
         },
       });
@@ -576,6 +634,12 @@ export class LeadsService {
             utm: input.utm ?? {},
           },
         },
+        // What they typed, written in the capture's own transaction (`FR-CAP-2`). Two entries
+        // rather than one, for the reason `lead.converted` and `customer.created` are two: where
+        // somebody came from and what they said are different facts, and a form that captured a
+        // phone number and dropped "I need possession by March" would have thrown away the reason
+        // for the call.
+        ...formEntry(input, id, now),
         ...(assignedUserId
           ? [
               {
@@ -674,7 +738,7 @@ export class LeadsService {
         usedFallback: assignmentDecision?.usedFallback ?? false,
         explanation: assignmentDecision?.explanation ?? null,
       };
-    });
+    }, CAPTURE_TRANSACTION);
 
     return {
       id,
@@ -707,7 +771,7 @@ export class LeadsService {
    */
   private async attachToExisting(
     match: DuplicateCandidate,
-    input: CreateLeadInput,
+    input: CreateLeadInput & CaptureContext,
     contact: { phoneE164: string | null; phoneRaw: string | null; whatsappE164: string | null },
     custom: { values: Record<string, unknown>; searchText: string },
   ) {
@@ -778,6 +842,8 @@ export class LeadsService {
         (enrichment['email'] as string | undefined) ?? existing.email,
       );
 
+    // The same ceiling as the capture above, and for the same reason: a repeat capture is a
+    // capture, and losing it loses the touchpoint that says they came back.
     const sequence = await this.db.client.$transaction(async (tx) => {
       const last = await tx.leadTouchpoint.findFirst({
         where: { leadId: match.leadId },
@@ -795,8 +861,10 @@ export class LeadsService {
           occurredAt: now,
           channel: touchpointChannelFor(input.createdVia ?? 'manual'),
           leadSourceId: input.leadSourceId ?? null,
+          formId: input.formId ?? null,
           landingPageUrl: input.landingPageUrl ?? null,
           utm: (input.utm ?? {}) as never,
+          sessionId: input.sessionId ?? null,
           costAttributable: isPaidChannel(input.createdVia ?? 'manual'),
         },
       });
@@ -843,6 +911,10 @@ export class LeadsService {
             repeatCapture: true,
           },
         },
+        // A repeat capture through a form said something too, and it is often the newer, better
+        // answer: the enrichment rule only fills blanks, so the sentence on the timeline is where
+        // "they now want a bigger flat" actually survives.
+        ...formEntry(input, match.leadId, now),
       ]);
 
       await this.audit.recordInTransaction(tx, {
@@ -872,7 +944,7 @@ export class LeadsService {
       ]);
 
       return next;
-    });
+    }, CAPTURE_TRANSACTION);
 
     return {
       id: match.leadId,

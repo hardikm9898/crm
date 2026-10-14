@@ -2669,3 +2669,266 @@ describe('layer 3 — a call cannot be stitched to another tenant (FR-CALL-1..3)
     expect(theirs).toBeNull();
   });
 });
+
+describe('layer 3 — a capture form cannot be stitched to another tenant (FR-CAP-2)', () => {
+  /** A form in whichever workspace is asked for, named by the random tail of its own id. */
+  async function form(organizationId: string, over: Record<string, unknown> = {}) {
+    const id = newId();
+    await h.unscoped.form.create({
+      data: {
+        id,
+        organizationId,
+        name: `Enquiry ${id.slice(-8)}`,
+        slug: `enquiry-${id.slice(-8)}`,
+        publicKey: `key-${id.slice(-8)}-${newId().slice(-8)}`,
+        ...over,
+      },
+    });
+    return id;
+  }
+
+  it('blocks a form against another tenant’s pipeline, source, rule or creator', async () => {
+    await expect(form(h.orgA.organizationId, { pipelineId: h.orgB.pipelineId })).rejects.toThrow(
+      /forms_pipeline_same_org_fk|foreign key/i,
+    );
+
+    // Created, not found: a test that looks for "some other workspace's source" passes only
+    // because an earlier run left one behind.
+    const theirSource = newId();
+    await h.unscoped.leadSource.create({
+      data: {
+        id: theirSource,
+        organizationId: h.orgB.organizationId,
+        name: `Walk-in ${theirSource.slice(-8)}`,
+      },
+    });
+    await expect(form(h.orgA.organizationId, { leadSourceId: theirSource })).rejects.toThrow(
+      /forms_source_same_org_fk|foreign key/i,
+    );
+
+    const theirRule = newId();
+    await h.unscoped.assignmentRule.create({
+      data: {
+        id: theirRule,
+        organizationId: h.orgB.organizationId,
+        name: `Theirs ${theirRule.slice(-8)}`,
+        priority: 100,
+        strategy: 'specific_user',
+        target: { userId: h.orgB.userId },
+      },
+    });
+    await expect(form(h.orgA.organizationId, { assignmentRuleId: theirRule })).rejects.toThrow(
+      /forms_assignment_rule_same_org_fk|foreign key/i,
+    );
+
+    await expect(form(h.orgA.organizationId, { createdById: h.orgB.userId })).rejects.toThrow(
+      /forms_creator_same_org_fk|foreign key/i,
+    );
+  });
+
+  it('keeps the public key unique across the whole platform, because it is a URL', async () => {
+    // Two workspaces must not be able to mint the same key: it is the only thing the public
+    // endpoints have to go on, and a collision would route one business's captures to the other.
+    const key = `shared-key-${newId().slice(-12)}`;
+    await form(h.orgA.organizationId, { publicKey: key });
+    await expect(form(h.orgB.organizationId, { publicKey: key })).rejects.toThrow(
+      /forms_public_key_key|unique/i,
+    );
+  });
+
+  it('refuses a public key short enough to guess', async () => {
+    await expect(form(h.orgA.organizationId, { publicKey: 'short' })).rejects.toThrow(
+      /forms_public_key_long_enough/i,
+    );
+  });
+
+  it('refuses a slug that would not survive being in a URL', async () => {
+    await expect(form(h.orgA.organizationId, { slug: 'Website Enquiry' })).rejects.toThrow(
+      /forms_slug_is_url_safe/i,
+    );
+    await expect(form(h.orgA.organizationId, { slug: 'contact/us' })).rejects.toThrow(
+      /forms_slug_is_url_safe/i,
+    );
+  });
+
+  it('lets a deleted form’s slug be used again, which a plain unique would not', async () => {
+    const slug = `reused-${newId().slice(-8)}`;
+    const first = await form(h.orgA.organizationId, { slug });
+    await expect(form(h.orgA.organizationId, { slug })).rejects.toThrow(/forms_live_slug|unique/i);
+    await h.unscoped.form.update({ where: { id: first }, data: { deletedAt: new Date() } });
+    // The point of the partial index: a workspace that deleted "contact-us" can make another one.
+    await expect(form(h.orgA.organizationId, { slug })).resolves.toBeTruthy();
+  });
+
+  it('refuses a question that is both a standard field and a custom one, or neither', async () => {
+    const mine = await form(h.orgA.organizationId);
+    const field = (over: Record<string, unknown>) =>
+      h.unscoped.formField.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          formId: mine,
+          label: 'Phone',
+          ...over,
+        },
+      });
+    await expect(field({})).rejects.toThrow(/form_fields_one_target/i);
+
+    const definition = newId();
+    await h.unscoped.customFieldDefinition.create({
+      data: {
+        id: definition,
+        organizationId: h.orgA.organizationId,
+        entityType: 'lead',
+        key: `budget_${definition.slice(-8)}`,
+        label: 'Budget',
+        type: 'number',
+      },
+    });
+    await expect(
+      field({ standardFieldKey: 'phone', customFieldDefinitionId: definition }),
+    ).rejects.toThrow(/form_fields_one_target/i);
+    await expect(field({ standardFieldKey: 'phone' })).resolves.toBeTruthy();
+  });
+
+  it('blocks a field against another tenant’s custom field definition', async () => {
+    const mine = await form(h.orgA.organizationId);
+    const theirs = newId();
+    await h.unscoped.customFieldDefinition.create({
+      data: {
+        id: theirs,
+        organizationId: h.orgB.organizationId,
+        entityType: 'lead',
+        key: `theirs_${theirs.slice(-8)}`,
+        label: 'Theirs',
+        type: 'text',
+      },
+    });
+    await expect(
+      h.unscoped.formField.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          formId: mine,
+          label: 'Theirs',
+          customFieldDefinitionId: theirs,
+        },
+      }),
+    ).rejects.toThrow(/form_fields_definition_same_org_fk|foreign key/i);
+  });
+
+  it('refuses the same question twice on one form', async () => {
+    const mine = await form(h.orgA.organizationId);
+    const ask = () =>
+      h.unscoped.formField.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          formId: mine,
+          label: 'Phone',
+          standardFieldKey: 'phone',
+        },
+      });
+    await expect(ask()).resolves.toBeTruthy();
+    await expect(ask()).rejects.toThrow(/form_field_standard_key|unique/i);
+  });
+
+  it('insists a submission that became a lead names one, and a refused one says why', async () => {
+    const mine = await form(h.orgA.organizationId);
+    const submission = (over: Record<string, unknown>) =>
+      h.unscoped.formSubmission.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          formId: mine,
+          rawPayload: { 'standard:phone': '+919845012345' },
+          ...over,
+        },
+      });
+
+    // `received` is the state the row is written in, before anything has been attempted: that is
+    // what makes this a never-lose store rather than a record of what worked (`FR-CAP-3`).
+    await expect(submission({})).resolves.toBeTruthy();
+    await expect(submission({ status: 'processed' })).rejects.toThrow(
+      /form_submissions_outcome_has_a_lead/i,
+    );
+    await expect(submission({ status: 'rejected' })).rejects.toThrow(
+      /form_submissions_refusal_is_explained/i,
+    );
+    await expect(
+      submission({ status: 'rejected', error: 'Honeypot field was filled in.' }),
+    ).resolves.toBeTruthy();
+    await expect(submission({ status: 'processed', leadId: h.orgA.leadId })).resolves.toBeTruthy();
+  });
+
+  it('blocks a submission against another tenant’s lead or form', async () => {
+    const mine = await form(h.orgA.organizationId);
+    await expect(
+      h.unscoped.formSubmission.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          formId: mine,
+          rawPayload: {},
+          status: 'processed',
+          leadId: h.orgB.leadId,
+        },
+      }),
+    ).rejects.toThrow(/form_submissions_lead_same_org_fk|foreign key/i);
+
+    const theirForm = await form(h.orgB.organizationId);
+    await expect(
+      h.unscoped.formSubmission.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          formId: theirForm,
+          rawPayload: {},
+        },
+      }),
+    ).rejects.toThrow(/form_submissions_form_same_org_fk|foreign key/i);
+  });
+
+  it('blocks a lead and a touchpoint from claiming another tenant’s form', async () => {
+    const theirForm = await form(h.orgB.organizationId);
+    await expect(
+      h.unscoped.lead.update({
+        where: { id: h.orgA.leadId },
+        data: { formId: theirForm },
+      }),
+    ).rejects.toThrow(/leads_form_same_org_fk|foreign key/i);
+
+    await expect(
+      h.unscoped.leadTouchpoint.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          leadId: h.orgA.leadId,
+          sequence: 99,
+          occurredAt: new Date('2026-04-01T10:00:00.000Z'),
+          channel: 'form',
+          formId: theirForm,
+        },
+      }),
+    ).rejects.toThrow(/lead_touchpoints_form_same_org_fk|foreign key/i);
+  });
+
+  it('scopes forms and their submissions like every other tenant table', async () => {
+    const mine = await form(h.orgA.organizationId);
+    await h.unscoped.formSubmission.create({
+      data: {
+        id: newId(),
+        organizationId: h.orgA.organizationId,
+        formId: mine,
+        rawPayload: { 'standard:phone': '+919845012345' },
+      },
+    });
+
+    const theirs = await tenantContext.run(h.orgB.principal, async () => ({
+      form: await h.db.form.findFirst({ where: { id: mine } }),
+      submissions: await h.db.formSubmission.findMany({ where: { formId: mine } }),
+    }));
+    expect(theirs.form).toBeNull();
+    expect(theirs.submissions).toEqual([]);
+  });
+});

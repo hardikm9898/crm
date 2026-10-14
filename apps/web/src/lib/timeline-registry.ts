@@ -97,6 +97,27 @@ const DESCRIBERS: Readonly<Record<string, Describer>> = {
       text(payload, 'sourceName') ? ` — ${text(payload, 'sourceName')}` : ''
     }.`,
   }),
+  'lead.form_submitted': (payload) => {
+    // The answers, verbatim, because that is the whole value of the entry. An activity type with no
+    // describer renders as a bare row and its payload never reaches the screen — the trap
+    // `deal.won` paid for — and here the payload *is* what the business owner opened the page for.
+    const answers = Array.isArray(payload['answers']) ? payload['answers'] : [];
+    const lines = answers
+      .filter(
+        (answer): answer is { label: string; value: string } =>
+          typeof answer === 'object' &&
+          answer !== null &&
+          typeof (answer as { label?: unknown }).label === 'string' &&
+          typeof (answer as { value?: unknown }).value === 'string',
+      )
+      .map((answer) => `${answer.label}: ${answer.value}`);
+    return {
+      label: 'Form',
+      description: `Filled in ${text(payload, 'formName') ?? 'a form'}${
+        lines.length > 0 ? ` — ${lines.join(' · ')}` : ''
+      }.`,
+    };
+  },
   'lead.assigned': (payload) => ({
     label: 'Assigned',
     description: assignmentSentence(payload),

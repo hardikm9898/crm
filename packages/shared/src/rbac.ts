@@ -48,6 +48,8 @@ export const PERMISSIONS = {
   CALL_LOG: 'call:log',
   PAYMENT_READ: 'payment:read',
   PAYMENT_RECORD: 'payment:record',
+  FORM_READ: 'form:read',
+  FORM_MANAGE: 'form:manage',
   // communication
   CONVERSATION_READ: 'conversation:read',
   CONVERSATION_REPLY: 'conversation:reply',
@@ -272,6 +274,30 @@ export const PERMISSION_CATALOGUE: readonly PermissionDefinition[] = [
     supportsScope: true,
   },
   {
+    /**
+     * A form is a *marketing* object with a lead-capture consequence, which is why reading it is
+     * its own permission rather than part of `settings:read`: a marketing manager who may design
+     * the website's enquiry form has no business in the workspace's settings, and an executive who
+     * works leads has no business changing where captures land.
+     */
+    key: P.FORM_READ,
+    module: 'forms',
+    description: 'View capture forms and their submissions',
+    supportsScope: false,
+  },
+  {
+    /**
+     * `form:manage` is a higher-privilege grant than it looks: a form decides which pipeline a
+     * capture enters, which source it is attributed to and which assignment rule it goes through,
+     * and its public key is reachable by anybody on the internet. Hence a separate permission from
+     * reading, and `supportsScope: false` — a form belongs to the workspace, not to a branch.
+     */
+    key: P.FORM_MANAGE,
+    module: 'forms',
+    description: 'Create and edit capture forms',
+    supportsScope: false,
+  },
+  {
     key: P.CONVERSATION_READ,
     module: 'conversations',
     description: 'View conversations',
@@ -416,6 +442,9 @@ export const SYSTEM_ROLE_TEMPLATES: readonly RoleTemplate[] = [
       { permission: P.CONVERSATION_ASSIGN, scope: 'branch' },
       { permission: P.REPORT_READ, scope: 'branch' },
       { permission: P.EXPORT_DATA, scope: 'branch' },
+      // Reading the forms, not editing them: a manager asks "which form is bringing these leads"
+      // and that is a question about their own numbers.
+      { permission: P.FORM_READ, scope: ALL },
     ],
   },
   {
@@ -459,6 +488,9 @@ export const SYSTEM_ROLE_TEMPLATES: readonly RoleTemplate[] = [
       { permission: P.MARKETING_MANAGE, scope: ALL },
       { permission: P.TEMPLATE_MANAGE, scope: ALL },
       { permission: P.EXPORT_DATA, scope: ALL },
+      // The person who builds the campaign builds the form it points at.
+      { permission: P.FORM_READ, scope: ALL },
+      { permission: P.FORM_MANAGE, scope: ALL },
     ],
   },
   {
@@ -481,6 +513,7 @@ export const SYSTEM_ROLE_TEMPLATES: readonly RoleTemplate[] = [
       { permission: P.REPORT_READ, scope: ALL },
       { permission: P.AUDIT_READ, scope: ALL },
       { permission: P.BILLING_READ, scope: ALL },
+      { permission: P.FORM_READ, scope: ALL },
     ],
   },
 ];

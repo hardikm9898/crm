@@ -151,6 +151,12 @@ const REQUIRED_INDEXES = [
   // all. `email_messages_in_flight` is the operator's "what is still waiting to hear back".
   'email_messages_provider_message_unique',
   'email_messages_in_flight',
+  // Capture forms (`FR-CAP-2`, `FR-CAP-3`). The slug is unique among **live** forms only — a
+  // `@@unique` would cover soft-deleted rows and stop a workspace reusing the slug of a form they
+  // deleted — and `form_submissions_unresolved` is the operator's queue of captures that never
+  // became a lead, partial so it stays small however many succeed.
+  'forms_live_slug',
+  'form_submissions_unresolved',
 ];
 
 /**
@@ -449,6 +455,36 @@ const REQUIRED_CONSTRAINTS = [
   // have been sent.
   'email_messages_suppressed_is_explained',
   'email_messages_delivered_after_sent',
+  // Capture forms. `form_fields_one_target` is the one that makes a question with no answer to
+  // write to unrepresentable; `forms_public_key_long_enough` puts the floor on the token that
+  // decides which workspace a stranger's submission lands in (ADR-0029) in the database rather
+  // than in whichever service mints it; and the two submission checks are `CASE` expressions
+  // because `status` has five values and a CHECK that evaluates to NULL is satisfied.
+  'form_fields_one_target',
+  'form_fields_label_present',
+  'form_fields_position_non_negative',
+  'forms_name_present',
+  'forms_slug_is_url_safe',
+  'forms_public_key_long_enough',
+  'forms_submission_count_non_negative',
+  'forms_settings_is_object',
+  'form_submissions_outcome_has_a_lead',
+  'form_submissions_refusal_is_explained',
+  'form_submissions_payload_is_object',
+  'form_submissions_utm_is_object',
+  // The composite FKs: a form cannot point at another workspace's pipeline, source or rule, a
+  // field cannot point at another workspace's definition, and a submission cannot point at
+  // another workspace's lead.
+  'forms_pipeline_same_org_fk',
+  'forms_source_same_org_fk',
+  'forms_assignment_rule_same_org_fk',
+  'forms_creator_same_org_fk',
+  'form_fields_form_same_org_fk',
+  'form_fields_definition_same_org_fk',
+  'form_submissions_form_same_org_fk',
+  'form_submissions_lead_same_org_fk',
+  'leads_form_same_org_fk',
+  'lead_touchpoints_form_same_org_fk',
 ];
 
 describe('hand-written indexes survive every generated migration', () => {

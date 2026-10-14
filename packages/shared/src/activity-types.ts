@@ -15,6 +15,15 @@ export const ACTIVITY_TYPES = {
   // lead lifecycle
   LEAD_CREATED: 'lead.created',
   LEAD_SOURCE_CAPTURED: 'lead.source_captured',
+  /**
+   * What somebody typed into a capture form (`FR-CAP-2`).
+   *
+   * Separate from `lead.source_captured`, which says *where* they came from: this one carries the
+   * answers, and the answers are the thing whoever rings them actually needs. A form that asked
+   * "what are you looking for" and then dropped the reply would be a feature that captured a phone
+   * number and threw away the reason for the call.
+   */
+  LEAD_FORM_SUBMITTED: 'lead.form_submitted',
   LEAD_ASSIGNED: 'lead.assigned',
   LEAD_REASSIGNED: 'lead.reassigned',
   LEAD_UNASSIGNED: 'lead.unassigned',
