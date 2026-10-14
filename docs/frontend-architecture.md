@@ -601,3 +601,60 @@ delete the tags already on a lead; a 375 px viewport; and a permission run as an
 ten. Three of the four defects fixed in this step were found only here, and the fourth only by the
 fixture: Zod's developer-facing messages reaching users, a refused form emptying itself, and an
 unindexed foreign key making lead deletion quadratic.
+
+### 10.7 As built — Phase 4, step 1 (capture forms, and the page a stranger fills in)
+
+`/forms`, `/forms/new`, `/forms/[id]` and — outside the authenticated shell — `/f/[key]`.
+
+The route structure in §2 puts public pages under `(public)/`. The visitor-facing form is at
+`app/f/[key]` instead: a bare segment with no group, because it shares nothing with the marketing
+site or the sign-in screens and because its URL is pasted into other people's websites, where every
+extra segment is something that can be mistyped. It renders with no navigation, no session and no
+workspace switcher — nothing that would make sense to somebody who has never seen this product, and
+nothing that would look wrong inside an `<iframe>` on a business's own site.
+
+- **The form posts straight to the API from the browser**, which is the opposite of every other
+  form in this app and deliberate: there is no session to attach, the endpoint is public, and
+  routing a stranger's submission through our own server would add a hop that can fail without
+  adding anything. It is also what lets the page work inside an iframe on another domain. The
+  origin comes from `apiBaseUrl()` — `NEXT_PUBLIC_API_URL`, which is public precisely because the
+  browser needs it.
+- **The answers are React state, so a refusal loses nothing.** A 400 puts each message under its
+  own field, and sends the visitor back to the first step that has something wrong with it — a
+  field error for a question on another step is otherwise invisible, which is how a form becomes a
+  dead end. This is the trap every server-action form in this product had to be taught, arrived at
+  from the other direction.
+- **"Next" validates this step only.** Refusing to advance because of a question not yet shown
+  reads as a broken form.
+- **The honeypot is off-screen rather than `display: none`.** A field a bot can see in the markup
+  and a person cannot see on the screen is the whole trick; `hidden` is a flag some bots read.
+  `tabIndex={-1}` and `aria-hidden` keep it away from a keyboard and a screen reader.
+- **A switched-off form and a made-up key render the same page** ("no longer taking enquiries"),
+  because any difference turns the key into an oracle (ADR-0029).
+
+On the workspace side, `/forms/[id]` is ordered the way somebody uses it: the **link and the embed
+snippet first**, because the next thing anybody wants after building a form is to put it on their
+website; then the questions; then where captures land; then what has come in.
+
+- **The builder holds the question list as state and saves it in one call.** A form's questions are
+  an ordered list edited as a whole, and per-field saves would let "move this to step 2" half-apply.
+- **It refuses to save a form that cannot reach anybody**, with the sentence under the list and the
+  button disabled — the same check the API makes, made where somebody can act on it rather than
+  after pressing Save. The questions already on the form are not offered again, so the "same
+  question twice" refusal cannot be reached at all.
+- **The submissions list prints the answers, with the labels the questions had** — and an answer to
+  a question that has since been deleted is shown, in italics, as "not a question on this form"
+  rather than dropped: the payload is kept whole precisely so "what did they actually type" has an
+  answer. A dropdown's answer is shown as the **choice**, not the value stored under it, which the
+  browser check caught reading "Which service: interiors" back to the person who wrote that
+  dropdown.
+- **The refusals are on the list screen too.** A form whose required question nobody can answer
+  looks exactly like a quiet week, and the refused submissions are the only rows on that screen
+  anybody has to act on.
+
+**One suite, 30 checks**, all green: building a form by clicking from the menu, the key's link and
+the iframe snippet, the builder's own refusal, a visitor filling in a two-step form at 375 px with
+no session at all, a missing answer named under its own box, the thank-you in the workspace's own
+words, the submission and the lead it became, the timeline entry carrying what they typed, a bot
+thanked exactly as a person is with the refusal visible to the workspace, and a switched-off form
+answering a sentence a visitor can act on.

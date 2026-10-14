@@ -52,6 +52,10 @@ export const NAV_SECTIONS: readonly NavSection[] = [
   {
     heading: 'Grow',
     items: [
+      // Capture forms sit at the top of Grow rather than in Workspace settings: a form is a
+      // marketing object with a lead-capture consequence, and the person who builds the campaign
+      // builds the form it points at.
+      { label: 'Forms', href: '/forms', permissions: ['form:read'] },
       { label: 'Campaigns', href: '/campaigns', permissions: ['marketing:read'], phase: 9 },
       { label: 'Website', href: '/website', permissions: ['settings:manage'], phase: 7 },
       { label: 'Reports', href: '/reports', permissions: ['report:read'], phase: 2 },

@@ -595,6 +595,27 @@ prisma migrate deploy` after generating a migration.
   it is the harness and not the screen. A browser check that taps [Call] therefore continues in a
   new tab, which is also the honest stand-in for putting the phone down. The same will apply to
   `wa.me` and `mailto:`.
+- **Prisma's interactive transactions time out after five seconds, and the capture transaction can
+  reach it.** `LeadsService.create` does the whole of `FR-CAP-4` in one transaction — the insert,
+  the touchpoint, two history rows, the assignment engine (which takes a row lock, so two
+  simultaneous captures queue), the SLA clock, the timeline, the audit row and the outbox events.
+  A cold process answering its first form submission took 5.8 s, Prisma aborted, and **the lead was
+  lost with a 500**. It was visible only because `form_submissions` had already stored the payload,
+  which is the whole argument for `FR-CAP-3`. Both capture transactions now pass
+  `CAPTURE_TRANSACTION` (20 s, with the reason written beside it): a capture is the one write whose
+  failure costs a lead the business has already paid for.
+- **A browser-side `fetch` has to go through `apiBaseUrl()`.** The public form is the first thing
+  in this app that calls the API from the **visitor's** browser, and it works because
+  `NEXT_PUBLIC_API_URL` is public precisely for that: a value only the container network can
+  resolve would fail, and inside an `<iframe>` on somebody else's domain there is no same-origin
+  fallback worth guessing. Reaching for a second environment variable with a new name — the first
+  draft invented `NEXT_PUBLIC_API_ORIGIN` — is how a deployment ends up with two answers to one
+  question, one of them unset.
+- **A stored option value is not the answer somebody gave.** The submissions list read "Which
+  service: interiors" back to the person who had written that dropdown — the wire format of their
+  own choice, the same mistake as a timeline reading "Changed billingLine1". Anywhere a `select`'s
+  answer is displayed, map the value back to its label, from the form's own override or from the
+  definition.
 - **Advice on a screen has to be shown when somebody can take it.** Today's summary offered "a good
   moment to call the leads nobody has reached" under the condition "no other clause is true" — and
   the uncalled-lead clause is itself one of those clauses, so the suggestion appeared **only** on

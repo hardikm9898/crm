@@ -17,7 +17,15 @@ import { RedisService } from '../../infra/redis/redis.service.js';
  */
 const FORM_LIMIT = 300;
 const FORM_WINDOW_SECONDS = 3600;
-const ADDRESS_LIMIT = 10;
+/**
+ * Thirty an hour from one address, not ten.
+ *
+ * Nobody fills the same form in thirty times, but a mobile carrier's NAT and an office router put
+ * hundreds of real people behind one address — and on this endpoint the expensive failure is
+ * refusing a genuine enquiry, not accepting a junk one. The per-form ceiling is what actually
+ * stops a flood; this counter is for one machine hammering one form.
+ */
+const ADDRESS_LIMIT = 30;
 const ADDRESS_WINDOW_SECONDS = 3600;
 
 @Injectable()

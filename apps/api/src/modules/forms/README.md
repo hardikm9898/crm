@@ -66,8 +66,11 @@ neither.
 - **A bot is thanked, not told.** The honeypot (`website_url`, a fixed name so the renderer and the
   endpoint cannot disagree) is recorded as a refusal and answered with the thank-you. A 400 would
   teach a spam tool to leave the hidden field alone.
-- **Two rate-limit counters**, per form and per address, for the reason the login throttle has two.
-  Fails closed: an unlimited public write endpoint is the worse outcome when Redis is down.
+- **Two rate-limit counters**, per form (300/hour) and per address (30/hour), for the reason the
+  login throttle has two. The per-address figure is deliberately loose: a carrier NAT or an office
+  router puts hundreds of real people behind one address, and on this endpoint refusing a genuine
+  enquiry is the expensive failure. Fails closed — an unlimited public write endpoint is the worse
+  outcome when Redis is down.
 - **The address is hashed, never stored.** `form_submissions.ip_hash` is an HMAC under the
   deployment's master key — enough to count submissions from one place, not a record of where a
   member of the public was sitting.

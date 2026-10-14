@@ -208,22 +208,46 @@ export function describeAnswers(
   options: readonly BuilderOptions['customFields'][number][] = [],
 ): { label: string; value: string; unmapped: boolean }[] {
   const labels = new Map<string, string>();
+  /** The choice a visitor picked, by the value that was stored for it. */
+  const choices = new Map<string, Map<string, string>>();
+  const remember = (name: string, list: readonly { value: string; label: string }[]): void => {
+    if (list.length === 0) return;
+    choices.set(name, new Map(list.map((option) => [option.value, option.label])));
+  };
+
   for (const field of fields) {
     const name =
       field.standardFieldKey !== null
         ? `standard:${field.standardFieldKey}`
         : `custom:${field.customFieldDefinitionId}`;
     labels.set(name, field.label);
+    if (field.options) remember(name, field.options);
   }
-  for (const definition of options) labels.set(`custom:${definition.id}`, definition.label);
+  for (const definition of options) {
+    labels.set(`custom:${definition.id}`, definition.label);
+    if (!choices.has(`custom:${definition.id}`)) {
+      remember(`custom:${definition.id}`, definition.options);
+    }
+  }
 
   return Object.entries(answers)
     .filter(([key]) => key !== HONEYPOT_FIELD)
     .map(([key, value]) => ({
       label: labels.get(key) ?? key,
-      value: Array.isArray(value) ? value.map(String).join(', ') : String(value ?? ''),
+      // The option's **label**, not the value stored under it: a submission that read
+      // "Which service: interiors" is showing a business owner the wire format of their own
+      // dropdown, which is the same mistake as a timeline reading "Changed billingLine1".
+      value: readable(value, choices.get(key)),
       unmapped: !labels.has(key),
     }));
+}
+
+function readable(value: unknown, choices: Map<string, string> | undefined): string {
+  const one = (entry: unknown): string => {
+    const text = String(entry ?? '');
+    return choices?.get(text) ?? text;
+  };
+  return Array.isArray(value) ? value.map(one).join(', ') : one(value);
 }
 
 // ── Loaders ─────────────────────────────────────────────────────────────────

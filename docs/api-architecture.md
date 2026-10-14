@@ -407,8 +407,8 @@ POST /whatsapp/campaigns                     consent-checked bulk (FR-WA-10)
 ### Capture, integrations, developer platform
 
 ```
-CRUD /forms | /forms/{id}/fields    GET /forms/{id}/embed-code
-GET  /forms/{id}/submissions
+CRUD /forms | PUT /forms/{id}/fields   POST /forms/{id}/rotate-key
+GET  /forms/submissions?formId=       GET /forms/builder-options
 CRUD /api-keys                      POST /api-keys/{id}/rotate | /revoke
 GET  /api-logs                      GET /ingestion/payloads | /ingestion/errors
 POST /ingestion/errors/{id}/replay
@@ -792,6 +792,33 @@ rate-limited per IP + per key, honeypot/CAPTCHA-aware.
 Other public endpoints: `POST /api/public/v1/forms/{formSlug}/submit`,
 `GET /api/public/v1/forms/{formSlug}/schema` (renders dynamic fields client-side),
 `POST /api/public/v1/events` (tracker fallback), `GET /api/public/v1/health`.
+
+> **Amendment, 2026-10-14 (implementation, Phase 4 step 1 — capture forms).** The two form
+> endpoints are built, with three changes
+> ([ADR-0029](./decisions/ADR-0029-a-public-form-is-identified-by-its-own-key.md)):
+>
+> - **They live under `/api/v1/public/forms/{key}`, not `/api/public/v1/...`.** One prefix, one
+>   envelope, one exception filter, one route-authorization sweep — and the sweep is what keeps a
+>   public write honest. A second mount point would be a second set of all of those, and the first
+>   thing to drift would be the error shape. `/api/public/v1` remains the plan for the
+>   server-to-server ingestion API, whose authentication (HMAC) and rate limits really are
+>   different; this amendment is not a decision about that.
+> - **The identifier is a random `public_key`, not the form's slug.** A slug is unique per
+>   workspace, so `/forms/contact-us` would belong to every workspace that chose that name. The key
+>   is 32 characters, globally unique and rotatable, and it is the authentication as well as the
+>   tenant resolution.
+> - **`GET /…/{key}` _is_ the schema endpoint**, and answers only what a renderer needs: the
+>   business's name, the form's own copy, and the fields with their labels, kinds, options and
+>   steps. No ids, no counts, nothing about the pipeline, the source or the assignment rule — this
+>   response is readable by anybody with the URL, and an e2e assertion fails if any of those
+>   appears in it. `POST /…/{key}/submissions` is the submit, named for the thing it creates.
+>
+> The workspace-side CRUD is as sketched, with `PUT /forms/{id}/fields` replacing the whole ordered
+> set in one call rather than per-field writes (a builder edits a list), `POST /forms/{id}/rotate-key`
+> for a URL that has to be revoked, and **no** `GET /forms/{id}/embed-code`: the snippet is one
+> `<iframe>` line built from the key, so an endpoint for it would be a round trip to assemble a
+> string the client already has. `GET /forms/submissions?formId=` is top-level and filtered, like
+> calls and tasks before it, because the refusals are read across forms.
 
 **Test tooling per tenant (`FR-CAP-6`):** `POST /api/v1/ingestion/test` replays a sample payload
 against the live pipeline in dry-run mode and returns each step's decision (normalized values,

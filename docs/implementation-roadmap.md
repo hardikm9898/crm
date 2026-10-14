@@ -1664,7 +1664,7 @@ were not met**, done rather than declared — and both found something.
 "the arithmetic … converts each window boundary on its own local day, but no test crosses one". The
 first half is right and the second was not: `packages/shared/src/business-hours.spec.ts` has had a
 `describe('a clock change')` block with four Europe/Berlin cases since step 2. What had never been
-exercised was everything *between* the arithmetic and the database — the workspace's own
+exercised was everything _between_ the arithmetic and the database — the workspace's own
 `working_hours` rows, `SlaCalendarService` turning them into a calendar, the holiday date-key
 conversion, and the instant that ends up stored in `sla_clocks.due_at`. A calendar-level test cannot
 see any of it. So `sla.e2e-spec.ts` gained five cases that each build a real workspace in a named
@@ -1689,25 +1689,25 @@ Writing them found the trap now in `CLAUDE.md`: driving `startForLead` through t
 otherwise have written — the first time one of those FKs has fired in anger.
 
 **The zero-training criterion, done as a scripted walk-through.** "A non-technical tester completes
-*call the overdue lead, log the outcome, schedule tomorrow's follow-up* without help" cannot be
+_call the overdue lead, log the outcome, schedule tomorrow's follow-up_ without help" cannot be
 asserted by a test that navigates by URL: that proves the endpoints work and says nothing about
 whether anybody could find them. So the walk-through types **nothing but the sign-in link** — every
 step after it is a tap on something the previous screen offered, on a 375 px phone, and every
-assertion is about what the screen *says*. 38 checks, all passing: the first sentence on Today names
+assertion is about what the screen _says_. 38 checks, all passing: the first sentence on Today names
 the overdue work; the card carries the person, the number and "2 days late"; the actions are `Call`,
 `Done`, `Move`; `[Call]` is wired to that lead's own number; the finish form asks one question in
 the workspace's own words; saving too early is refused in a sentence rather than a code; the next
 follow-up is offered on the same form, already ticked, already filled with tomorrow at 10:00, so
 nothing has to be typed; and the same tap both completes the call and plans the next one, to the
 minute. Then the second route to the same journey — the menu, the list, the person's name, the dial
-button that hands the number to the phone *and* records the attempt, the amber row that asks what
+button that hands the number to the phone _and_ records the attempt, the amber row that asks what
 happened before being asked, and the follow-up planned from the lead's own card.
 
 **It found two copy defects, which is what the criterion is for.** Today's summary sentence read
 **"0 follow-ups left today · 1 overdue · 1 new lead to call"** — a nought beside a contradiction, on
 a screen with a late follow-up plainly on it. And the sentence's one piece of advice, "a good moment
 to call the leads nobody has reached", was shown under the condition "no other clause is true" —
-but the uncalled-lead clause *is* one of those clauses, so the suggestion appeared **only** on days
+but the uncalled-lead clause _is_ one of those clauses, so the suggestion appeared **only** on days
 when there were none of them to call. Both were invisible to the existing browser check, whose
 "omits what is zero" assertion tested `/ 0 /` against a string whose zero was the first character:
 a sentence assembled from clauses needs a test per shape, not per clause. `describeDay` now leads
@@ -1745,6 +1745,94 @@ credential vault, health checks, generic mapping templates); Meta Lead Ads; Goog
   retryable; SSRF protections tested against private addresses.
 - Meta Lead Ads: duplicate webhook delivery ⇒ one lead; token revocation surfaces as a reconnect prompt.
 - OpenAPI diff check active; published docs include working copy-paste examples.
+
+### Step 1 — capture forms, and the page a stranger fills in ✅ _(landed 2026-10-14)_
+
+`FR-CAP-1`, `FR-CAP-2`, `FR-CAP-3`, `FR-CAP-4`, `FR-CAP-5`. The first capture channel that does not
+belong to a signed-in person: a form rendered on somebody else's website, filled in by somebody
+who has never seen this product, landing as a lead with its first-response promise already running.
+
+**Three tenant tables**, plus two columns §6.2 had already named and which did not exist. `forms`,
+`form_fields` and `form_submissions`; `leads.form_id` and `lead_touchpoints.form_id`, both with
+composite FKs and `RESTRICT`, because "which form brought this lead" and "which form brought them
+back" are questions attribution has to be able to answer a year later.
+
+**The identifier was the first decision, and the specification had it wrong.** §8 gave `forms` a
+`slug UQ per org` — right for the workspace to read, wrong for a public URL, because
+`/f/contact-us` would belong to every workspace that ever named a form that. So `forms.public_key`:
+24 random bytes as base64url, unique across the platform, rotatable in one click, and floored at 16
+characters by a **database** constraint, because that value is the authentication — it decides which
+workspace a stranger's submission lands in. The slug stays as the workspace's own name for the form,
+unique among its **live** forms only (a partial index, so a deleted "contact-us" can be made again).
+An inactive form answers 404, exactly as a key that never existed does: any other answer makes the
+key an oracle. All of it is
+[ADR-0029](./decisions/ADR-0029-a-public-form-is-identified-by-its-own-key.md).
+
+**One ingestion path, as `FR-CAP-4` asks.** A submission goes through `LeadsService.create` — the
+same method the lead form and the import use — so duplicate detection, scoring, assignment, the SLA
+clock, the timeline and the outbox events all happen exactly as they do everywhere else. The lookup
+crosses tenants under `withPlatformScope` (there is no session to scope by) and every write then
+happens inside `tenantContext.run(systemPrincipal(...))`. What the channel knows and a client must
+not claim — `formId`, `formName`, `formAnswers`, `sessionId` — travels as an internal
+`CaptureContext` that is deliberately **not** part of `createLeadSchema`: a caller who could set
+`formId` could fabricate a form submission and the attribution a marketing report is built on.
+
+**The submission row is written before the capture is attempted**, as `received` — an amendment to
+§8, which listed only the four outcomes. A row written once an outcome is known is precisely the row
+that is missing when the capture failed. **It paid for itself on the first run:** the first capture
+in a cold process took 5.8 s, Prisma aborted the transaction at its five-second default, and a lead
+was lost with a 500 — visible only because the payload had already been stored. Both capture
+transactions now carry a 20 s ceiling with the reasoning written beside them, and the trap is in
+`CLAUDE.md`.
+
+**What a form may ask for is a short, fixed list** (`FORM_STANDARD_FIELDS`), plus the workspace's own
+lead fields. No status, stage, pipeline, owner, tags or score: a public form offering them would let
+a stranger set the workspace's own decisions, and a spec asserts that none of them is ever on the
+list. A consent tick writes the `consent_*` columns. A free-text message has no column in this
+phase, so every answer is recorded as a `lead.form_submitted` timeline entry carrying label and
+value, in the capture's own transaction — "I need possession by March" is the reason for the call,
+and a form that captured the number and dropped the sentence would have thrown it away.
+
+**The defences are a honeypot, two counters and a hash.** A bot is **thanked**, not told: a 400
+teaches a spam tool to leave the hidden field alone, so the refusal is recorded and the thank-you is
+returned. The rate limit counts per form and per address, like the login throttle, and fails closed.
+`ip_hash` is an HMAC under the deployment's master key — enough to count submissions from one place,
+not a record of where a member of the public was sitting. CAPTCHA is a settings flag with no
+provider behind it, said plainly rather than implied.
+
+**Two screens and a page.** `/forms` lists the forms **and the submissions that became nothing**,
+because a form whose required question nobody can answer looks exactly like a quiet week.
+`/forms/[id]` puts the link and the iframe snippet first — the next thing anybody wants after
+building a form is to put it on their website — then the question builder, which holds the list as
+state, saves it in one call, does not offer a question already on the form, and refuses to save a
+form that cannot reach anybody with the sentence under the list rather than after a press of Save.
+`/f/[key]` is outside the authenticated shell: no navigation, no session, multi-step, honeypot
+off-screen rather than `display: none`, answers held in React state so a refusal loses nothing, and
+a switched-off form rendering the same sentence a made-up key does.
+
+**Verified.** 1 950 tests green (850 unit, 1 100 integration), 84 of them new: a 27-case forms suite
+over real HTTP (what a form may ask for, what the public definition gives away, a capture through
+the shared path, the timeline entry carrying the answers, a repeat capture attached to the existing
+lead, a refusal recorded as a row, a bot thanked, and four cross-tenant checks), 12 cross-tenant
+database guarantees, 22 new objects in the schema-objects guard, 20 shared-vocabulary cases, 18 in
+the web app's reconciliation spec, and 3 for the new timeline describer. Then **50 HTTP checks**
+against a live API, worker and scheduler, and **30 browser checks** driving both sides — including a
+visitor filling in a two-step form at 375 px with no session at all.
+
+**Two defects the browser found.** The submissions list read "Which service: interiors" back to the
+person who had written that dropdown — the stored value rather than the choice, the same mistake as
+a timeline reading "Changed billingLine1". And the builder's own labels are **input values**, not
+page text, so the check that read them as text passed through a card that was rendering perfectly;
+both are now asserted the way the screen actually holds them.
+
+**Carried forward, named rather than assumed:** the embed is a copyable `<iframe>` rather than a
+hosted loader — a one-line script that renders inside the host page's CSS belongs with the website
+builder in Phase 9. `FR-CAP-5`'s one-click "create a custom field from this unmapped answer" waits
+for the public lead API, where the same surfacing is needed for a payload nobody mapped at all;
+unmapped answers are kept whole and logged today. `inbound_payloads`, `ingestion_errors`, the
+`api_keys` family and the webhook tables remain unbuilt and are the next steps' work. And
+`form_submissions` grows with traffic the tenant does not control, refusals included: it is indexed
+for the two questions anybody asks and will need the retention treatment Phase 10 writes down.
 
 ---
 
@@ -1923,7 +2011,7 @@ partially landed, with the specific gaps named.
 ## Immediate next step
 
 _This section names the next step only; what each landed step actually did is in the step entries
-above. Last reviewed 2026-10-14, after Phase 3 step 8._
+above. Last reviewed 2026-10-14, after Phase 4 step 1._
 
 **Phase 3 is finished, exit criteria included.** Every item of scope is built — tasks, reminders,
 reschedule with a mandatory reason, complete-with-next-follow-up, "no next action", the overdue
@@ -1937,16 +2025,27 @@ after the sign-in link. The other four were already met and tested: `/my/today` 
 overdue and near-breach escalating exactly once, and Today usable one-handed at 375 px with queued
 actions.
 
-The next step is therefore the first step of **Phase 4 — capture and the developer platform**: the
-dynamic form builder and the public form renderer, which is where "never lose a lead" starts being
-a promise about somebody else's traffic rather than about our own screens.
+**Phase 4 has started.** Step 1 built capture forms: the builder, the public renderer at
+`/f/[key]`, the embed snippet, and a submission store that keeps every payload whether or not a
+lead came out of it. The next step is the **public lead API** (`FR-CAP-6`, `FR-API-2..5`): a
+server-to-server shell around the same `LeadsService.create` call, authenticated by a public key
+and an HMAC signature rather than by a URL, idempotent on a client-supplied key, writing
+`inbound_payloads` as the never-lose store for every channel after this one, with
+`ingestion_errors` and a replay. Three of Phase 4's six exit criteria are about that endpoint, and
+`FR-CAP-5`'s one-click "create a custom field from this unmapped answer" belongs with it: the
+surfacing is the same for a form's unmapped answer and a payload nobody mapped at all.
 
-Then the rest of **Phase 4**: the public lead API with HMAC and idempotency, the raw-payload store
-that makes "never lose a lead" true, API keys, outbound webhooks, OpenAPI, the integration
-framework, and Meta/Google lead ads. The
+Then the rest of **Phase 4**: API keys with scopes, rotation and an IP allowlist; api logs;
+outbound webhooks; OpenAPI; the integration framework; and Meta/Google lead ads. The
 inbound webhook built in step 7 is the first of that shape and deliberately not under
 `/wh/{provider}/{connectionId}`: connection ids arrive with the framework, and the email webhook has
 no per-tenant connection to name.
+
+Carried forward from Phase 4 step 1: the embed is a copyable `<iframe>` rather than a hosted
+loader (Phase 9, with the website builder); `FR-CAP-5`'s one-click "create a custom field from this"
+waits for the public lead API, where the same surfacing is needed; CAPTCHA is a settings flag with
+no provider behind it; and `form_submissions` grows with traffic the tenant does not control, so it
+belongs in the retention policy Phase 10 writes down.
 
 Carried forward from step 8: the walk-through and the thirteen browser checks before it are run by
 hand from scripts that are not in the repository — the same arrangement every phase has used, and
