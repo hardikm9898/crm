@@ -1,5 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { PERMISSIONS, isOpenStatus, notificationType, withPlatformScope } from '@leados/shared';
+import {
+  PERMISSIONS,
+  channelsFor,
+  isOpenStatus,
+  notificationType,
+  withPlatformScope,
+} from '@leados/shared';
 import type { Job } from 'bullmq';
 import type { Logger } from 'pino';
 import { DbService } from '../../infra/db/db.service.js';
@@ -7,6 +13,9 @@ import { LOGGER } from '../../infra/observability/logger.module.js';
 import { JOBS, QUEUES } from '../../infra/queue/queue.constants.js';
 import type { JobProcessor } from '../../infra/queue/job-processor.js';
 import type { JobPayload } from '../../infra/queue/queue.service.js';
+import { APP_CONFIG } from '../../infra/config/config.module.js';
+import type { AppConfig } from '../../infra/config/config.schema.js';
+import { EmailSenderService } from '../../infra/mail/email-sender.service.js';
 import { NotificationsService } from './notifications.service.js';
 
 /**
@@ -196,6 +205,7 @@ export class NotificationReleaseProcessor implements JobProcessor<JobPayload> {
 
   constructor(
     private readonly db: DbService,
+    private readonly notifications: NotificationsService,
     @Inject(LOGGER) private readonly logger: Logger,
   ) {}
 
@@ -214,7 +224,7 @@ export class NotificationReleaseProcessor implements JobProcessor<JobPayload> {
         where: { deferredUntil: { lte: now }, supersededAt: null },
         orderBy: { deferredUntil: 'asc' },
         take: limit,
-        select: { id: true, organizationId: true, type: true, data: true },
+        select: { id: true, organizationId: true, userId: true, type: true, data: true },
       }),
     );
 
@@ -236,9 +246,38 @@ export class NotificationReleaseProcessor implements JobProcessor<JobPayload> {
         }
       });
       if (stale) superseded += 1;
-      else released += 1;
+      else {
+        released += 1;
+        // The email goes out **here**, not when the notification was written: a held row is one the
+        // inbox is deliberately hiding, and an email about it at 21:40 would break the only promise
+        // quiet hours make. The ones that turned out not to matter are superseded above and get
+        // nothing, which is the whole point of re-checking them.
+        if (await this.wantsEmail(row.organizationId, row.userId, row.type)) {
+          await this.notifications.queueEmail(row.id);
+        }
+      }
     }
     return { released, superseded };
+  }
+
+  /**
+   * Whether this person asked for this type by email.
+   *
+   * Read at **release**, not at write: somebody who switched email off while a notification sat in
+   * their quiet window has switched it off, and honouring the older answer would be the product
+   * arguing with a setting it can see.
+   */
+  private async wantsEmail(organizationId: string, userId: string, type: string): Promise<boolean> {
+    const preference = await withPlatformScope('notify release: read channel choice', async () =>
+      this.db.client.notificationPreference.findUnique({
+        where: { organizationId_userId_type: { organizationId, userId, type } },
+        select: { channels: true },
+      }),
+    );
+    const chosen = Array.isArray(preference?.channels)
+      ? preference.channels.filter((entry): entry is string => typeof entry === 'string')
+      : undefined;
+    return channelsFor(type, chosen).includes('email');
   }
 
   /**
@@ -289,4 +328,106 @@ export class NotificationReleaseProcessor implements JobProcessor<JobPayload> {
     if (!clock) return true;
     return clock.state !== 'running';
   }
+}
+
+interface NotificationEmailPayload extends JobPayload {
+  readonly notificationId?: string;
+}
+
+/**
+ * Emails one notification to the person it belongs to (`FR-NOT-2`).
+ *
+ * The notification row is the record; this is a **delivery** of it. So the subject is the
+ * notification's own title, the body is its own sentence, and the link is the one the inbox would
+ * have taken them to — a second vocabulary for the same event is how an email and an app end up
+ * telling somebody different things.
+ *
+ * Three things it refuses to do:
+ *
+ *  * **It does not re-decide the channel.** `NotificationsService.create` already read the
+ *    preference and chose; reading it again here could disagree with the first read, and the person
+ *    would get an email for a notification the inbox decided not to write.
+ *  * **It does not email a notification that is held or superseded.** A row the inbox is hiding is
+ *    one nothing should have arrived about — the whole promise of quiet hours — and the release
+ *    sweep enqueues the ones it lets through.
+ *  * **It does not fail a job for a suppressed address.** `EmailSenderService` answers
+ *    `suppressed`, with a row saying which suppression stopped it, and that is a finished outcome
+ *    rather than something to retry for ever.
+ */
+@Injectable()
+export class NotificationEmailProcessor implements JobProcessor<NotificationEmailPayload> {
+  readonly queue = QUEUES.NOTIFICATIONS;
+  readonly jobName = JOBS.NOTIFY_EMAIL;
+
+  constructor(
+    private readonly db: DbService,
+    private readonly email: EmailSenderService,
+    @Inject(APP_CONFIG) private readonly config: AppConfig,
+    @Inject(LOGGER) private readonly logger: Logger,
+  ) {}
+
+  async process(payload: NotificationEmailPayload, _job: Job): Promise<void> {
+    const notificationId = payload.notificationId;
+    if (!notificationId) {
+      this.logger.error({ payload }, 'notification email job has no notification id');
+      return;
+    }
+
+    const row = await withPlatformScope('notify email: load notification', async () =>
+      this.db.client.notification.findFirst({
+        where: { id: notificationId },
+        select: {
+          id: true,
+          type: true,
+          title: true,
+          body: true,
+          link: true,
+          deferredUntil: true,
+          supersededAt: true,
+          userId: true,
+          // Through `Membership`, because that is how a person is referenced on a tenant table
+          // (rule 2) — and it is also the check that matters: somebody removed from the workspace
+          // should stop getting its email.
+          membership: {
+            select: {
+              status: true,
+              deletedAt: true,
+              user: { select: { email: true, deletedAt: true } },
+            },
+          },
+        },
+      }),
+    );
+    if (!row) {
+      this.logger.warn({ notificationId }, 'notification vanished before its email was sent');
+      return;
+    }
+    // Held or dropped: the inbox is hiding it, so nothing should arrive about it.
+    if (row.deferredUntil !== null || row.supersededAt !== null) return;
+    const person = row.membership;
+    if (!person || person.deletedAt !== null || person.status !== 'active') return;
+    if (person.user.deletedAt !== null) return;
+
+    const link = row.link ? `${this.config.WEB_ORIGIN}${row.link}` : this.config.WEB_ORIGIN;
+    const outcome = await this.email.send({
+      to: person.user.email,
+      kind: 'notification',
+      subject: row.title,
+      text:
+        `${row.body ? `${row.body}\n\n` : ''}${link}\n\n` +
+        `You are getting this because email is switched on for “${describeNotificationType(row.type)}”. ` +
+        `Change that at ${this.config.WEB_ORIGIN}/notifications.`,
+    });
+    if (outcome.status !== 'sent') {
+      this.logger.info(
+        { notificationId, status: outcome.status, reason: outcome.reason },
+        'notification email not sent',
+      );
+    }
+  }
+}
+
+/** The label from the shared registry, so the footer names the switch somebody would go and find. */
+function describeNotificationType(type: string): string {
+  return notificationType(type)?.label ?? type;
 }

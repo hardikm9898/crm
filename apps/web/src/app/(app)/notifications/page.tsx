@@ -134,15 +134,25 @@ export default async function NotificationsPage() {
             >
               <div className="flex flex-col divide-y divide-[var(--color-border)]/60">
                 {section.types.map((entry) => (
-                  <TypeSwitch key={entry.type} entry={entry} />
+                  <TypeSwitch
+                    key={entry.type}
+                    entry={entry}
+                    channels={preferences.deliverableChannels}
+                  />
                 ))}
               </div>
             </Card>
           ))}
 
-          <p className="text-xs text-[var(--color-text-muted)]">
-            In-app only for now. Email and WhatsApp arrive with their own channels, and until they
-            do this screen does not offer a tick box that would silently drop every message.
+          <p className="text-xs text-[var(--color-text-muted)]" data-channel-note>
+            {/*
+              The list comes from the API, so this sentence cannot drift from what the product can
+              actually send — which is the point: a screen offering a tick box for a channel that
+              drops every message is worse than one that says the channel is not here yet.
+            */}
+            In the app and by email. WhatsApp arrives with the shared inbox, and until it does this
+            screen does not offer a tick box that would silently drop every message. An email is
+            only sent once a held notification is released, so quiet hours mean quiet.
           </p>
         </div>
       )}

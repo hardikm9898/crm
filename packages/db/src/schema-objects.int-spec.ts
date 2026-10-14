@@ -146,6 +146,11 @@ const REQUIRED_INDEXES = [
   // Keyed on `started_at` alone, which is the only index on this table that is not prefixed by
   // `organization_id`: the nudge sweep runs across every tenant and cannot use one that is.
   'calls_awaiting_outcome',
+  // Email (`FR-PRV-2`). `email_messages_provider_message_unique` is the idempotency gate a provider
+  // webhook needs, partial because a **suppressed** send never reached a provider and has no id at
+  // all. `email_messages_in_flight` is the operator's "what is still waiting to hear back".
+  'email_messages_provider_message_unique',
+  'email_messages_in_flight',
 ];
 
 /**
@@ -434,6 +439,16 @@ const REQUIRED_CONSTRAINTS = [
   'calls_task_same_org_fk',
   'calls_outcome_same_org_fk',
   'calls_agent_same_org_fk',
+  // Email (`FR-PRV-2`). The normalisation checks are the load-bearing pair: an address stored in
+  // any other form is one the suppression list can never match, and the mail would keep going out.
+  'email_messages_to_normalised',
+  'email_suppressions_identifier_normalised',
+  'email_suppressions_identifier_is_an_address',
+  'email_messages_sent_has_a_provider',
+  // "Why did this never arrive" has to be answerable, and a refused send must not also claim to
+  // have been sent.
+  'email_messages_suppressed_is_explained',
+  'email_messages_delivered_after_sent',
 ];
 
 describe('hand-written indexes survive every generated migration', () => {

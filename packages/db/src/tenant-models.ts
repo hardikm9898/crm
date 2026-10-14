@@ -114,6 +114,15 @@ export const PLATFORM_MODELS = [
   'MfaRecoveryCode',
   'JobFailure',
   'SchedulerHeartbeat',
+  /**
+   * Phase 3, step 7 — email. Platform, deliberately: a verification or a reset is about a *user*,
+   * who may belong to several workspaces or to none, and a suppression is a fact about a mailbox
+   * rather than about one workspace's relationship with it. A nullable `organization_id` would
+   * have put them half in the tenant registry, where the scoping extension hides exactly the rows
+   * that have no workspace (ADR-0028).
+   */
+  'EmailMessage',
+  'EmailSuppression',
 ] as const;
 
 export function isTenantModel(model: string | undefined): model is TenantModel {

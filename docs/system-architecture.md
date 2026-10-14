@@ -206,6 +206,7 @@ modules/leads/
 | `api-platform`      | api_keys, api_logs, rate-limit policies                                                                      | `api_key.created                                                         | revoked`                          |
 | `audit`             | audit_logs (append-only), impersonation_logs                                                                 | —                                                                        |
 | `privacy`           | consents, suppressions, dsr_requests, retention_policies                                                     | `consent.revoked`                                                        |
+| `mail` (infra)      | email_messages, email_suppressions — the delivery log and the platform suppression list                      | —                                                                        |
 | `imports`/`exports` | import_jobs, import_rows, export_jobs                                                                        | `import.completed`, `export.ready`                                       |
 | `ai`                | ai_requests, ai_outputs, ai_usage, per-org settings                                                          | `ai.output_created`                                                      |
 | `admin`             | Super Admin read models, tenant health scores, system health, support tickets                                | —                                                                        |

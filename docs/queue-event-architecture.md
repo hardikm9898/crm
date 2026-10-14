@@ -241,6 +241,27 @@ All schedules are working-hours/timezone aware where they touch humans — a fol
 > `task.completed`, `task.rescheduled` and `task.cancelled` are recorded and listed with no
 > subscribers, so a typo in an event name shows up as "unsubscribed" rather than as silence.
 
+> **Amendment, 2026-10-14 (implementation, Phase 3 step 7).** `notify.email` is built, on the
+> `notifications` queue. It is **not** driven by an event: `NotificationsService.create` enqueues it
+> directly, with the notification's own id as the job id, because the thing being delivered is that
+> row rather than the domain event that caused it — and the person's channel choice has already been
+> read by the gate that wrote it
+> ([ADR-0028](./decisions/ADR-0028-email-sits-behind-a-port-and-a-bounce-is-a-fact-about-a-mailbox.md)).
+>
+> - **A queue hop, never an inline send.** A notification must not wait for a provider, and a
+>   provider outage must not fail the write that caused it.
+> - **A held notification is not emailed until it is released.** `deferred_until` means the inbox is
+>   deliberately hiding the row, so an email about it at 21:40 would break the only promise quiet
+>   hours make. `notifications.release` enqueues the ones it lets through, re-reading the channel
+>   choice as it does — somebody who switched email off while a notification sat in their window has
+>   switched it off. The ones it supersedes get nothing.
+> - **A suppressed address does not fail the job.** `EmailSenderService` answers `suppressed`, with a
+>   row naming the suppression, and that is a finished outcome rather than something to retry.
+>
+> No cron was added. The delivery webhook is what updates a message's status, and a message stuck in
+> `sent` for ever is visible through `email_messages_in_flight` rather than swept — there is nothing
+> useful to _do_ to it without asking the provider, which is the Phase 10 operator console's job.
+
 > **Amendment, 2026-10-14 (implementation, Phase 3 step 6).** `call.outcome-sweep` is built, on
 > `maintenance` with the other platform-wide sweeps, and it is **load-bearing rather than
 > housekeeping**. With no telephony provider the product hands a number to a phone and never learns

@@ -289,6 +289,29 @@ does is safe (`FR-TL-1`).
 >   what every past call reads as, which is not a thing to do from the screen where somebody is
 >   logging one.
 
+> **Amendment, 2026-10-14 (implementation, Phase 3 step 7 — email).** Two screens changed, and both
+> changes are the same idea: a setting that was greyed out became real, and a silence became a
+> sentence.
+>
+> - **`/notifications` now has a tick box per channel per type**, not one on/off switch. `email`
+>   appeared there the moment there was a sender behind it; the channels the product still cannot
+>   deliver on are **not rendered at all**, because a greyed-out box invites somebody to try it and a
+>   live one would be a promise the product breaks. The list comes from the API
+>   (`deliverableChannels`), so the sentence under the card cannot drift from what is true. The row
+>   submits the **whole** channel set — PUT semantics, the same as the lead tag picker — because the
+>   set is the intended final answer and a delta would make "turn email off" and "I never had it on"
+>   indistinguishable.
+> - **`/settings/members` marks a member the platform cannot email**, with the reason as a sentence
+>   ("Email is bouncing — this address does not exist") and the date. The alternative is silence: a
+>   colleague whose address hard-bounced stops receiving every notification they chose email for, and
+>   nothing anywhere would say so. The reason is translated out of the column's vocabulary on
+>   purpose — "bounce" tells somebody nothing, and "the address does not exist" tells them to go and
+>   ask their colleague for a different one.
+>
+> There is deliberately **no screen for the suppression list itself**. It is platform data, the
+> operator console that would edit it is Phase 10, and a tenant-facing screen listing other
+> workspaces' bounced addresses is not a screen this product can have.
+
 ### 5.3 Shared WhatsApp inbox (`FR-WA-7/8`)
 
 Three panes on desktop (conversations | messages | lead context), stacked with back navigation on

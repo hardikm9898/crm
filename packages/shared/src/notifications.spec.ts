@@ -57,7 +57,10 @@ describe('the type registry', () => {
 
   it('declares every channel the design names, and says which can be sent today', () => {
     expect([...NOTIFICATION_CHANNELS]).toEqual(['in_app', 'email', 'whatsapp', 'push']);
-    expect([...DELIVERABLE_CHANNELS]).toEqual(['in_app']);
+    // `email` joined the list in Phase 3 step 7, when there was a sender behind it. `whatsapp`
+    // arrives with the Phase 5 inbox and `push` later still; until then a tick box for either
+    // would be a promise the product breaks.
+    expect([...DELIVERABLE_CHANNELS]).toEqual(['in_app', 'email']);
   });
 
   it('looks a type up, and does not invent one', () => {
@@ -80,8 +83,13 @@ describe('channelsFor', () => {
   });
 
   it('drops a channel nothing can deliver on, rather than pretending', () => {
-    expect(channelsFor('task.overdue', ['email', 'in_app'])).toEqual(['in_app']);
-    expect(channelsFor('task.overdue', ['email'])).toEqual([]);
+    expect(channelsFor('task.overdue', ['whatsapp', 'in_app'])).toEqual(['in_app']);
+    expect(channelsFor('task.overdue', ['whatsapp'])).toEqual([]);
+  });
+
+  it('keeps email, now that something sends it, in the order it was chosen', () => {
+    expect(channelsFor('task.overdue', ['email', 'in_app'])).toEqual(['email', 'in_app']);
+    expect(channelsFor('task.overdue', ['email'])).toEqual(['email']);
   });
 
   it('delivers an unregistered type in-app rather than silently dropping it', () => {

@@ -114,16 +114,28 @@ export function QuietHoursForm({ preferences }: { preferences: NotificationPrefe
 }
 
 /**
- * One switch per type, each its own form.
+ * One row per type, with a box per channel the product can actually deliver on.
  *
- * Not one form with a Save button: a screen where somebody flips a switch, walks away, and is
- * woken at midnight by the notification they believed they had turned off is worse than one that
- * takes a tap per change. The button says what it will do, not what the state is, so there is
- * never a moment where the control and the truth disagree.
+ * Not one form with a Save button: a screen where somebody flips a switch, walks away, and is woken
+ * at midnight by the notification they believed they had turned off is worse than one that saves on
+ * change. The row submits the **whole** channel set, because the set is the intended final answer —
+ * the same PUT semantics the lead tag picker uses, and for the same reason.
+ *
+ * `email` appeared here in Phase 3 step 7, when there was a sender behind it. The channels this
+ * release cannot deliver on are not rendered at all: a greyed-out tick box invites somebody to try
+ * it, and a live one would be a promise the product breaks.
  */
-export function TypeSwitch({ entry }: { entry: NotificationTypePreference }) {
+export function TypeSwitch({
+  entry,
+  channels,
+}: {
+  entry: NotificationTypePreference;
+  /** What the API says it can deliver. Rendered in this order, in-app first. */
+  channels: readonly string[];
+}) {
   const [state, submit, pending] = useActionState(saveNotificationType, IDLE);
-  const on = entry.effectiveChannels.length > 0;
+  const chosen = entry.effectiveChannels;
+  const on = chosen.length > 0;
 
   if (!entry.optOut) {
     return (
@@ -164,21 +176,40 @@ export function TypeSwitch({ entry }: { entry: NotificationTypePreference }) {
           </p>
         )}
       </div>
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         {/*
           The state as text, not only as a control. A settings row whose value lives inside an
           input is one nothing can read back — the lesson the payment-methods list paid for.
         */}
         <span className="text-xs text-[var(--color-text-muted)]" data-type-state={entry.type}>
-          {on ? 'On' : 'Off'}
+          {on ? chosen.map((channel) => CHANNEL_LABELS[channel] ?? channel).join(' + ') : 'Off'}
           {entry.channels === null && on ? ' (default)' : ''}
         </span>
         <input type="hidden" name="type" value={entry.type} />
-        <input type="hidden" name="on" value={on ? 'false' : 'true'} />
+        {channels.map((channel) => (
+          <label key={channel} className="flex items-center gap-1.5 text-sm">
+            <input
+              type="checkbox"
+              name="channels"
+              value={channel}
+              defaultChecked={chosen.includes(channel)}
+              data-channel={`${entry.type}:${channel}`}
+            />
+            {CHANNEL_LABELS[channel] ?? channel}
+          </label>
+        ))}
         <Button type="submit" variant="secondary" pending={pending}>
-          {pending ? 'Saving…' : on ? 'Turn off' : 'Turn on'}
+          {pending ? 'Saving…' : 'Save'}
         </Button>
       </div>
     </form>
   );
 }
+
+/** The words a person reads, rather than the column values. */
+const CHANNEL_LABELS: Record<string, string> = {
+  in_app: 'In the app',
+  email: 'Email',
+  whatsapp: 'WhatsApp',
+  push: 'Push',
+};

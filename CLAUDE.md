@@ -544,6 +544,40 @@ prisma migrate deploy` after generating a migration.
 - **`pnpm test:int -- calls` does not filter anything** — the argument lands past vitest's file
   pattern and the whole suite runs, which is three minutes before the first assertion you wanted.
   `cd apps/api && pnpm exec vitest run calls.e2e-spec` is the form that does.
+- **Every registration sent two verification emails, for four phases, and nothing noticed.**
+  `AuthService.register` emitted `user.registered` inside the transaction that creates the user —
+  which is right, and the whole point of the outbox — and then called
+  `requestEmailVerification`, which emits the same event again. Two links, the second superseding
+  the first. It was invisible because **nothing recorded that a send had happened**: the delivery
+  log added in step 7 found it on its first run against a real registration. The lesson is the
+  general one, not the specific fix: a side effect with no record is a side effect nobody can count,
+  and "it works" means "no one has looked".
+- **A test that expects a captured lead to be unassigned depends on the clock.** The seeded
+  round-robin rule assigns whoever is **on shift**, so a lead created inside the workspace's
+  working hours comes back owned and one created at 06:00 IST does not. Two suites asserted
+  `assignedUserId === null` straight after capture and passed for months because the runs happened
+  to be outside business hours; they failed the first time the suite ran at midday. A test that
+  needs an unclaimed lead has to _make_ one — `POST /leads/:id/assign` with `assignedUserId: null`
+  is the real path and is time-independent.
+- **A nullable `organization_id` puts a table half inside the tenant registry, which is worse than
+  either side of the choice.** `findRegistryDrift` requires any model carrying the column to be in
+  `TENANT_MODELS`, where the scoping extension filters `organization_id = :current` — so the rows
+  that legitimately have no workspace (a password reset's delivery record, a bounced mailbox) become
+  invisible to every read. `email_messages` and `email_suppressions` are therefore platform tables
+  with no such column at all. The registry does not model "a table with both tenant and platform
+  rows" on purpose: such a table is two tables whose guarantees differ.
+- **A CHECK that says what belongs in a table and a service that writes something else disagree
+  silently until something exercises the path.** `email_suppressions_identifier_is_an_address` says
+  the list holds mailboxes; the sender's first draft tried to put `not-an-address` on it with reason
+  `invalid`, and every unit test passed. The e2e found it on the first send. When a constraint
+  refuses what a service intends, one of them is wrong — here it was the service, and the honest
+  answer was `failed` with the reason recorded rather than a list entry nothing could ever match.
+- **Email suppression is not one rule, and treating it as one locks people out of their accounts.**
+  A hard bounce stops everything (the mailbox is gone). A **complaint** is a request to stop being
+  _contacted_ — not consent to be denied the password reset they ask for thirty seconds later. So
+  `suppressionStops(reason, kind)` is the one decider, `email_verification`, `password_reset` and
+  `security_notice` are exempt from the gentler reasons, and an unknown reason takes the gentler
+  branch: a thing nobody classified should be noticed, not disappear.
 - **A browser check must use `localhost`, not `127.0.0.1`.** Against `127.0.0.1:3000` the login form
   submitted as a native GET with the password in the query string — the client bundle had not
   hydrated — and the check failed with a URL that explains itself only if you read it closely.

@@ -44,6 +44,12 @@ export const JOBS = {
   NOTIFY_LEAD_UNASSIGNED: 'notify.lead-unassigned',
   NOTIFY_TASK_OVERDUE: 'notify.task-overdue',
   NOTIFY_SLA_ESCALATION: 'notify.sla-escalation',
+  /**
+   * Emails one notification to the person it belongs to, when they chose the email channel for its
+   * type (`FR-NOT-2`, `FR-NOT-3`). A queue hop rather than an inline send: a notification must not
+   * wait for a provider, and a provider outage must not fail the write that caused it.
+   */
+  NOTIFY_EMAIL: 'notify.email',
 
   /**
    * Releases the notifications quiet hours held, re-checking each against its subject first

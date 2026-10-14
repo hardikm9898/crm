@@ -258,6 +258,14 @@ describe('the backlog nobody owns', () => {
   it('counts the unassigned leads separately, because they are in nobody’s row', async () => {
     const before = await oversight(owner.token);
     const leadId = await createLead('Unowned');
+    // Returned to the pool through the real endpoint, rather than *hoping* capture left it there:
+    // the seeded round-robin rule assigns whoever is on shift, so a lead created inside the
+    // workspace's working hours comes back owned. Relying on that made this test pass only when
+    // the suite happened to run outside business hours in Asia/Kolkata.
+    await configure('POST', `/leads/${leadId}/assign`, {
+      token: owner.token,
+      payload: { assignedUserId: null, reason: 'nobody has picked this up' },
+    });
     const lead = await ctx.db.lead.findFirstOrThrow({ where: { id: leadId } });
     expect(lead.assignedUserId).toBeNull();
 

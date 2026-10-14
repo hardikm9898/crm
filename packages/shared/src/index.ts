@@ -27,3 +27,4 @@ export * from './sla.js';
 export * from './notifications.js';
 export * from './oversight.js';
 export * from './calls.js';
+export * from './email.js';

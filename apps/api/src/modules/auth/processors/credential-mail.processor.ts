@@ -6,7 +6,7 @@ import { DbService } from '../../../infra/db/db.service.js';
 import { LOGGER } from '../../../infra/observability/logger.module.js';
 import { APP_CONFIG } from '../../../infra/config/config.module.js';
 import type { AppConfig } from '../../../infra/config/config.schema.js';
-import { MAILER, type MailerPort } from '../../../infra/mail/mailer.port.js';
+import { EmailSenderService } from '../../../infra/mail/email-sender.service.js';
 import { JOBS, QUEUES } from '../../../infra/queue/queue.constants.js';
 import type { JobProcessor } from '../../../infra/queue/job-processor.js';
 import type { JobPayload } from '../../../infra/queue/queue.service.js';
@@ -43,7 +43,7 @@ export class EmailVerificationMailProcessor implements JobProcessor<UserMailPayl
 
   constructor(
     private readonly db: DbService,
-    @Inject(MAILER) private readonly mailer: MailerPort,
+    private readonly email: EmailSenderService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
     @Inject(LOGGER) private readonly logger: Logger,
   ) {}
@@ -84,7 +84,7 @@ export class EmailVerificationMailProcessor implements JobProcessor<UserMailPayl
       });
     });
 
-    await this.mailer.send({
+    await this.email.send({
       to: user.email,
       kind: 'email_verification',
       subject: 'Confirm your email address',
@@ -103,7 +103,7 @@ export class PasswordResetMailProcessor implements JobProcessor<UserMailPayload>
 
   constructor(
     private readonly db: DbService,
-    @Inject(MAILER) private readonly mailer: MailerPort,
+    private readonly email: EmailSenderService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
     @Inject(LOGGER) private readonly logger: Logger,
   ) {}
@@ -141,7 +141,7 @@ export class PasswordResetMailProcessor implements JobProcessor<UserMailPayload>
       });
     });
 
-    await this.mailer.send({
+    await this.email.send({
       to: user.email,
       kind: 'password_reset',
       subject: 'Reset your password',
@@ -160,7 +160,7 @@ export class SecurityNoticeMailProcessor implements JobProcessor<UserMailPayload
 
   constructor(
     private readonly db: DbService,
-    @Inject(MAILER) private readonly mailer: MailerPort,
+    private readonly email: EmailSenderService,
   ) {}
 
   async process(payload: UserMailPayload, _job: Job): Promise<void> {
@@ -172,7 +172,7 @@ export class SecurityNoticeMailProcessor implements JobProcessor<UserMailPayload
     );
     if (!user) return;
 
-    await this.mailer.send({
+    await this.email.send({
       to: user.email,
       kind: 'security_notice',
       subject: 'Your password was changed',

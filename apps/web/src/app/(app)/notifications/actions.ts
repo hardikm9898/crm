@@ -94,12 +94,20 @@ export async function saveNotificationType(
 ): Promise<ActionState> {
   const type = text(form, 'type');
   if (!type) return { status: 'error', message: 'Nothing to change.' };
-  const on = form.get('on') === 'true';
+
+  /**
+   * PUT semantics on the channel set, which is why every box is submitted and not only the one
+   * that changed: the set *is* the intended final answer, and sending a delta would make "turn
+   * email off" and "I never had email on" indistinguishable to the API.
+   */
+  const channels = form
+    .getAll('channels')
+    .filter((value): value is string => typeof value === 'string');
 
   const result = await callApi(
     '/notifications/preferences',
-    { method: 'PATCH', body: { types: [{ type, channels: on ? ['in_app'] : [] }] } },
-    on ? 'Turned on' : 'Turned off',
+    { method: 'PATCH', body: { types: [{ type, channels }] } },
+    channels.length === 0 ? 'Turned off' : 'Saved',
     form,
   );
   if (result.status === 'success') {

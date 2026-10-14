@@ -225,7 +225,9 @@ describe('what a new member starts with', () => {
 
   it('offers every type the product actually sends, and only the channels it can deliver', async () => {
     const settings = await preferences(owner.token);
-    expect(settings.deliverableChannels).toEqual(['in_app']);
+    // `email` joined the list in step 7, when there was a sender behind it. `whatsapp` and `push`
+    // have not, and the screen still says so rather than offering a tick box that drops messages.
+    expect(settings.deliverableChannels).toEqual(['in_app', 'email']);
     expect(settings.types.map((entry) => entry.type).sort()).toEqual([
       // Phase 3 step 6: the nudge that asks what happened on a call nobody recorded.
       'call.outcome_missing',
@@ -295,10 +297,27 @@ describe('switching a type off (FR-NOT-3)', () => {
   it('refuses a channel nothing can deliver on, rather than storing a promise it breaks', async () => {
     const refused = await api('PATCH', '/notifications/preferences', {
       token: owner.token,
-      payload: { types: [{ type: 'task.overdue', channels: ['email'] }] },
+      payload: { types: [{ type: 'task.overdue', channels: ['whatsapp'] }] },
     });
     expect(refused.statusCode).toBe(400);
     expect(JSON.stringify(refused.body)).toMatch(/arrive with their channels/);
+  });
+
+  it('accepts email now that there is a sender behind it', async () => {
+    const accepted = await api('PATCH', '/notifications/preferences', {
+      token: owner.token,
+      payload: { types: [{ type: 'task.overdue', channels: ['in_app', 'email'] }] },
+    });
+    expect(accepted.statusCode).toBe(200);
+    const settings = await preferences(owner.token);
+    const overdue = settings.types.find((entry) => entry.type === 'task.overdue');
+    expect(overdue?.channels).toEqual(['in_app', 'email']);
+    expect(overdue?.effectiveChannels).toEqual(['in_app', 'email']);
+    // Put back, so the suites that follow see the default.
+    await api('PATCH', '/notifications/preferences', {
+      token: owner.token,
+      payload: { types: [{ type: 'task.overdue', channels: ['in_app'] }] },
+    });
   });
 
   it('refuses a type the product does not send', async () => {

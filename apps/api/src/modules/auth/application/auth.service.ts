@@ -4,7 +4,6 @@ import { DbService } from '../../../infra/db/db.service.js';
 import { AuditService } from '../../../infra/audit/audit.service.js';
 import { OutboxService } from '../../../infra/outbox/outbox.service.js';
 import { OrganizationProvisioningService } from '../../organizations/organization-provisioning.service.js';
-import { CredentialRecoveryService } from './credential-recovery.service.js';
 import { LoginThrottleService } from './login-throttle.service.js';
 import { MfaService } from './mfa.service.js';
 import { PasswordService } from './password.service.js';
@@ -53,7 +52,6 @@ export class AuthService {
     private readonly throttle: LoginThrottleService,
     private readonly mfa: MfaService,
     private readonly principals: PrincipalService,
-    private readonly recovery: CredentialRecoveryService,
     private readonly provisioning: OrganizationProvisioningService,
     private readonly audit: AuditService,
     private readonly outbox: OutboxService,
@@ -121,7 +119,18 @@ export class AuthService {
       country: input.country,
     });
 
-    await this.recovery.requestEmailVerification(userId, email);
+    /*
+     * **No second `requestEmailVerification` here.** The transaction above already emitted
+     * `user.registered`, which is what the verification mail processor consumes — and it emitted it
+     * *inside* the transaction that created the user, which is the whole point of the outbox: the
+     * send survives a crash immediately afterwards.
+     *
+     * Calling it again here emitted the same event a second time, so **every new user received two
+     * verification emails**, the second link superseding the first. It was invisible for four
+     * phases because nothing recorded that a send had happened; the delivery log added in Phase 3
+     * step 7 found it on its first run against a real registration. `requestEmailVerification`
+     * remains, for the `resend-verification` endpoint that is its actual purpose.
+     */
 
     const session = await this.sessions.issue({
       userId,

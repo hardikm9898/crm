@@ -530,6 +530,71 @@ model Session {
 /// BullMQ already keeps failed jobs in Redis; this table is what makes them visible to an
 /// operator instead of to redis-cli (FR-SA-4). Payloads are redacted before storage, because a
 /// failure table is exactly where a customer's phone number or a single-use token would linger.
+/// Email the platform sent, or deliberately did not (`FR-PRV-2`, Phase 3 step 7).
+///
+/// A **platform** table with no `organization_id`, which is a decision rather than an omission: the
+/// three commonest emails in the product — verification, a password reset, a security notice — are
+/// about a *user*, who may belong to several workspaces or to none at all, and an invitation's own
+/// row already records which workspace it was for. Adding a nullable organization would put this
+/// table half inside the tenant registry, where the scoping extension would hide exactly the rows
+/// that have no workspace (see ADR-0028).
+model EmailMessage {
+  id                String  @id @db.Uuid
+  kind              String
+  /// Lower-cased and trimmed, as `normaliseEmailAddress` produces. Stored in the clear: every
+  /// address here is already in `users` or `invitations`, so hashing it would protect nothing and
+  /// make the log unreadable at the moment somebody needs to read it.
+  to                String
+  subject           String
+  /// Which driver sent it. Null when nothing was sent, which is `suppressed` and `failed`.
+  provider          String?
+  /// The provider's own id. The webhook's only way back to this row, which is why it is unique
+  /// per provider — partially, because a suppressed send has no id at all.
+  providerMessageId String? @map("provider_message_id")
+  status            String  @default("queued")
+  /// Why it did not go, in the provider's words or ours. Shown to nobody; read when debugging.
+  error             String?
+  /// The suppression that stopped it, when one did.
+  suppressionId     String? @map("suppression_id") @db.Uuid
+
+  queuedAt    DateTime  @default(now()) @map("queued_at") @db.Timestamptz(6)
+  sentAt      DateTime? @map("sent_at") @db.Timestamptz(6)
+  deliveredAt DateTime? @map("delivered_at") @db.Timestamptz(6)
+  failedAt    DateTime? @map("failed_at") @db.Timestamptz(6)
+
+  suppression EmailSuppression? @relation(fields: [suppressionId], references: [id], onDelete: SetNull)
+
+  @@index([to, queuedAt(sort: Desc)])
+  @@index([status, queuedAt(sort: Desc)])
+  @@map("email_messages")
+}
+
+/// An address the platform will not email, and why (`FR-PRV-2`).
+///
+/// Platform-wide and keyed on the address alone, because a hard bounce or a complaint is a fact
+/// about the **mailbox**, not about one workspace's relationship with it — and the thing it
+/// protects, the sending domain's reputation, is shared by every workspace on the platform. The
+/// tenant-scoped `suppressions` table of `docs/database-design.md` §13 is the *other* half of
+/// `FR-PRV-2` — a workspace's own opt-outs, per channel — and arrives with marketing in Phase 9,
+/// because nothing writes one before then (ADR-0028).
+model EmailSuppression {
+  id              String   @id @db.Uuid
+  /// `normaliseEmailAddress(address)`. Unique: one row per mailbox, whatever happens to it next.
+  identifier      String   @unique
+  reason          String
+  /// What the provider actually said, kept because "bounce" alone does not tell an operator
+  /// whether the address is dead or the mailbox was full.
+  detail          String?
+  /// The send that caused it, when a webhook named one.
+  sourceMessageId String?  @map("source_message_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  messages EmailMessage[]
+
+  @@index([createdAt(sort: Desc)])
+  @@map("email_suppressions")
+}
+
 model JobFailure {
   id        String    @id @db.Uuid
   queue     String
@@ -758,7 +823,8 @@ model Branch {
   tasks     Task[]
   slaClocks SlaClock[]
 
-  calls        Call[]
+  calls Call[]
+
   @@unique([organizationId, id], name: "branch_tenant_key")
   @@unique([organizationId, code])
   @@index([organizationId, deletedAt])
@@ -790,7 +856,8 @@ model Team {
   tasks     Task[]
   slaClocks SlaClock[]
 
-  calls        Call[]
+  calls Call[]
+
   @@unique([organizationId, id], name: "team_tenant_key")
   @@index([organizationId, deletedAt])
   @@map("teams")
@@ -839,7 +906,7 @@ model Membership {
   notifications           Notification[]
   notificationPreferences NotificationPreference[]
   notificationSettings    NotificationSetting[]
-  calls                   Call[]                  @relation("call_agent")
+  calls                   Call[]                   @relation("call_agent")
   availability            UserAvailability[]
   workingHours            WorkingHours[]
   assignedLeads           Lead[]                   @relation("lead_assignee")
@@ -1117,8 +1184,8 @@ model NotificationSetting {
 
   /// Wall-clock minutes on the person's local day. Null means no quiet window at all. Both are set
   /// together or neither is, which `notification_settings_quiet_hours_pair` enforces.
-  quietStartMinute Int? @map("quiet_start_minute")
-  quietEndMinute   Int? @map("quiet_end_minute")
+  quietStartMinute Int?    @map("quiet_start_minute")
+  quietEndMinute   Int?    @map("quiet_end_minute")
   /// The zone those minutes are read in. Null means the workspace's own, which is the sane default
   /// and the only one a new member can be given before they have said where they are.
   timeZone         String? @map("time_zone")
@@ -3099,8 +3166,8 @@ model Call {
 
   /// Who made or took it. Through `Membership`, so a call by somebody in another tenant is
   /// unrepresentable.
-  agentUserId String   @map("agent_user_id") @db.Uuid
-  startedAt   DateTime @map("started_at") @db.Timestamptz(6)
+  agentUserId String    @map("agent_user_id") @db.Uuid
+  startedAt   DateTime  @map("started_at") @db.Timestamptz(6)
   endedAt     DateTime? @map("ended_at") @db.Timestamptz(6)
 
   /// Copied from the lead so a report can be data-scoped without a join, as on `sla_clocks`.
@@ -3248,7 +3315,8 @@ model Task {
   /// The leads pointing at this task as their next action. At most one, by construction.
   nextActionFor Lead[]           @relation("lead_next_action")
 
-  calls          Call[]
+  calls Call[]
+
   @@unique([organizationId, id], name: "task_tenant_key")
   /// The Today view: one person's open work, in due order.
   @@index([organizationId, assignedUserId, status, dueAt])

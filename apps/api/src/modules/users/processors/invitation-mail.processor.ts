@@ -6,7 +6,7 @@ import { DbService } from '../../../infra/db/db.service.js';
 import { LOGGER } from '../../../infra/observability/logger.module.js';
 import { APP_CONFIG } from '../../../infra/config/config.module.js';
 import type { AppConfig } from '../../../infra/config/config.schema.js';
-import { MAILER, type MailerPort } from '../../../infra/mail/mailer.port.js';
+import { EmailSenderService } from '../../../infra/mail/email-sender.service.js';
 import { JOBS, QUEUES } from '../../../infra/queue/queue.constants.js';
 import type { JobProcessor } from '../../../infra/queue/job-processor.js';
 import type { JobPayload } from '../../../infra/queue/queue.service.js';
@@ -43,7 +43,7 @@ export class InvitationMailProcessor implements JobProcessor<InvitationMailPaylo
 
   constructor(
     private readonly db: DbService,
-    @Inject(MAILER) private readonly mailer: MailerPort,
+    private readonly email: EmailSenderService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
     @Inject(LOGGER) private readonly logger: Logger,
   ) {}
@@ -87,7 +87,7 @@ export class InvitationMailProcessor implements JobProcessor<InvitationMailPaylo
       });
     });
 
-    await this.mailer.send({
+    await this.email.send({
       to: invitation.email,
       kind: 'invitation',
       subject: `You have been invited to ${invitation.organization.name}`,

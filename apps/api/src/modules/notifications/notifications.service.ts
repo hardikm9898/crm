@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import {
   AppError,
   channelsFor,
+  isDeliverableChannel,
   newId,
   notificationType,
   quietHoursHold,
@@ -9,6 +10,8 @@ import {
   withPlatformScope,
 } from '@leados/shared';
 import { DbService } from '../../infra/db/db.service.js';
+import { QueueService } from '../../infra/queue/queue.service.js';
+import { JOBS, QUEUES } from '../../infra/queue/queue.constants.js';
 
 /**
  * In-app notifications (FR-NOT-1/2/3).
@@ -58,12 +61,23 @@ const DELIVERED = { deferredUntil: null, supersededAt: null } as const;
 /** What the gate decided about one notification, before it is written. */
 interface Decision {
   readonly deliver: boolean;
+  /**
+   * The channels this person chose for this type, filtered to the ones that can deliver.
+   *
+   * Carried out of the gate rather than recomputed by the caller: the gate has already read the
+   * preference row, and a second read could disagree with the first — which would mean an email
+   * sent for a notification the in-app side decided not to write, or the reverse.
+   */
+  readonly channels: readonly string[];
   readonly holdUntil: Date | null;
 }
 
 @Injectable()
 export class NotificationsService {
-  constructor(private readonly db: DbService) {}
+  constructor(
+    private readonly db: DbService,
+    private readonly queue: QueueService,
+  ) {}
 
   async list(options: { limit: number; cursor?: string; unreadOnly?: boolean }) {
     const principal = tenantContext.require('notifications.list');
@@ -195,8 +209,34 @@ export class NotificationsService {
           } as never,
         },
       });
+
+      // The email is a **delivery of this notification**, not a second notification, which is why
+      // it goes out by the person's channel choice and carries the row's own id.
+      //
+      // Enqueued only when the notification is visible. A held one is emailed by the release sweep
+      // instead — otherwise an email would arrive at 21:40 about something the inbox is deliberately
+      // not showing until 07:00, and the one thing quiet hours promise is that nothing arrives.
+      if (decision.channels.includes('email') && decision.holdUntil === null) {
+        await this.queueEmail(id);
+      }
       return id;
     });
+  }
+
+  /**
+   * Hands one notification to the email queue.
+   *
+   * A queue hop rather than an inline send: a notification must not wait for a provider, and a
+   * provider outage must not fail the write that caused it. The job id is the notification's own,
+   * so a re-delivery collapses into one job.
+   */
+  async queueEmail(notificationId: string): Promise<void> {
+    await this.queue.enqueue(
+      QUEUES.NOTIFICATIONS,
+      JOBS.NOTIFY_EMAIL,
+      { organizationId: null, notificationId } as never,
+      { jobId: `notify-email-${notificationId}` },
+    );
   }
 
   /**
@@ -225,7 +265,8 @@ export class NotificationsService {
     const chosen = Array.isArray(preference?.channels)
       ? preference.channels.filter((entry): entry is string => typeof entry === 'string')
       : undefined;
-    if (channelsFor(type, chosen).length === 0) return { deliver: false, holdUntil: null };
+    const channels = channelsFor(type, chosen).filter((channel) => isDeliverableChannel(channel));
+    if (channels.length === 0) return { deliver: false, channels: [], holdUntil: null };
 
     const spec = notificationType(type);
     if (
@@ -234,7 +275,7 @@ export class NotificationsService {
       settings?.quietStartMinute === undefined ||
       settings.quietEndMinute === null
     ) {
-      return { deliver: true, holdUntil: null };
+      return { deliver: true, channels, holdUntil: null };
     }
 
     const timeZone = settings.timeZone ?? (await this.workspaceTimeZone(organizationId));
@@ -243,7 +284,7 @@ export class NotificationsService {
       endMinute: settings.quietEndMinute,
       timeZone,
     });
-    return { deliver: true, holdUntil };
+    return { deliver: true, channels, holdUntil };
   }
 
   private async workspaceTimeZone(organizationId: string): Promise<string> {

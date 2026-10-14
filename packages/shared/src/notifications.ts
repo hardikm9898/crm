@@ -19,12 +19,15 @@ export type NotificationChannel = (typeof NOTIFICATION_CHANNELS)[number];
 /**
  * The channels this release can actually deliver on.
  *
- * Only `in_app`. The email adapter and the WhatsApp sender are later steps of this phase and the
- * next, and a preferences screen offering a tick box for a channel that silently drops every
- * message is worse than one that says the channel is not here yet — somebody would turn the in-app
+ * A preferences screen offering a tick box for a channel that silently drops every message is
+ * worse than one that says the channel is not here yet — somebody would turn the in-app
  * notification off in favour of an email that never arrives.
+ *
+ * `email` joined the list in Phase 3 step 7, when there was a sender behind it: a port with a real
+ * provider driver, a suppression list checked before every send, and a webhook that fills it. Until
+ * then the screen rendered that half greyed out and said so. `whatsapp` and `push` still do.
  */
-export const DELIVERABLE_CHANNELS: readonly NotificationChannel[] = ['in_app'];
+export const DELIVERABLE_CHANNELS: readonly NotificationChannel[] = ['in_app', 'email'];
 
 export function isDeliverableChannel(value: string): value is NotificationChannel {
   return (DELIVERABLE_CHANNELS as readonly string[]).includes(value);

@@ -448,6 +448,14 @@ describe('the leads nobody has called (FR-TSK-4, FR-TSK-8)', () => {
     // leads most at risk of never being called are the ones it hides.
     const before = await today(owner.token);
     const leadId = await createLead('Unclaimed');
+    // Returned to the pool through the real endpoint, rather than *hoping* capture left it there.
+    // The seeded round-robin rule assigns whoever is on shift, so a lead created inside the
+    // workspace's working hours comes back owned — which made this test pass only when the suite
+    // ran before 09:00 IST, and pass for the wrong reason the rest of the time.
+    await configure('POST', `/leads/${leadId}/assign`, {
+      token: owner.token,
+      payload: { assignedUserId: null, reason: 'nobody has picked this up' },
+    });
     const lead = await ctx.db.lead.findFirstOrThrow({ where: { id: leadId } });
     expect(lead.assignedUserId).toBeNull();
 
@@ -463,6 +471,10 @@ describe('the leads nobody has called (FR-TSK-4, FR-TSK-8)', () => {
     // one executive another branch's untouched leads.
     const solo = await createMember('narrowscope', 'sales_executive');
     const leadId = await createLead('Unclaimedtoo');
+    await configure('POST', `/leads/${leadId}/assign`, {
+      token: owner.token,
+      payload: { assignedUserId: null, reason: 'nobody has picked this up' },
+    });
 
     const theirs = await today(solo.token);
     expect(theirs.sections.awaitingFirstContact.items.map((item) => item.id)).not.toContain(leadId);

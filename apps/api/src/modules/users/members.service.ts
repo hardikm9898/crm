@@ -4,6 +4,7 @@ import {
   PERMISSIONS,
   newId,
   newToken,
+  normaliseEmailAddress,
   tenantContext,
   withPlatformScope,
 } from '@leados/shared';
@@ -12,6 +13,7 @@ import { fullPage } from '../organizations/organizations.service.js';
 import { AuditService } from '../../infra/audit/audit.service.js';
 import { OutboxService } from '../../infra/outbox/outbox.service.js';
 import { EntitlementService } from '../../infra/entitlements/entitlement.service.js';
+import { EmailSuppressionService } from '../../infra/mail/email-suppression.service.js';
 import { DataScopeService, applyScopeFilter } from '../../infra/authz/data-scope.service.js';
 import { PrincipalService } from '../auth/application/principal.service.js';
 import { TokenService } from '../auth/application/token.service.js';
@@ -28,6 +30,16 @@ import type { InviteMemberInput, ListMembersQuery } from './members.dto.js';
  */
 const INVITATION_TTL_HOURS = 72;
 
+/** The suppression covering one address, in the shape the list renders. */
+function suppressionOf(
+  rows: Map<string, { reason: string; detail: string | null; createdAt: Date }>,
+  email: string | undefined,
+): { reason: string; detail: string | null; since: Date } | null {
+  if (!email) return null;
+  const row = rows.get(normaliseEmailAddress(email));
+  return row ? { reason: row.reason, detail: row.detail, since: row.createdAt } : null;
+}
+
 export interface MemberSummary {
   readonly userId: string;
   readonly membershipId: string;
@@ -40,6 +52,15 @@ export interface MemberSummary {
   readonly roles: { id: string; code: string; name: string }[];
   readonly lastLoginAt: Date | null;
   readonly joinedAt: Date | null;
+  /**
+   * Why the platform will not email this person, when it will not (`FR-PRV-2`).
+   *
+   * On the member list because the alternative is silence: a colleague whose address hard-bounced
+   * stops receiving every notification they chose email for, and nothing anywhere would say so.
+   * The suppression list is platform data, so this is the **only** tenant-facing read of it — and
+   * it is narrowed to this workspace's own members' addresses, which the caller can already see.
+   */
+  readonly emailSuppressed: { reason: string; detail: string | null; since: Date } | null;
 }
 
 @Injectable()
@@ -51,6 +72,7 @@ export class MembersService {
     private readonly principals: PrincipalService,
     private readonly audit: AuditService,
     private readonly outbox: OutboxService,
+    private readonly suppressions: EmailSuppressionService,
   ) {}
 
   async list(query: ListMembersQuery): Promise<{
@@ -143,6 +165,7 @@ export class MembersService {
     ]);
 
     const userById = new Map(users.map((user) => [user.id, user]));
+    const suppressed = await this.suppressions.forAddresses(users.map((user) => user.email));
 
     return {
       items: page.map((membership) => {
@@ -163,6 +186,7 @@ export class MembersService {
             .map((assignment) => assignment.role),
           lastLoginAt: user?.lastLoginAt ?? null,
           joinedAt: membership.joinedAt,
+          emailSuppressed: suppressionOf(suppressed, user?.email),
         };
       }),
       pagination: {

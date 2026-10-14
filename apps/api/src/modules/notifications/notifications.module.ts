@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { NotificationsController } from './notifications.controller.js';
 import {
   MemberJoinedNotificationProcessor,
+  NotificationEmailProcessor,
   NotificationReleaseProcessor,
   TrialExpiredNotificationProcessor,
   UnassignedLeadNotificationProcessor,
@@ -15,6 +16,7 @@ import { NotificationPreferencesService } from './notification-preferences.servi
     NotificationsService,
     NotificationPreferencesService,
     NotificationReleaseProcessor,
+    NotificationEmailProcessor,
     MemberJoinedNotificationProcessor,
     TrialExpiredNotificationProcessor,
     UnassignedLeadNotificationProcessor,
@@ -22,6 +24,7 @@ import { NotificationPreferencesService } from './notification-preferences.servi
   exports: [
     NotificationsService,
     NotificationReleaseProcessor,
+    NotificationEmailProcessor,
     MemberJoinedNotificationProcessor,
     TrialExpiredNotificationProcessor,
     UnassignedLeadNotificationProcessor,

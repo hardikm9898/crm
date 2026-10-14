@@ -54,7 +54,7 @@ place to check "where is this specified?". `PRD` = `product-requirements.md`.
 | 44      | Background jobs                         | `NFR-PERF-5`, Rule 13                   | `queue-event-architecture.md` §3–6                                                                |
 | 45      | Database architecture & indexes         | `FR-TEN-4`                              | `database-design.md` (whole)                                                                      |
 | 46      | Security                                | `NFR-SEC-1..4`                          | `security.md` §1–11                                                                               |
-| 47      | Privacy                                 | `FR-PRV-1..5`                           | `security.md` §12                                                                                 |
+| 47      | Privacy                                 | `FR-PRV-1..5`                           | `security.md` §12; ADR-0028 (`FR-PRV-2`, the suppression list); `database-design.md` §13          |
 | 48      | Analytics architecture                  | `FR-ANL-5/6`                            | ADR-0010; `database-design.md` §10                                                                |
 | 49      | AI features                             | `FR-AI-1..4`                            | roadmap Phase 11; `integration-architecture.md` §2                                                |
 | 50      | Automation builder                      | `FR-AUT-1/8`                            | `queue-event-architecture.md` §7; `frontend-architecture.md` §5.5                                 |

@@ -12,6 +12,7 @@ import {
 import { InviteForm } from './invite-form';
 import { InvitationActions } from './invitation-actions';
 import { MemberRoles } from './member-roles';
+import { formatDate } from '@/lib/lead-format';
 
 /**
  * The people in the workspace.
@@ -21,6 +22,19 @@ import { MemberRoles } from './member-roles';
  * page renders whatever it gets. That is the point of scoping being server-side — there is no client
  * filter to forget (docs/security.md §4).
  */
+/**
+ * What a suppression means, in words a workspace owner can act on.
+ *
+ * Not the column value: "bounce" tells somebody nothing, and "the address does not exist" tells
+ * them to go and ask their colleague for a different one.
+ */
+const SUPPRESSION_SENTENCES: Record<string, string> = {
+  bounce: 'Email is bouncing — this address does not exist, so nothing is being sent to it.',
+  invalid: 'This address is not valid, so nothing is being sent to it.',
+  complaint: 'They marked our email as spam, so only account emails are sent to this address.',
+  manual: 'Email to this address was switched off, so only account emails are sent.',
+};
+
 interface MemberRow {
   userId: string;
   membershipId: string;
@@ -33,6 +47,8 @@ interface MemberRow {
   roles: { id: string; code: string; name: string }[];
   lastLoginAt: string | null;
   joinedAt: string | null;
+  /** Why the platform will not email this person, when it will not (`FR-PRV-2`). */
+  emailSuppressed: { reason: string; detail: string | null; since: string } | null;
 }
 
 interface InvitationRow {
@@ -132,6 +148,23 @@ export default async function MembersPage() {
                       )}
                     </p>
                     <p className="text-xs text-[var(--color-text-muted)]">{member.email}</p>
+                    {/*
+                      The alternative is silence. A colleague whose address hard-bounced stops
+                      receiving every notification they chose email for, and nothing anywhere would
+                      say so — the shape of failure this product keeps paying for.
+                    */}
+                    {member.emailSuppressed && (
+                      <p
+                        className="mt-0.5 text-xs text-rose-700"
+                        data-email-suppressed={member.userId}
+                      >
+                        {SUPPRESSION_SENTENCES[member.emailSuppressed.reason] ??
+                          'No email is being sent to this address.'}{' '}
+                        <span className="text-[var(--color-text-muted)]">
+                          since {formatDate(member.emailSuppressed.since)}
+                        </span>
+                      </p>
+                    )}
                   </td>
                   <td className="py-2.5 pr-4">
                     {mayManage && roleRows.length > 0 ? (

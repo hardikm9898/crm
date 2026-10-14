@@ -1541,6 +1541,115 @@ writer, on the timeline registry's deferred list, because only a provider can re
 nobody answered. And a worker that stays down holds every nudge, so the attempts accumulate
 unrecorded — the same failure reminders and held notifications already have.
 
+### Step 7 — the email sending adapter, and a bounce that stops the next send ✅ _(landed 2026-10-14)_
+
+`FR-PRV-2`, `FR-NOT-2`, `FR-NOT-3`. The last item in Phase 3's scope, and the one three landed
+steps were visibly waiting on: `notification_preferences` offered an `email` channel the deliverable
+set refused, and the preferences screen rendered that half greyed out with a sentence saying why.
+
+Until this step the product had never sent an email. One driver existed — the development logger,
+which writes the message to the log, refuses to run in production, and returned nothing — and the
+four things that send (verification, reset, security notice, invitation) each called `MAILER.send`
+directly and threw the result away.
+
+**A bounce is a fact about a mailbox, not about a relationship**, which is the decision the whole
+step turns on. `docs/database-design.md` §13 sketched `suppressions` keyed on
+`(organization_id, channel, identifier)`; that answers a different question. A hard bounce says the
+address is dead whoever is sending, and the thing a suppression list protects — the sending domain's
+reputation — is shared by every workspace on the platform. So `email_suppressions` is keyed on the
+address alone, with no organization at all, and the §13 table is named as the **other half** of
+`FR-PRV-2`: a workspace's own opt-outs, per channel, which arrives with marketing in Phase 9 because
+nothing would write one before then. A table with no writer is indistinguishable from a feature
+somebody forgot, which is why both halves are now written down.
+
+**A nullable `organization_id` was the obvious middle path and is the trap.** `findRegistryDrift`
+requires any model carrying the column to be in `TENANT_MODELS`, where the scoping extension filters
+`organization_id = :current` — hiding exactly the rows that have no workspace, which is a password
+reset's delivery record and a bounced mailbox. Both tables are platform, and the registry's refusal
+to model "half a tenant table" turns out to be right: such a table is two tables whose guarantees
+differ.
+
+**How much a suppression stops depends on why it exists.** A bounce stops everything: the mailbox
+does not exist, so there is no message important enough to be worth sending to it. A **complaint**
+stops everything _else_ — somebody clicking "spam" is asking to stop being contacted, not asking to
+be denied the password reset they request thirty seconds later, and treating the click as consent to
+that is the kind of literal-mindedness that loses a customer who was only annoyed. So
+`email_verification`, `password_reset` and `security_notice` go out anyway, which is the same
+principle `FR-NOT-3` states one layer up. `suppressionStops` is the one decider, and an unknown
+reason takes the gentler branch.
+
+**One path, and a refusal is a recorded row.** Nothing calls `MAILER.send` any more:
+`EmailSenderService` checks the list, writes the log row, asks the provider, and records the outcome,
+because a second call site is a second place to forget one of those. A suppressed send answers
+`status: 'suppressed'` with a row naming the suppression that stopped it — the caller has already
+committed, so an exception would make a queue retry it for ever, and the row is the answer to "the
+invitation never arrived". A provider failure _is_ thrown, after the row is written, because that is
+what the retry is for.
+
+**The port answers with the provider's message id**, which it did not before — and a `void` send
+makes a bounce unattributable, which makes a suppression list that can never be filled.
+`parseEvent` is on the port too, because the vocabulary is the provider's: Postmark says `HardBounce`
+and `SpamComplaint`, SES says `Bounce` with a `bounceType`, and above the port there are four words.
+The distinction that matters is hard versus soft — a full mailbox is `failed` and suppresses nothing.
+**Postmark** is the first real driver, chosen for its shape rather than its features: one JSON POST,
+so there is no SDK inside the thing that sends password resets. The development driver still returns
+an id, which is what makes the whole bounce path exercisable with no provider account.
+
+**The webhook is the only writer of the list, and is authenticated as such.**
+`POST /webhooks/email` is `@Public()` — a provider has no session — and presents
+`EMAIL_WEBHOOK_SECRET`, which the configuration schema makes mandatory the moment a real driver is
+set, so there is no deployment in which it is both reachable and unauthenticated. An open one lets
+anybody stop a workspace's mail by posting a bounce for its owner's address. It answers **200 to an
+event it does not understand**, because a 4xx teaches a provider to retry and then disable the
+endpoint — and that would silently stop the list being filled. It is the first public write outside
+`/auth`, so the route-authorization suite gained a second reviewed set for it.
+
+**Email is a delivery of a notification, not a second notification.** `DELIVERABLE_CHANNELS` gains
+`email`, the preferences screen's greyed-out half becomes a tick box per channel per type, and the
+email carries the notification's own title, body and link. It is enqueued, never inline. And a
+**held** notification is not emailed until it is released: `deferred_until` means the inbox is
+deliberately hiding the row, so an email at 21:40 about it would break the only promise quiet hours
+make. The release sweep enqueues the ones it lets through, re-reading the channel choice as it does.
+
+**One thing a workspace is told.** A member whose address is suppressed is marked on
+`/settings/members`, with the reason as a sentence and the date. The alternative is silence: a
+colleague whose address hard-bounced stops receiving every notification they chose email for, and
+nothing anywhere would say so.
+
+Decisions in
+[ADR-0028](./decisions/ADR-0028-email-sits-behind-a-port-and-a-bounce-is-a-fact-about-a-mailbox.md).
+
+**Verified.** 1 860 tests green (829 unit, 1 031 integration), 49 of them new: a 22-case email suite
+over real HTTP (a bounce that stops the next send, a complaint that still lets somebody reset their
+own password, a refusal recorded as a row naming the suppression, a webhook that is idempotent and
+answers 200 to an event it does not understand, and a soft bounce that suppresses nothing), 8 new
+database guarantees asserted against real PostgreSQL, 17 in the shared vocabulary spec, and a second
+reviewed set in the route-authorization sweep for the first public write outside `/auth`. Then **20
+HTTP checks** against a running API, worker and scheduler, and **20 browser checks** driving the two
+screens that changed.
+
+**The delivery log found a real bug on its first run.** `AuthService.register` emitted
+`user.registered` inside the transaction that creates the user — which is right, and the whole point
+of the outbox — and then called `requestEmailVerification`, which emits the same event again. So
+**every new user had been receiving two verification emails**, the second link superseding the
+first, for four phases. Nothing noticed because nothing recorded that a send had happened. The
+redundant call is gone, `requestEmailVerification` remains for the `resend-verification` endpoint
+that is its purpose, and a test asserts one event per registration.
+
+Two unrelated tests were also fixed rather than worked around: `today` and `oversight` each asserted
+that a freshly captured lead was unassigned, which is true only outside the workspace's working
+hours — they had been passing because the suite usually ran before 09:00 IST, and failed the first
+time it ran at midday. Both now _make_ an unclaimed lead through the real endpoint.
+
+**Carried forward, named rather than assumed:** `digest` is still not implemented and still has no
+column — a daily roll-up is a different feature from a channel, and `FR-NOT-3` asks for both. The
+tenant-scoped `suppressions` table waits for marketing, and `notification_deliveries` waits for a
+second channel, because inventing either now would be two definitions of one fact. Nothing releases
+a suppression through a screen: `EmailSuppressionService.release` exists, is called by no route, and
+belongs to the Phase 10 operator console. And the platform list is shared, so one workspace's bounce
+stops another's send to the same dead mailbox — the intent, and a behaviour to revisit if the product
+ever sends from per-workspace domains.
+
 ---
 
 ## Phase 4 — Capture & developer platform
@@ -1739,42 +1848,55 @@ partially landed, with the specific gaps named.
 ## Immediate next step
 
 _This section names the next step only; what each landed step actually did is in the step entries
-above. Last reviewed 2026-10-14, after Phase 3 step 6._
+above. Last reviewed 2026-10-14, after Phase 3 step 7._
 
-**Phase 3, step 7 — the email sending adapter, with bounce → suppression.** The last item in Phase
-3's scope, and the one several landed steps are visibly waiting on: `digest` has no column,
-`notification_preferences` offers an `email` channel the deliverable set refuses, and the
-preferences screen renders that half greyed out with a sentence saying why. The step is an
-`EmailPort` with a dev driver and one real provider behind it, a **suppression list** that every
-send checks before it sends, and the webhook that fills it — a hard bounce or a complaint has to
-stop the next send to that address, or a workspace's domain reputation is spent on an address that
-no longer exists. It is also what makes the notification channel set honest: today
-`deliverableChannels` is `['in_app']` and says so, which is the right behaviour for a channel that
-cannot deliver and the wrong thing to leave permanently.
+**Phase 3's exit criteria, and the two that are not met.** Every item in Phase 3's _scope_ is now
+built — tasks, reminders, reschedule with a mandatory reason, complete-with-next-follow-up, "no next
+action", the overdue sweeps, SLA policies and working-hours-aware clocks, escalation, the manager
+board, the notification centre with preferences and quiet hours, the Today workspace, oversight,
+calls with click-to-call, and the email adapter with bounce → suppression. The next step is the
+phase gate itself, which means doing the two criteria that are **not** done rather than declaring
+the phase finished:
 
-The same shape as calls, one layer out: the adapter is the port, the suppression list is the
-tenant-visible consequence, and nothing above the port learns which provider is in use.
+- **"SLA clocks respect working hours and holidays across timezones (DST case included in
+  tests)."** The arithmetic walks instants and converts each window boundary on its own local day —
+  which is what makes a DST day correct — but no test crosses one. It needs a workspace in a
+  timezone that observes DST, a clock started the evening before the shift, and the assertion that
+  the promise lands where a person would expect it to. That is an afternoon's work and it is the
+  difference between "written to be correct" and "known to be".
+- **"Zero-training usability check: a non-technical tester completes _call the overdue lead, log the
+  outcome, schedule tomorrow's follow-up_ without help."** Step 6 made this possible end to end for
+  the first time: the call is dialled from the lead, the outcome form is on the same card, and
+  closing the follow-up is a tick box in it. It has never been _watched_ being done by somebody who
+  did not build it. The honest version of this criterion is a scripted walk-through with the
+  screens' own wording checked against what the tester says out loud.
 
-After that, Phase 3's exit criteria need a pass of their own. Four are met and tested; two are not
-yet done, and both are listed here rather than assumed: the **DST case** for SLA clocks across
-timezones, and the **zero-training usability check** ("call the overdue lead, log the outcome,
-schedule tomorrow's follow-up" without help) — which step 6 has now made possible end to end, since
-the call is logged from the lead and closes its follow-up in the same action.
+The other four are met and tested: `/my/today` in one request (p95 110 ms on the 100 k fixture), a
+reschedule that cannot complete without date, time and reason, overdue and near-breach escalating
+exactly once, and Today usable one-handed at 375 px with queued actions.
+
+Then **Phase 4 — capture and the developer platform**: dynamic forms and the public form renderer,
+the public lead API with HMAC and idempotency, the raw-payload store that makes "never lose a lead"
+true, API keys, outbound webhooks, OpenAPI, the integration framework, and Meta/Google lead ads. The
+inbound webhook built in step 7 is the first of that shape and deliberately not under
+`/wh/{provider}/{connectionId}`: connection ids arrive with the framework, and the email webhook has
+no per-tenant connection to name.
+
+Carried forward from step 7: `digest` is still not implemented and has no column — a daily roll-up
+is a different feature from a channel, and `FR-NOT-3` asks for both. The tenant-scoped
+`suppressions` table waits for marketing and `notification_deliveries` for a second channel.
+Nothing releases a suppression through a screen (`EmailSuppressionService.release` is called by no
+route; the operator console is Phase 10). And the platform suppression list is shared, so one
+workspace's bounce stops another's send to the same dead mailbox.
 
 Carried forward from step 6: `recording_url`, `recording_document_id`, `provider` and
 `provider_call_id` are on `calls` with no writer, waiting for the Phase 4 provider webhook; an
 unlinked inbound call can be attributed over the API but has no screen, because nothing creates one
-until a provider does; `call.missed` has no describer and no writer for the same reason; and a
-worker that stays down holds every outcome nudge, so attempts accumulate unrecorded.
+until a provider does; and `call.missed` has no describer for the same reason.
 
 Carried forward from step 5: the oversight cards read live aggregates where
 `docs/frontend-architecture.md` §5.4 says they will read rollups (Phase 10, ADR-0010); teams are not
 a dimension on that screen yet; and it deliberately cannot answer "who is best".
-
-From step 4: `digest` is not implemented and has no column; six of the thirteen notification types
-`FR-NOT-2` lists do not exist because the modules behind them do not (step 6's nudge is a type the
-product needed, not one off that list); and the release cron is the
-only deliverer of a held notification, so a worker that stays down holds them indefinitely.
 
 From step 3: the **unread WhatsApp** section of the Today mock-up arrives with the Phase 5 inbox;
 `⌘K` and the keyboard paths of §4 are unbuilt; and the Today action queue is per-viewer browser

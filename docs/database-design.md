@@ -947,6 +947,44 @@ affected day, not by mutating counters).
 | `retention_policies`                      | org, `entity_type`, `retain_days`, `action (purge                                                                                                                                   | anonymize)`, `is_active`, `last_run_at?`     |
 | `ai_requests` / `ai_outputs` / `ai_usage` | org, feature, `entity`, `prompt_hash`, model, `tokens_in/out`, `cost_minor`, latency, `output JSONB`, `accepted_by_user_id?`, `edited BOOL` (`FR-AI-4`)                             |
 
+> **Amendment, 2026-10-14 (implementation, Phase 3 step 7 — outbound email).** The `suppressions`
+> row above describes **one half** of `FR-PRV-2`, and the half this step needed is the other one.
+> Both are named here so neither looks forgotten
+> ([ADR-0028](./decisions/ADR-0028-email-sits-behind-a-port-and-a-bounce-is-a-fact-about-a-mailbox.md)):
+>
+> | Table                | Scope               | Holds                                                     |
+> | -------------------- | ------------------- | --------------------------------------------------------- |
+> | `email_suppressions` | **platform**, built | One row per mailbox the platform will not write to, + why |
+> | `suppressions`       | tenant, **Phase 9** | A workspace's own opt-outs, per channel, for marketing    |
+>
+> - **A bounce is a fact about a mailbox, not about a relationship.** A hard bounce or a complaint
+>   says the address is dead or does not want mail, whoever is sending; and what a suppression list
+>   protects — the sending domain's reputation — is shared by every workspace on the platform. So
+>   `email_suppressions` is keyed on `identifier` alone, with `reason`, `detail` (what the provider
+>   actually said) and `source_message_id`. The tenant table is not built because nothing would
+>   write one until marketing exists.
+> - **`email_messages` is the delivery log**, and platform for the same shape of reason: a
+>   verification, a reset and a security notice are about a _user_, who may belong to several
+>   workspaces or to none, and an invitation's own row already records the workspace. It holds
+>   `kind`, `to`, `subject`, `provider?`, `provider_message_id?`, `status`, `error?`,
+>   `suppression_id?` and four timestamps.
+> - **A nullable `organization_id` on either was the trap, not the middle path.** `findRegistryDrift`
+>   requires any model carrying the column to be in `TENANT_MODELS`, where the scoping extension
+>   filters `organization_id = :current` — which would hide exactly the rows that have no workspace.
+>   The registry does not model "a table with both tenant and platform rows", and that is right.
+> - **`email_messages_provider_message_unique`** is a partial unique index on
+>   `(provider, provider_message_id)`: the webhook's idempotency gate, partial because a **suppressed**
+>   send never reached a provider and has no id at all.
+> - **Six hand-written CHECKs**, each written so no sub-expression can be NULL while the row is
+>   accepted. The load-bearing pair is the normalisation —
+>   `email_messages_to_normalised` and `email_suppressions_identifier_normalised` — because an
+>   address stored in any other case is one the list can never match, and the mail would keep going
+>   out. `email_suppressions_identifier_is_an_address` says the list holds _mailboxes_, which is why
+>   a malformed address is recorded `failed` rather than suppressed.
+> - **`notification_deliveries` is still not built.** Its job — "did this notification reach this
+>   person on this channel" — is answered for email by `email_messages`, and inventing a second
+>   table for a second channel before that channel exists would be two definitions of delivery.
+
 > **Amendment, 2026-10-13 (implementation, Phase 3 step 4 — the notification centre).** The row
 > above puts `quiet_hours` and `digest` on `notification_preferences`, whose key is
 > `(organization_id, user_id, type)`. That is **one copy of the person's quiet hours per

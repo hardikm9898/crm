@@ -113,6 +113,37 @@ adapter + decrypted credentials, and is the only component that can decrypt.
 > credentials to decrypt yet. `TelephonyModule` is `@Global()`, like storage and mail, so the Phase 4
 > webhook controller needs no wiring to reach it.
 
+> **Amendment, 2026-10-14 (implementation, Phase 3 step 7).** `EmailProvider` above is built as
+> `MailerPort` in `apps/api/src/infra/mail/`, with two drivers — the development logger and
+> **Postmark** — and it is narrower and wider than the sketch in two specific ways
+> ([ADR-0028](./decisions/ADR-0028-email-sits-behind-a-port-and-a-bounce-is-a-fact-about-a-mailbox.md)):
+>
+> ```ts
+> interface MailerPort {
+>   readonly driver: string;
+>   readonly sends: boolean;
+>   send(email: OutboundEmail): Promise<{ providerMessageId: string | null }>;
+>   parseEvent(body: unknown): readonly ParsedEmailEvent[];
+> }
+> ```
+>
+> - **`send` answers with the provider's message id.** A `void` send makes a bounce unattributable,
+>   and an unattributable bounce is a suppression list that can never be filled from the one source
+>   that knows. `EmailSenderService` writes the row before and after asking, so a provider failure
+>   leaves a record of the attempt rather than nothing.
+> - **`parseEvent` is on the port**, because the vocabulary is the provider's: Postmark says
+>   `HardBounce` and `SpamComplaint`, SES says `Bounce` with a `bounceType`. Above the port there
+>   are four words, and the distinction that matters is hard versus soft — a full mailbox is
+>   `failed` and suppresses nothing.
+> - **Templates are not on it.** A provider's template store is a second place for the copy to live,
+>   and the two would drift. Nor are scheduled sends: the queue already does that, and better.
+> - **Postmark is chosen for its shape, not its features**: one JSON POST, so there is no SDK inside
+>   the thing that sends password resets, and a webhook that carries the message id it was given.
+>
+> The webhook lives in `modules/webhooks`, not here: a public HTTP route has an authentication story
+> and a contract with somebody else's system, which makes it a product surface. It presents
+> `EMAIL_WEBHOOK_SECRET`, which the configuration schema requires the moment a real driver is set.
+
 ---
 
 ## 3. Connection lifecycle

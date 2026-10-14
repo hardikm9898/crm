@@ -817,6 +817,35 @@ connection id **and** cross-check the payload's account id → insert `provider_
 persisted and acknowledged, never 4xx'd (providers disable endpoints that error). Signature failures
 return `401` and are counted per connection with alerting on spikes.
 
+> **Amendment, 2026-10-14 (implementation, Phase 3 step 7).** The first inbound webhook is built,
+> and it is **not** under `/wh/{provider}/{connectionId}`. There is no connection id because there
+> is no per-tenant connection: email sends from one platform account, and a bounce is a fact about a
+> mailbox rather than about a workspace
+> ([ADR-0028](./decisions/ADR-0028-email-sits-behind-a-port-and-a-bounce-is-a-fact-about-a-mailbox.md)).
+>
+> | Route                         | Provider | Verification                      |
+> | ----------------------------- | -------- | --------------------------------- |
+> | `POST /api/v1/webhooks/email` | Postmark | `x-webhook-secret`, constant-time |
+>
+> - **`@Public()`, and declared**: a provider has no session, and a route that forgot to say so
+>   fails at boot. It is the one public write outside `/auth`, listed in the route-authorization
+>   suite's reviewed set so a second one cannot appear silently.
+> - **A shared secret, not an HMAC**, because Postmark does not sign its webhooks — it offers basic
+>   auth on the URL instead. `EMAIL_WEBHOOK_SECRET` is **required by the configuration schema** the
+>   moment a real driver is set, so there is no deployment in which this is both reachable and
+>   unauthenticated. It matters more here than the table above suggests: this endpoint is the only
+>   writer of the suppression list, and an open one lets anybody stop a workspace's mail.
+> - **A failure is `404`, not `401`.** An endpoint that distinguishes a missing secret from a wrong
+>   one is an oracle for guessing it.
+> - **Unknown events are acknowledged with `200`** and a count, exactly as the paragraph above
+>   requires: an open, a click, or a record type a later release adds is not an error, and a 4xx
+>   teaches a provider to disable the endpoint — which would silently stop the suppression list
+>   being filled.
+> - **No `provider_events` table yet.** Its job here is idempotency, and `email_messages` already
+>   carries a partial unique index on `(provider, provider_message_id)` that does it; a second
+>   store before a second provider exists would be two records of one fact. It arrives with the
+>   integration framework in Phase 4, which is where connection ids come from.
+
 ---
 
 ## 8. Outbound webhooks

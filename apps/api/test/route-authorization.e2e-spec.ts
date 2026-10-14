@@ -456,6 +456,20 @@ describe('every route declares its authorization', () => {
     'PATCH /notifications/preferences',
   ];
 
+  /**
+   * Writes a **provider** calls, which have no session to carry a permission.
+   *
+   * Reviewed one at a time, and each authenticated by something other than a token: the email
+   * delivery webhook presents `EMAIL_WEBHOOK_SECRET`, which the configuration schema makes
+   * mandatory the moment a real driver is set — so there is no deployment in which it is both
+   * reachable and unauthenticated. It matters because this endpoint is the only writer of the
+   * suppression list, and an open one would let anybody stop a workspace's mail by posting a
+   * bounce for its owner's address.
+   *
+   * Asserted below, so adding a public write fails this suite until somebody has looked at it.
+   */
+  const PROVIDER_WEBHOOK_WRITES = ['POST /webhooks/email'];
+
   it('gates every write outside /auth behind a permission', () => {
     // Authentication endpoints are necessarily public or self-scoped; everything else that
     // changes state must name the permission it needs, or appear in the reviewed set above.
@@ -466,10 +480,22 @@ describe('every route declares its authorization', () => {
           ['POST', 'PUT', 'PATCH', 'DELETE'].includes(route.httpMethod) &&
           !route.path.startsWith('/auth') &&
           route.declaration !== 'permission' &&
-          !SELF_SCOPED_WRITES.includes(`${route.httpMethod} ${route.path}`),
+          !SELF_SCOPED_WRITES.includes(`${route.httpMethod} ${route.path}`) &&
+          !PROVIDER_WEBHOOK_WRITES.includes(`${route.httpMethod} ${route.path}`),
       )
       .map((route) => `${route.httpMethod} ${route.path}`);
     expect(unguardedWrites).toEqual([]);
+  });
+
+  it('keeps the provider-webhook exemptions honest', () => {
+    const routes = audit.collect();
+    for (const key of PROVIDER_WEBHOOK_WRITES) {
+      const route = routes.find((candidate) => `${candidate.httpMethod} ${candidate.path}` === key);
+      expect(route, `${key} is listed as a provider webhook but no longer exists`).toBeDefined();
+      // `public`, not `exempt`: there is no caller identity at all, which is a different claim from
+      // "the caller is acting on their own record".
+      expect(route?.declaration, key).toBe('public');
+    }
   });
 
   it('keeps the self-scoped write exemptions honest', () => {
