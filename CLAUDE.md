@@ -518,6 +518,27 @@ prisma migrate deploy` after generating a migration.
   time, with different null-handling, in a new module forty lines long. The existing pair returns
   `null` for anything that is not E.164 — which is the behaviour a card wants, and not what a
   fresh implementation guesses.
+- **`first_contacted_at` and `last_contacted_at` move in opposite directions.** Writing the first one
+  only `WHERE first_contacted_at IS NULL` is right until somebody logs a backdated call: recording
+  Monday's conversation on Wednesday has to _correct_ the column, or every "time to first response"
+  figure says the business took two days longer than it did. So the first never moves **forwards**
+  and the last never moves **backwards**, and both are written by `LeadContactService` — one writer,
+  because a lead marked contacted by one channel with the promise still running from another is the
+  silent version of the same bug.
+- **A test built on a create response asserts against fields that are not there.** `POST /leads`
+  answers the capture's own shape, which is not the detail presenter's, so
+  `expect(created.firstContactedAt).toBeNull()` reads `undefined` — and on a column the create
+  response _does_ happen to carry, the same test would pass for the wrong reason the day it stops.
+  Read the resource back. The sibling of this is a **conditional assertion**: `if (clock) { expect(…) }`
+  passes hardest on the day the clock is not created at all.
+- **The route-authorization sweep's fixture has to be able to _reach_ the authorization check.** Its
+  cross-tenant pass fails any parameterised route with no org-A id, which is the point — but an id
+  pointed at a row whose state the endpoint refuses (`POST /calls/:id/outcome` on a call that is
+  already settled) answers 422 before the guard matters, and the sweep records a refusal it never
+  earned. Aim it at a row in the state the endpoint expects: a call that was _dialled_, not logged.
+- **`pnpm test:int -- calls` does not filter anything** — the argument lands past vitest's file
+  pattern and the whole suite runs, which is three minutes before the first assertion you wanted.
+  `cd apps/api && pnpm exec vitest run calls.e2e-spec` is the form that does.
 - **A browser check must use `localhost`, not `127.0.0.1`.** Against `127.0.0.1:3000` the login form
   submitted as a native GET with the password in the query string — the client bundle had not
   hydrated — and the check failed with a URL that explains itself only if you read it closely.

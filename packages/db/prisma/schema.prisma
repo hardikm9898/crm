@@ -242,6 +242,39 @@ enum TaskCreatedVia {
 }
 
 /// What an SLA clock is measuring (`FR-TSK-8`).
+/// Who rang whom (`FR-CALL-1`).
+enum CallDirection {
+  outbound
+  inbound
+
+  @@map("call_direction")
+}
+
+/// What the telephony says happened — a fact about the connection, not a judgement about the
+/// conversation. The judgement is `call_outcomes`, which is tenant configuration.
+enum CallStatus {
+  /// Recorded the moment somebody clicks to call, before anybody knows how it went.
+  dialing
+  completed
+  no_answer
+  busy
+  failed
+
+  @@map("call_status")
+}
+
+/// The machine-readable grouping behind a tenant's own outcome names.
+enum CallOutcomeCategory {
+  connected
+  no_answer
+  busy
+  wrong_number
+  not_interested
+  callback
+
+  @@map("call_outcome_category")
+}
+
 enum SlaTarget {
   first_response
   next_response
@@ -616,6 +649,8 @@ model Organization {
   notifications           Notification[]
   notificationPreferences NotificationPreference[]
   notificationSettings    NotificationSetting[]
+  calls                   Call[]
+  callOutcomes            CallOutcome[]
   subscription            Subscription?
   usageCounters           UsageCounter[]
   entitlementOverrides    EntitlementOverride[]
@@ -723,6 +758,7 @@ model Branch {
   tasks     Task[]
   slaClocks SlaClock[]
 
+  calls        Call[]
   @@unique([organizationId, id], name: "branch_tenant_key")
   @@unique([organizationId, code])
   @@index([organizationId, deletedAt])
@@ -754,6 +790,7 @@ model Team {
   tasks     Task[]
   slaClocks SlaClock[]
 
+  calls        Call[]
   @@unique([organizationId, id], name: "team_tenant_key")
   @@index([organizationId, deletedAt])
   @@map("teams")
@@ -802,6 +839,7 @@ model Membership {
   notifications           Notification[]
   notificationPreferences NotificationPreference[]
   notificationSettings    NotificationSetting[]
+  calls                   Call[]                  @relation("call_agent")
   availability            UserAvailability[]
   workingHours            WorkingHours[]
   assignedLeads           Lead[]                   @relation("lead_assignee")
@@ -1582,6 +1620,7 @@ model Lead {
 
   tasks          Task[]
   slaClocks      SlaClock[]
+  calls          Call[]
   /// `Restrict` rather than `SetNull`: this is a composite FK, and `SetNull` would null the NOT
   /// NULL `organization_id` with it. The pointer is cleared by the recompute before a task is ever
   /// hard-deleted.
@@ -2985,6 +3024,114 @@ model TaskOutcome {
   @@map("task_outcomes")
 }
 
+/// What a call *meant*, as the tenant's own list (`FR-CALL-3`).
+///
+/// The names are rows and the categories are code, the same arrangement lead statuses use: a
+/// workspace may call it "Spoke — keen" or "Hot", and the product still needs to know that one
+/// means somebody was actually spoken to — which is what decides `leads.first_contacted_at` and
+/// whether the first-response promise is satisfied.
+///
+/// `score_delta` from the Phase 0 sketch is deliberately **not** here: scoring in this product is
+/// `scoring_rules`, and `call.logged` is one of their triggers with the outcome's category in the
+/// event payload. A second per-outcome delta would be a second scoring engine whose interaction
+/// with the first nobody could predict.
+model CallOutcome {
+  id             String              @id @db.Uuid
+  organizationId String              @map("organization_id") @db.Uuid
+  name           String
+  category       CallOutcomeCategory
+  /// Keeps "Other" from becoming the most common outcome, as on a lost reason.
+  requiresNote   Boolean             @default(false) @map("requires_note")
+  sortOrder      Int                 @default(0) @map("sort_order")
+  isActive       Boolean             @default(true) @map("is_active")
+  createdAt      DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt      DateTime?           @map("deleted_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  calls        Call[]
+
+  @@unique([organizationId, id], name: "call_outcome_tenant_key")
+  @@unique([organizationId, name])
+  @@index([organizationId, isActive, sortOrder])
+  @@map("call_outcomes")
+}
+
+/// A phone call, logged (`FR-CALL-1`).
+///
+/// `lead_id` is nullable because an inbound call from a number nobody recognises is exactly the
+/// call most worth keeping — it is logged against the numbers and linked to a lead when somebody
+/// works out who it was.
+model Call {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  leadId String? @map("lead_id") @db.Uuid
+  /// The follow-up this call was made for, when it came from one. Closing the loop `FR-TSK-6`
+  /// opens: completing a follow-up and logging the call that finished it are one action to the
+  /// person doing them.
+  taskId String? @map("task_id") @db.Uuid
+
+  direction CallDirection
+  status    CallStatus    @default(dialing)
+  /// E.164, both ends. Which one is "us" depends on the direction.
+  fromE164  String?       @map("from_e164")
+  toE164    String?       @map("to_e164")
+
+  outcomeId       String? @map("outcome_id") @db.Uuid
+  durationSeconds Int?    @map("duration_seconds")
+  notes           String?
+
+  /// Where the recording is. A URL while a provider hosts it; a `documents` row once we do.
+  recordingUrl        String? @map("recording_url")
+  recordingDocumentId String? @map("recording_document_id") @db.Uuid
+
+  /// Null for a call somebody logged by hand, which is every call until a provider is connected.
+  provider       String?
+  providerCallId String? @map("provider_call_id")
+
+  /// When the product last asked the person who dialled what happened.
+  ///
+  /// The same shape as `tasks.overdue_notified_at`, and for the same reason: the nudge sweep has to
+  /// know what it has already asked about, and asking twice is nagging. Set *after* the
+  /// notification is written, so a crash between the two re-asks rather than losing the question.
+  outcomePromptedAt DateTime? @map("outcome_prompted_at") @db.Timestamptz(6)
+
+  /// Who made or took it. Through `Membership`, so a call by somebody in another tenant is
+  /// unrepresentable.
+  agentUserId String   @map("agent_user_id") @db.Uuid
+  startedAt   DateTime @map("started_at") @db.Timestamptz(6)
+  endedAt     DateTime? @map("ended_at") @db.Timestamptz(6)
+
+  /// Copied from the lead so a report can be data-scoped without a join, as on `sla_clocks`.
+  branchId String? @map("branch_id") @db.Uuid
+  teamId   String? @map("team_id") @db.Uuid
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lead         Lead?        @relation(fields: [organizationId, leadId], references: [organizationId, id], onDelete: Cascade, map: "calls_lead_same_org_fk")
+  task         Task?        @relation(fields: [organizationId, taskId], references: [organizationId, id], onDelete: Restrict, map: "calls_task_same_org_fk")
+  outcome      CallOutcome? @relation(fields: [organizationId, outcomeId], references: [organizationId, id], onDelete: Restrict, map: "calls_outcome_same_org_fk")
+  agent        Membership   @relation("call_agent", fields: [organizationId, agentUserId], references: [organizationId, userId], onDelete: Restrict, map: "calls_agent_same_org_fk")
+  branch       Branch?      @relation(fields: [organizationId, branchId], references: [organizationId, id], onDelete: Restrict, map: "calls_branch_same_org_fk")
+  team         Team?        @relation(fields: [organizationId, teamId], references: [organizationId, id], onDelete: Restrict, map: "calls_team_same_org_fk")
+
+  @@unique([organizationId, id], name: "call_tenant_key")
+  /// The lead's own call list.
+  @@index([organizationId, leadId, startedAt(sort: Desc)])
+  /// "What did I do today", and the per-person reports.
+  @@index([organizationId, agentUserId, startedAt(sort: Desc)])
+  @@index([organizationId, startedAt(sort: Desc)])
+  @@index([organizationId, outcomeId])
+  /// The referencing side of the FK into `tasks`: Postgres does not index it, and every task
+  /// deletion would otherwise scan this table.
+  @@index([organizationId, taskId])
+  @@map("calls")
+}
+
 /// Why a follow-up moved (`FR-TSK-5`), as the tenant's own list.
 ///
 /// The requirement's reason list is seeded and editable. The reason is mandatory on every
@@ -3101,6 +3248,7 @@ model Task {
   /// The leads pointing at this task as their next action. At most one, by construction.
   nextActionFor Lead[]           @relation("lead_next_action")
 
+  calls          Call[]
   @@unique([organizationId, id], name: "task_tenant_key")
   /// The Today view: one person's open work, in due order.
   @@index([organizationId, assignedUserId, status, dueAt])

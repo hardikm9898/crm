@@ -104,7 +104,7 @@ cannot starve others. Each is deployed as its own worker group and scaled indepe
 | `imports-exports` | `import.process`, `export.generate`                                                                                                                                                | 5                  | 3                                | Per-row progress; result file in storage with an expiring **API-served** download (see the amendment below)                                                  |
 | `documents`       | `doc.scan`, `doc.thumbnail`, `pdf.quotation`                                                                                                                                       | 10                 | 3                                | Upload quarantine until `scan_status = clean`                                                                                                                |
 | `billing`         | `billing.charge`, `billing.dunning`, `usage.aggregate`, `trial.check`                                                                                                              | 5                  | 5 / long backoff                 | Money jobs: strict idempotency keys, never auto-retried past the provider's window                                                                           |
-| `maintenance`     | `partition.maintain`, `retention.purge`, `sla.sweep`, `task.overdue-sweep`, `health.probe`, `outbox.reap`                                                                          | 5                  | 3                                | Platform-scoped; explicitly allowed to run without a tenant context                                                                                          |
+| `maintenance`     | `partition.maintain`, `retention.purge`, `sla.sweep`, `task.overdue-sweep`, `call.outcome-sweep`, `health.probe`, `outbox.reap`                                                    | 5                  | 3                                | Platform-scoped; explicitly allowed to run without a tenant context                                                                                          |
 | `ai`              | `ai.summarize-lead`, `ai.summarize-conversation`, `ai.suggest-reply`, `ai.next-best-action`                                                                                        | 5                  | 2                                | Budget-capped per org; failure degrades silently (feature disappears, core unaffected)                                                                       |
 | `dlq:*`           | one per queue                                                                                                                                                                      | —                  | manual                           | Mirrored into `job_failures` for the Super Admin UI (`FR-SA-4`)                                                                                              |
 
@@ -192,6 +192,7 @@ can retune cadence.
 | hourly             | `ads.sync-metrics`                                                    | Spend/impressions/clicks                                                                                                                  |
 | hourly             | `webhook.reap-exhausted`                                              | Disable dead endpoints, alert admins                                                                                                      |
 | every 30 min       | `task.overdue-sweep`                                                  | Report a missed follow-up **once** and notify owner + manager. _Not_ org-hour aware and does not "mark overdue" — see the amendment below |
+| every 10 min       | `call.outcome-sweep`                                                  | Ask the person who dialled what happened, **once**, fifteen minutes on (`FR-CALL-1`). Built — see the amendment below                     |
 | daily 00:15 org-tz | `rollup.backfill` (yesterday, full recompute)                         | Late events corrected                                                                                                                     |
 | daily 01:07        | `score.decay-sweep`                                                   | Inactivity decay (`FR-SCR-1`). Implemented at :07 — every schedule here runs on an odd minute so a restart does not fire them all at once |
 | daily 02:00        | `retention.purge`                                                     | Retention + DSR purges (`FR-PRV-3`)                                                                                                       |
@@ -239,6 +240,33 @@ All schedules are working-hours/timezone aware where they touch humans — a fol
 > (`notify.task-overdue` → the assignee and whoever holds `task:manage_others`). `task.created`,
 > `task.completed`, `task.rescheduled` and `task.cancelled` are recorded and listed with no
 > subscribers, so a typo in an event name shows up as "unsubscribed" rather than as silence.
+
+> **Amendment, 2026-10-14 (implementation, Phase 3 step 6).** `call.outcome-sweep` is built, on
+> `maintenance` with the other platform-wide sweeps, and it is **load-bearing rather than
+> housekeeping**. With no telephony provider the product hands a number to a phone and never learns
+> the result, so a click-to-call leaves a `calls` row saying only that somebody tried. Left alone,
+> the log fills with attempts and the question the module exists to answer — "what happened on those
+> forty calls" — stays unanswerable. The sweep is what turns an attempt into a record.
+>
+> - **Ten minutes, against a fifteen-minute grace period**, so a call gets its question between
+>   fifteen and twenty-five minutes after it was dialled: late enough never to arrive while somebody
+>   is still on the phone, soon enough that they still remember the conversation.
+> - **Once per call.** `calls.outcome_prompted_at` is the record of the question, exactly as
+>   `tasks.overdue_notified_at` is, and it is written **after** the notification — a crash between
+>   the two re-asks, and `NotificationsService.create` is idempotent on its dedupe key.
+> - **It stops looking after a day**, which bounds the read: `calls_awaiting_outcome` is partial on
+>   `status = 'dialing' AND outcome_prompted_at IS NULL`, so a tick with nothing outstanding is an
+>   indexed read of nothing.
+> - **The nudge creates a question holding it cannot answer**, so `call.outcome_missing` declares
+>   staleness `call_still_open`: one written at 21:40 and held to 07:00 is marked `superseded_at` if
+>   the outcome was recorded at 21:45.
+>
+> **`call.logged`'s envelope names the lead as its aggregate**, not the call. A job processor reads
+> its subject from `payload.aggregateId` and the scoring processor expects a lead; the call's id
+> travels in the payload beside `outcomeCategory`. It follows that an **unlinked** inbound call emits
+> nothing — there is no lead to score — and the event is emitted when the call is _attributed_
+> instead, which is also the first moment it is true of a lead
+> ([ADR-0027](./decisions/ADR-0027-calls-sit-behind-a-port-and-an-attempt-is-not-a-contact.md)).
 
 > **Amendment, 2026-10-13 (implementation, Phase 3 step 4).** `notifications.release` is built, on
 > `maintenance` with the other platform-wide sweeps, **every minute**.
@@ -370,6 +398,8 @@ repeated, thanks to step idempotency keys).
 | `message.sent` / `failed`                  | status tracking · WhatsApp usage meter · failure notification + integration health · timeline                                                                                             |
 | `task.completed`                           | next-follow-up prompt data · user metrics · automation · timeline                                                                                                                         |
 | `task.overdue`                             | assignee + manager notification · escalation · user metrics · timeline                                                                                                                    |
+| `call.logged`                              | scoring (a rule reads `event.outcomeCategory`) · first-response SLA satisfy · lead contact columns · timeline. **Its aggregate is the lead**, not the call — see the amendment below      |
+| `call.attempted`                           | recorded, unsubscribed: the dial is a fact worth keeping and the Phase 4 dialer will react to it                                                                                          |
 | `sla.breached`                             | escalation chain · manager dashboard · timeline                                                                                                                                           |
 | `analytics.checkout_started`               | scoring (+30) · abandoned-checkout automation · funnel rollup · timeline                                                                                                                  |
 | `payment.completed`                        | deal/revenue update · attribution recompute · stop marketing automations for that entity · receipt notification · webhook · timeline                                                      |

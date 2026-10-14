@@ -75,6 +75,10 @@ interface Tenant {
   // sweep, so the route is aimed at a row the product itself wrote.
   slaPolicyId: string;
   escalationId: string;
+  // Phase 3, step 6 — calls. The call is *dialled* rather than logged, so the route aimed at
+  // `POST /calls/:id/outcome` is aimed at a call that genuinely still owes an answer.
+  callId: string;
+  callOutcomeId: string;
 }
 
 let orgA: Tenant;
@@ -314,6 +318,22 @@ async function createTenant(label: string): Promise<Tenant> {
     }>
   >(ctx.app, { method: 'GET', url: '/api/v1/tasks/config', token });
 
+  // Dialled, not logged: `POST /calls/:id/outcome` refuses a call that is already settled, and a
+  // route the sweep aims at has to be able to reach the authorization check rather than a 422.
+  const dialled = await call<EnvelopeBody<{ call: { id: string } }>>(ctx.app, {
+    method: 'POST',
+    url: '/api/v1/calls/dial',
+    // The number explicitly: this fixture's lead may have none, and `POST /calls/dial` rightly
+    // refuses to dial nothing — which would leave the sweep aimed at an id that does not exist.
+    payload: { leadId: lead.body.data.id, to: '+919845099999' },
+    token,
+  });
+  const callConfig = await call<EnvelopeBody<{ outcomes: { id: string }[] }>>(ctx.app, {
+    method: 'GET',
+    url: '/api/v1/calls/config',
+    token,
+  });
+
   const slaClock = await ctx.db.slaClock.findFirstOrThrow({
     where: { organizationId, leadId: lead.body.data.id },
   });
@@ -379,6 +399,8 @@ async function createTenant(label: string): Promise<Tenant> {
     rescheduleReasonId: taskConfig.body.data.rescheduleReasons[0]?.id ?? '',
     slaPolicyId: slaPolicy.id,
     escalationId: escalation.id,
+    callId: dialled.body.data.call.id,
+    callOutcomeId: callConfig.body.data.outcomes[0]?.id ?? '',
   };
 }
 
@@ -575,6 +597,10 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       '/sla/policies/:id': `/sla/policies/${orgA.slaPolicyId}`,
       '/sla/escalations/:id/acknowledge': `/sla/escalations/${orgA.escalationId}/acknowledge`,
       '/exports/:id/download': `/exports/${orgA.exportJobId}/download`,
+      // Phase 3, step 6 — calls
+      '/calls/:id': `/calls/${orgA.callId}`,
+      '/calls/:id/outcome': `/calls/${orgA.callId}/outcome`,
+      '/settings/call-outcomes/:id': `/settings/call-outcomes/${orgA.callOutcomeId}`,
     };
 
     // An unmapped parameter would test nothing meaningful, so it is reported instead.

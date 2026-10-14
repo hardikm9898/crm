@@ -519,6 +519,9 @@ describe('every activity type the product writes has a describer', () => {
     'document.uploaded': 3,
     'consent.granted': 13,
     'consent.revoked': 13,
+    // An *inbound* call nobody answered. Only a telephony provider can report one — the manual
+    // driver never learns that a call came in at all — so nothing writes it until Phase 4.
+    'call.missed': 4,
   };
 
   // Phase 3 step 1 added `task`, and took the five task types off the deferred list above as part
@@ -532,6 +535,7 @@ describe('every activity type the product writes has a describer', () => {
     'note',
     'task',
     'sla',
+    'call',
   ];
 
   it('describes every type in a module the product writes, except the ones nothing writes yet', () => {
@@ -550,5 +554,75 @@ describe('every activity type the product writes has a describer', () => {
     for (const type of Object.keys(NOT_WRITTEN_YET)) {
       expect(hasDescriber(type), `${type} is described; take it off the deferred list`).toBe(false);
     }
+  });
+});
+
+describe('a call on the timeline (`FR-CALL-1..3`)', () => {
+  it('shows the attempt as a question, not as a success', () => {
+    // With the manual driver the product hands the number to a phone and never learns the result.
+    // An attempt that reads as "called them" would make a lead with four unanswered rings look
+    // worked, which is the opposite of what a manager needs to see.
+    const rendered = describeEntry(
+      entry({
+        type: 'call.attempted',
+        module: 'call',
+        payload: { callId: 'c1', toE164: '+919845012345', via: 'manual' },
+      }),
+    );
+    expect(rendered.label).toBe('Dialled');
+    expect(rendered.description).toContain('+919845012345');
+    expect(rendered.description).toMatch(/no outcome recorded/i);
+    expect(rendered.tone).toBe('warning');
+  });
+
+  it('names the outcome in the tenant’s own words, with the length and the note', () => {
+    const rendered = describeEntry(
+      entry({
+        type: 'call.logged',
+        module: 'call',
+        payload: {
+          outcome: 'Spoke — interested',
+          outcomeCategory: 'connected',
+          reached: true,
+          durationSeconds: 252,
+          note: 'Wants a site visit on Saturday',
+        },
+      }),
+    );
+    expect(rendered.label).toBe('Spoke');
+    expect(rendered.description).toContain('Spoke — interested');
+    expect(rendered.description).toContain('4 min 12 sec');
+    expect(rendered.description).toContain('Wants a site visit on Saturday');
+    expect(rendered.tone).toBe('success');
+  });
+
+  it('only tones a call that reached somebody as a success', () => {
+    // A timeline where every logged call reads as success is one nobody can scan for the calls
+    // that went well — the same rule the task outcomes follow.
+    const rendered = describeEntry(
+      entry({
+        type: 'call.logged',
+        module: 'call',
+        payload: { outcome: 'No answer', outcomeCategory: 'no_answer', reached: false },
+      }),
+    );
+    expect(rendered.tone).toBe('neutral');
+    expect(rendered.label).toBe('Call');
+  });
+
+  it('leaves the length out of a call that had none, rather than saying "0 sec"', () => {
+    const rendered = describeEntry(
+      entry({
+        type: 'call.logged',
+        module: 'call',
+        payload: { outcome: 'Line busy', outcomeCategory: 'busy', durationSeconds: 0 },
+      }),
+    );
+    expect(rendered.description).toBe('Line busy.');
+  });
+
+  it('still reads when the payload is empty', () => {
+    const rendered = describeEntry(entry({ type: 'call.logged', module: 'call', payload: {} }));
+    expect(rendered.description).toBe('A call.');
   });
 });

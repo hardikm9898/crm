@@ -179,6 +179,9 @@ export class UnassignedLeadNotificationProcessor implements JobProcessor<EventJo
  *  * `clock_still_running` — a near-breach warning is dropped if the promise has since been
  *    answered. The **breach** notice is `never`, because a missed promise is a fact about the past
  *    and the morning after is exactly when somebody should hear about it.
+ *  * `call_still_open` — "what happened with Priya?" is dropped if the outcome has since been
+ *    recorded, which is the common case: the nudge is written fifteen minutes after the call and
+ *    most people log it within the hour.
  *  * `never` — released as written.
  *
  * A dropped one is marked `superseded_at`, not deleted: "was I ever told?" then has an answer, and
@@ -261,6 +264,21 @@ export class NotificationReleaseProcessor implements JobProcessor<JobPayload> {
       );
       if (!task) return true;
       return task.deletedAt !== null || !isOpenStatus(task.status);
+    }
+
+    if (spec.staleness === 'call_still_open') {
+      const callId = typeof payload['callId'] === 'string' ? payload['callId'] : null;
+      if (!callId) return false;
+      const call = await withPlatformScope('notifications: re-check call', async () =>
+        this.db.client.call.findFirst({
+          where: { id: callId },
+          select: { status: true, deletedAt: true },
+        }),
+      );
+      // A call whose outcome was recorded while the nudge was held has nothing left to ask, and a
+      // question about a call that no longer exists is worse than silence.
+      if (!call) return true;
+      return call.deletedAt !== null || call.status !== 'dialing';
     }
 
     const clockId = typeof payload['clockId'] === 'string' ? payload['clockId'] : null;

@@ -8,6 +8,7 @@ import {
   seedCrmDefaults,
   seedDealPipeline,
   seedPaymentMethods,
+  seedCallOutcomes,
   seedTaskConfig,
   seedSlaPolicy,
   seedWorkingHours,
@@ -102,6 +103,7 @@ async function topUpConfiguration(db: PrismaClient, organizationId: string): Pro
     if (await seedDealPipeline(tx, organizationId)) added.push('deal pipeline');
     if (await seedPaymentMethods(tx, organizationId)) added.push('payment methods');
     const taskConfig = await seedTaskConfig(tx, organizationId);
+    await seedCallOutcomes(tx, organizationId);
     if (taskConfig.types) added.push('task types');
     if (taskConfig.outcomes) added.push('task outcomes');
     if (taskConfig.reasons) added.push('reschedule reasons');

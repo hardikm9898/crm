@@ -29,6 +29,7 @@ import {
 } from '@/lib/leads';
 import { Timeline } from '@/components/timeline';
 import { BUCKET_CLASSES, BUCKET_LABELS, loadLeadTasks, loadTaskConfig } from '@/lib/tasks';
+import { describeCallDuration, loadCallConfig, loadLeadCalls } from '@/lib/calls';
 import {
   HEALTH_CLASSES as SLA_HEALTH_CLASSES,
   HEALTH_LABELS as SLA_HEALTH_LABELS,
@@ -36,6 +37,12 @@ import {
   loadLeadSla,
 } from '@/lib/sla';
 import { ScheduleTaskForm } from '../../tasks/_components/task-forms';
+import {
+  CallStatusChip,
+  DialButton,
+  LogCallForm,
+  RecordOutcomeForm,
+} from '../../calls/_components/call-forms';
 import { ConvertForm } from '../../customers/_components/convert-form';
 import {
   OwnerControl,
@@ -120,12 +127,14 @@ export default async function LeadDetailPage({
   // The follow-ups, and the vocabulary the form needs. Both swallow a failure: a lead that will
   // not open because one panel's request failed is worse than a lead with one panel missing — but
   // the form says so itself when it has nothing to offer, rather than rendering empty dropdowns.
-  const [tasks, taskConfig, slaClocks] = await Promise.all([
+  const [tasks, taskConfig, slaClocks, calls, callConfig] = await Promise.all([
     loadLeadTasks(id, token),
     loadTaskConfig(token),
     // Swallows too: the clocks are a line on a panel, and a lead that will not open because an SLA
     // request failed is worse than a lead with one line missing.
     loadLeadSla(id, token),
+    loadLeadCalls(id, token),
+    loadCallConfig(token),
   ]);
   const openClock = slaClocks.find(
     (clock) =>
@@ -135,6 +144,13 @@ export default async function LeadDetailPage({
     (task) => task.status === 'pending' || task.status === 'in_progress',
   );
   const mayManageTasks = can(user, 'task:manage');
+  const mayLogCalls = can(user, 'call:log');
+  // The attempt nobody has recorded — the one row on this panel somebody can still answer.
+  const unrecordedCall = calls.items.find((call) => call.status === 'dialing');
+  // The follow-up this call would finish, when there is exactly one obvious candidate. With more
+  // than one, guessing which is worse than not offering it: closing the wrong follow-up is a lie
+  // about what was done, and the queue screen is one click away.
+  const callableTask = openTasks.length === 1 ? openTasks[0] : undefined;
 
   const pipeline = pipelines.find((entry) => entry.id === lead.pipelineId);
   const band = lead.scoreBand
@@ -402,6 +418,83 @@ export default async function LeadDetailPage({
                 )}
               </Card>
 
+              {/*
+                Calls (`FR-CALL-1..3`). Above the custom fields and below the follow-ups on purpose:
+                the sequence is what is owed, what was said, then who this is — which is the order
+                somebody working the lead reads in.
+
+                The attempt with no outcome comes first and carries its own form. A dialled call
+                that nobody records leaves the lead's history saying only that somebody tried, and
+                an amber row with the question already open is the only thing that reliably fixes
+                that.
+              */}
+              <Card title="Calls" description={describeCallHistory(calls)}>
+                {mayLogCalls && (
+                  <div className="mb-3">
+                    <DialButton
+                      leadId={lead.id}
+                      {...(callableTask ? { taskId: callableTask.id } : {})}
+                      phone={lead.phone}
+                      placesCalls={callConfig.telephony.placesCalls}
+                    />
+                  </div>
+                )}
+
+                {unrecordedCall && mayLogCalls && (
+                  <div className="mb-3 rounded-md border border-amber-300 bg-amber-50/60 p-3">
+                    <p className="mb-2 text-sm font-medium" data-lead-call-unrecorded>
+                      You dialled {relativeTime(unrecordedCall.startedAt, new Date(now))} and have
+                      not said what happened.
+                    </p>
+                    <RecordOutcomeForm call={unrecordedCall} outcomes={callConfig.outcomes} />
+                  </div>
+                )}
+
+                {calls.items.length > 0 && (
+                  <ul className="mb-3 flex flex-col divide-y divide-[var(--color-border)]/60">
+                    {calls.items.slice(0, 6).map((call) => (
+                      <li
+                        key={call.id}
+                        className="flex flex-wrap items-baseline justify-between gap-2 py-2"
+                        data-lead-call={call.id}
+                      >
+                        <span className="text-sm">
+                          <CallStatusChip call={call} />
+                          {call.notes && (
+                            <span className="ml-2 text-[var(--color-text-muted)]">
+                              {call.notes}
+                            </span>
+                          )}
+                        </span>
+                        <span className="flex items-center gap-3 text-sm text-[var(--color-text-muted)]">
+                          {call.durationSeconds !== null && <span>{call.duration}</span>}
+                          <span>{formatDateTime(call.startedAt)}</span>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                {mayLogCalls && (
+                  <div className="border-t border-[var(--color-border)] pt-3">
+                    <p className="mb-2 text-sm font-medium">Log a call that already happened</p>
+                    <LogCallForm
+                      config={callConfig}
+                      leadId={lead.id}
+                      {...(callableTask ? { taskId: callableTask.id } : {})}
+                      {...(callableTask ? { taskTitle: callableTask.title } : {})}
+                      taskOutcomes={taskConfig.outcomes}
+                    />
+                  </div>
+                )}
+
+                {!mayLogCalls && calls.items.length === 0 && (
+                  <p className="text-sm text-[var(--color-text-muted)]">
+                    Nothing logged yet, and you do not have permission to log one.
+                  </p>
+                )}
+              </Card>
+
               <CustomFieldsCard lead={lead} />
 
               <Card
@@ -608,6 +701,28 @@ export default async function LeadDetailPage({
       </div>
     </div>
   );
+}
+
+/**
+ * The panel's one-line summary.
+ *
+ * Assembled rather than templated, because every clause has a case where it is wrong:
+ * "0 connected" reads as a failure on a single no-answer, and `describeCallDuration(0)` returns
+ * "no time on the call", which followed by "on the phone" was a sentence nobody wrote. A screen
+ * that cannot count to one reads as machine output — the same lesson Today's summary paid for.
+ */
+function describeCallHistory(calls: {
+  total: number;
+  connected: number;
+  talkTimeSeconds: number;
+}): string {
+  if (calls.total === 0) return 'Nothing on the phone yet.';
+  const parts = [`${calls.total} ${calls.total === 1 ? 'call' : 'calls'}`];
+  if (calls.connected > 0) parts.push(`${calls.connected} connected`);
+  if (calls.talkTimeSeconds > 0) {
+    parts.push(`${describeCallDuration(calls.talkTimeSeconds)} on the phone`);
+  }
+  return `${parts.join(' · ')}.`;
 }
 
 function ContactRow({

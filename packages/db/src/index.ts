@@ -23,6 +23,7 @@ export {
   seedDealPipeline,
   seedPaymentMethods,
   seedTaskConfig,
+  seedCallOutcomes,
   seedSlaPolicy,
   seedWorkingHours,
   seedDefaultAssignmentRule,

@@ -1,4 +1,4 @@
-import { newId } from '@leados/shared';
+import { DEFAULT_CALL_OUTCOMES, newId } from '@leados/shared';
 import type { DbTransactionClient } from '../client.js';
 
 /**
@@ -271,6 +271,36 @@ export async function seedWorkingHours(
  * short-circuits on the presence of a lead status, so anything added to it later never reaches a
  * workspace that already exists.
  */
+/**
+ * The six call outcomes a workspace starts with (`FR-CALL-3`).
+ *
+ * Idempotent by absence, like every other seed here: a workspace that already has an outcome list
+ * has been edited, and replacing it would overwrite names somebody chose. The migration that added
+ * this step backfills existing workspaces with the same six, for the same reason — a "log a call"
+ * form with an empty required dropdown is a feature that looks broken.
+ */
+export async function seedCallOutcomes(
+  tx: DbTransactionClient,
+  organizationId: string,
+): Promise<number> {
+  const existing = await tx.callOutcome.findFirst({
+    where: { organizationId },
+    select: { id: true },
+  });
+  if (existing) return 0;
+
+  await tx.callOutcome.createMany({
+    data: DEFAULT_CALL_OUTCOMES.map((outcome) => ({
+      id: newId(),
+      organizationId,
+      name: outcome.name,
+      category: outcome.category,
+      sortOrder: outcome.sortOrder,
+    })),
+  });
+  return DEFAULT_CALL_OUTCOMES.length;
+}
+
 export async function seedSlaPolicy(
   tx: DbTransactionClient,
   organizationId: string,

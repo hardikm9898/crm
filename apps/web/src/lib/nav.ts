@@ -40,6 +40,9 @@ export const NAV_SECTIONS: readonly NavSection[] = [
       { label: 'Quotations', href: '/quotations', permissions: ['deal:read'] },
       { label: 'Payments', href: '/payments', permissions: ['payment:read'] },
       { label: 'Follow-ups', href: '/tasks', permissions: ['task:read'] },
+      // The call log sits beside the follow-ups it finishes: both answer "what has actually been
+      // done about these leads", and the calls awaiting an outcome are work, not history.
+      { label: 'Calls', href: '/calls', permissions: ['call:read'] },
       { label: 'Response times', href: '/sla', permissions: ['sla:read'] },
       // The manager's screen. `report:read` is the honest gate: it is about other people's work.
       { label: 'Oversight', href: '/oversight', permissions: ['report:read'] },
@@ -85,6 +88,11 @@ export const NAV_SECTIONS: readonly NavSection[] = [
       {
         label: 'Follow-up settings',
         href: '/settings/follow-ups',
+        permissions: ['settings:manage'],
+      },
+      {
+        label: 'Call outcomes',
+        href: '/settings/calls',
         permissions: ['settings:manage'],
       },
       {

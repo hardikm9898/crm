@@ -227,6 +227,8 @@ describe('what a new member starts with', () => {
     const settings = await preferences(owner.token);
     expect(settings.deliverableChannels).toEqual(['in_app']);
     expect(settings.types.map((entry) => entry.type).sort()).toEqual([
+      // Phase 3 step 6: the nudge that asks what happened on a call nobody recorded.
+      'call.outcome_missing',
       'lead.unassigned_pool',
       'member.joined',
       'sla.at_risk',

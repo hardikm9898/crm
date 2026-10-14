@@ -7,7 +7,20 @@
  */
 export type ActionState =
   | { status: 'idle' }
-  | { status: 'success'; message: string }
+  | {
+      status: 'success';
+      message: string;
+      /**
+       * A result the client has to act on, not merely display.
+       *
+       * Added for click-to-call: the server cannot open a `tel:` link on somebody's phone, so the
+       * dial action hands back the href and the button follows it. Deliberately a small string map
+       * rather than a generic payload — anything a screen needs to *render* belongs in the
+       * re-rendered server tree, and this is only for the handful of actions whose outcome is an
+       * instruction to the browser.
+       */
+      data?: Record<string, string>;
+    }
   | {
       status: 'error';
       message: string;

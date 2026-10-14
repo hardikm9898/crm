@@ -44,6 +44,8 @@ export const PERMISSIONS = {
   SLA_READ: 'sla:read',
   DEAL_READ: 'deal:read',
   DEAL_MANAGE: 'deal:manage',
+  CALL_READ: 'call:read',
+  CALL_LOG: 'call:log',
   PAYMENT_READ: 'payment:read',
   PAYMENT_RECORD: 'payment:record',
   // communication
@@ -235,6 +237,24 @@ export const PERMISSION_CATALOGUE: readonly PermissionDefinition[] = [
     supportsScope: true,
   },
   {
+    key: P.CALL_READ,
+    module: 'calls',
+    description: 'View logged calls and their outcomes',
+    supportsScope: true,
+  },
+  {
+    /**
+     * Separate from `call:read` for the reason `payment:record` is separate from `payment:read`:
+     * seeing what the team did on the phone and adding to that record are different acts. It is
+     * also the permission click-to-call needs, so a workspace can let somebody *read* the call
+     * history without letting them dial from the product.
+     */
+    key: P.CALL_LOG,
+    module: 'calls',
+    description: 'Log calls and dial from the product',
+    supportsScope: true,
+  },
+  {
     key: P.PAYMENT_READ,
     module: 'payments',
     description: 'View payments received',
@@ -387,6 +407,8 @@ export const SYSTEM_ROLE_TEMPLATES: readonly RoleTemplate[] = [
       { permission: P.SLA_READ, scope: 'branch' },
       { permission: P.DEAL_READ, scope: 'branch' },
       { permission: P.DEAL_MANAGE, scope: 'branch' },
+      { permission: P.CALL_READ, scope: 'branch' },
+      { permission: P.CALL_LOG, scope: 'branch' },
       { permission: P.PAYMENT_READ, scope: 'branch' },
       { permission: P.PAYMENT_RECORD, scope: 'branch' },
       { permission: P.CONVERSATION_READ, scope: 'branch' },
@@ -414,6 +436,8 @@ export const SYSTEM_ROLE_TEMPLATES: readonly RoleTemplate[] = [
       { permission: P.SLA_READ, scope: 'own' },
       { permission: P.DEAL_READ, scope: 'own' },
       { permission: P.DEAL_MANAGE, scope: 'own' },
+      { permission: P.CALL_READ, scope: 'own' },
+      { permission: P.CALL_LOG, scope: 'own' },
       { permission: P.PAYMENT_READ, scope: 'own' },
       // A salesperson who collects the cheque has to be able to record it; a workspace that wants
       // only finance to do that removes this grant, which is a row.
@@ -451,6 +475,7 @@ export const SYSTEM_ROLE_TEMPLATES: readonly RoleTemplate[] = [
       { permission: P.TASK_READ, scope: ALL },
       { permission: P.SLA_READ, scope: ALL },
       { permission: P.DEAL_READ, scope: ALL },
+      { permission: P.CALL_READ, scope: ALL },
       { permission: P.PAYMENT_READ, scope: ALL },
       { permission: P.CONVERSATION_READ, scope: ALL },
       { permission: P.REPORT_READ, scope: ALL },

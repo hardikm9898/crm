@@ -63,6 +63,11 @@ export const JOBS = {
    * because both are platform-scoped sweeps over every tenant.
    */
   TASK_OVERDUE_SWEEP: 'task.overdue-sweep',
+  /**
+   * Asks the person who dialled what happened, once, fifteen minutes on (`FR-CALL-1`). On
+   * `maintenance` with the other platform-wide sweeps.
+   */
+  CALL_OUTCOME_SWEEP: 'call.outcome-sweep',
   TASK_REMINDER_DISPATCH: 'task.reminder-dispatch',
   SLA_SWEEP: 'sla.sweep',
 

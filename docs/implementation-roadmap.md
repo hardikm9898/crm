@@ -1409,6 +1409,126 @@ the table cannot answer "who is best", and will be asked to — the honest answe
 five things somebody could be best at; and the other two things the brief lists for this role are
 the pipeline board (built, at `/pipeline`) and conversation oversight (with the inbox).
 
+### Step 6 — the call log, and click-to-call that works before anybody buys telephony ✅ _(landed 2026-10-14)_
+
+`FR-CALL-1..3`. The step several landed ones were waiting on: `/today` handed a phone number to the
+device with `tel:` and recorded nothing, so "what happened on those forty calls" — the question the
+call log exists to answer — was unanswerable.
+
+Two facts about the world shaped every decision here. **No workspace has a telephony provider on
+day one, and most never will**: Indian small businesses ring customers from the phone in their hand,
+and a feature that needs a plan before it does anything is a feature nobody uses in the first six
+months. And **the phone is where the work happens**: everything else in the CRM is a consequence of
+a conversation somebody had, which makes the call log the only record of the work itself.
+
+**A status and an outcome are different questions, and both are recorded.** `status` is what the
+telephony saw — it rang, the line was busy, we spoke for four minutes. `outcome_id` is what the
+conversation meant, and it is the tenant's own list (rule 4), because "not interested" is a
+different list in a school from a car dealership. Collapsing them loses one or the other: a
+connected call with no useful outcome and a no-answer with "asked to call back" are both ordinary.
+The outcome's **category** is code, not configuration, because the product has to know that "Hot —
+spoke to them" means somebody was reached and no amount of reading the name tells it that.
+
+With the manual driver there is no telephony at all, so the person is the only source of both
+answers — and asking them twice ("did it connect?" and "what happened?") is one question in two
+vocabularies, one of them a developer's. The screen asks once and derives the status
+(`statusForCategory`); a spec proves the derivation can never produce the request the API refuses.
+
+**An attempt and a result are two different facts, and two timeline entries.** `call.attempted`
+when the product dials, `call.logged` when the call is over. The pair exists because the manual
+driver _cannot_ know the result — so a dialled call is left `dialing`, for ever if nobody says
+otherwise. That is not an unfinished state machine; it is the truth, and a sweep that guessed
+"probably no answer" would replace a fact with a fiction that reads identically.
+
+**What the sweep does instead is ask**, and that is the load-bearing part. `call.outcome-sweep`
+sends one notification fifteen minutes on, recorded in `calls.outcome_prompted_at` so it never asks
+twice (the shape `tasks.overdue_notified_at` settled), stops looking after a day, and declares
+staleness `call_still_open` so a nudge held through quiet hours is dropped if the outcome arrived
+meanwhile. Without it the feature is a honeypot: click-to-call is one tap and recording the outcome
+is a form.
+
+**A call that reached somebody is a contact — and `isContact` decides which ones did.**
+`leads.first_contacted_at`, `last_contacted_at` and the `first_response` promise are now written by
+**one** service, `LeadContactService`, which a completed follow-up and a logged call both call: a
+second copy inside the calls module is the `telHref` trap with a worse consequence, since a lead
+could be marked contacted by one channel with the promise left running by another. Two of the six
+categories are easy to get wrong in opposite directions — **`not_interested` is a contact** (a
+business that rang and was turned down has answered the enquiry, and counting it as "never
+responded" holds its own SLA against it for doing the job), and **`wrong_number` is not** (somebody
+answered, but not this person). And "spoke to them" on a call that did not connect is refused,
+because that pair decides both.
+
+Found while writing the tests: `first_contacted_at` was being written only where it was null, so
+logging Monday's call on Wednesday could not correct it — and every "time to first response" figure
+would have said the business took two days longer than it did. The two columns now move in opposite
+directions: the first never forwards, the last never backwards.
+
+**The port says how the call is being placed, not that it was.** `dial()` answers
+`{ mode: 'device', href: 'tel:…' }` or `{ mode: 'provider', provider, providerCallId }`, because a
+cloud provider rings both parties and the manual driver hands the number to a phone — genuinely
+different outcomes the UI must treat differently. `placesCalls` is read by `GET /calls/config`, so
+the sentence under the button says "this opens your phone" today and changes itself the day a
+provider is connected. Recordings, transcripts and a hangup are deliberately **not** on the port:
+the first three arrive as webhooks on a call that already exists (an update to a row), and nothing
+here can end a call it did not place — a port method one driver must throw from is a lie in the
+contract.
+
+**`call_outcomes.score_delta` from the Phase 0 sketch is deliberately not implemented.** Scoring is
+`scoring_rules`, and `ScoringSubject.event` already carries `outcomeCategory`, so "+15 when we speak
+to them" is a rule like every other rule; a second per-outcome delta would be a second scoring
+engine with no answer to whether it decays, respects `max_applications` or appears in the
+breakdown. `docs/database-design.md` §7 is amended to say so rather than left to look forgotten.
+
+**The event's subject is the lead, not the call**, because a processor reads its subject from
+`payload.aggregateId`. It follows that an unlinked inbound call emits nothing — there is no lead to
+score — and `call.logged` is emitted when such a call is **attributed**, which is also the first
+moment it is true of a lead. `calls.lead_id` is nullable on purpose: a call from a number nobody
+recognises is the one most worth keeping, and `calls_unlinked` is the partial index behind the queue
+of them.
+
+**`finishFollowUp` is not in the call's transaction.** Completing a follow-up and logging the call
+that finished it are one action to the person doing them (`FR-TSK-6`), so `POST /calls` takes it —
+applied _after_ the call commits, because the call row is the record of what happened and must not
+be lost, a task left open is visible on every queue screen, and making them atomic would mean
+reimplementing task completion inside this module. The response says which happened.
+
+**The screens.** The calls panel sits on the lead between the follow-ups and the custom fields —
+what is owed, what was said, who this is — with the unrecorded attempt first, in amber, its form
+already open; `/calls` leads with the calls that still owe an answer and only then the history; and
+`/settings/calls` holds the outcome vocabulary, beside the follow-up vocabulary and for the same
+reason. Nine CHECK constraints, each written so no sub-expression can be NULL while the row is
+accepted, and a partial unique index on `(organization_id, provider, provider_call_id)` that is the
+idempotency gate the Phase 4 webhook will need.
+
+Decisions in
+[ADR-0027](./decisions/ADR-0027-calls-sit-behind-a-port-and-an-attempt-is-not-a-contact.md).
+
+**Verified.** 1 811 tests green (812 unit, 999 integration), 107 of them new: a 43-case calls suite
+over real HTTP (the contact columns and the SLA clock, "spoke to them" on a call that did not
+connect, a second outcome on one call, the nudge asking exactly once however often the sweep runs,
+and a follow-up closed by a call), 12 new cross-tenant and constraint guarantees against real
+PostgreSQL, 5 new database objects registered in `schema-objects.int-spec.ts`, and the shared and
+web vocabularies reconciled against each other. Then **41 HTTP checks** against a running API and
+worker, **42 browser checks** driving the screens in Chromium, and **9 more as an auditor** — whose
+`call:read` without `call:log` is the configuration the two permissions exist for: they read the log
+and are offered no dial button, and the API answers 403 either way.
+
+Three defects were found only by that verification: the panel's summary read "no time on the call on
+the phone" (a sentence nobody wrote, assembled from clauses that each have a case where they are
+wrong), `data-dial` passed to `<Button>` was silently dropped because TypeScript allows any `data-*`
+on JSX and the component does not spread it, and the settings screen could not say which categories
+count as having reached somebody because only `/calls/config` derived it.
+
+**Carried forward, named rather than assumed:** `recording_url`, `recording_document_id`, `provider`
+and `provider_call_id` exist with no writer — they are the columns the Phase 4 provider webhook will
+fill, and the index that makes it idempotent, said plainly here because a column with no writer is
+otherwise indistinguishable from a feature somebody forgot. An unlinked call can be attributed over
+the API but has no screen for it, because nothing creates one yet: the manual driver only logs
+outbound calls against a lead. `call.missed` is in the activity registry with no describer and no
+writer, on the timeline registry's deferred list, because only a provider can report an inbound call
+nobody answered. And a worker that stays down holds every nudge, so the attempts accumulate
+unrecorded — the same failure reminders and held notifications already have.
+
 ---
 
 ## Phase 4 — Capture & developer platform
@@ -1607,28 +1727,41 @@ partially landed, with the specific gaps named.
 ## Immediate next step
 
 _This section names the next step only; what each landed step actually did is in the step entries
-above. Last reviewed 2026-10-13, after Phase 3 step 5._
+above. Last reviewed 2026-10-14, after Phase 3 step 6._
 
-**Phase 3, step 6 — call logging and the click-to-call abstraction.** The first of the two channels
-Phase 3 still owes, and the one several landed steps are waiting on: `/today` hands a phone number
-to the device with `tel:`, which is useful and logs nothing, so "what happened on those forty calls"
-is still unanswerable. The step is a `calls` table (direction, outcome, duration, recording
-reference, the lead and the task it belongs to), a provider-agnostic click-to-call port with a
-manual-logging driver so the feature works before anybody buys a telephony plan, the timeline
-entries that make a call visible on the lead (rule 6), and `calls.*` notification types. It also
-closes the loop `FR-TSK-6` opened: completing a follow-up and logging the call that finished it are
-the same action from the person's point of view.
+**Phase 3, step 7 — the email sending adapter, with bounce → suppression.** The last item in Phase
+3's scope, and the one several landed steps are visibly waiting on: `digest` has no column,
+`notification_preferences` offers an `email` channel the deliverable set refuses, and the
+preferences screen renders that half greyed out with a sentence saying why. The step is an
+`EmailPort` with a dev driver and one real provider behind it, a **suppression list** that every
+send checks before it sends, and the webhook that fills it — a hard bounce or a complaint has to
+stop the next send to that address, or a workspace's domain reputation is spent on an address that
+no longer exists. It is also what makes the notification channel set honest: today
+`deliverableChannels` is `['in_app']` and says so, which is the right behaviour for a channel that
+cannot deliver and the wrong thing to leave permanently.
 
-After that Phase 3 has one item left: the **email sending adapter with bounce → suppression**, which
-is what `digest`, the `email` notification channel and the preferences screen's greyed-out half are
-all waiting for.
+The same shape as calls, one layer out: the adapter is the port, the suppression list is the
+tenant-visible consequence, and nothing above the port learns which provider is in use.
+
+After that, Phase 3's exit criteria need a pass of their own. Four are met and tested; two are not
+yet done, and both are listed here rather than assumed: the **DST case** for SLA clocks across
+timezones, and the **zero-training usability check** ("call the overdue lead, log the outcome,
+schedule tomorrow's follow-up" without help) — which step 6 has now made possible end to end, since
+the call is logged from the lead and closes its follow-up in the same action.
+
+Carried forward from step 6: `recording_url`, `recording_document_id`, `provider` and
+`provider_call_id` are on `calls` with no writer, waiting for the Phase 4 provider webhook; an
+unlinked inbound call can be attributed over the API but has no screen, because nothing creates one
+until a provider does; `call.missed` has no describer and no writer for the same reason; and a
+worker that stays down holds every outcome nudge, so attempts accumulate unrecorded.
 
 Carried forward from step 5: the oversight cards read live aggregates where
 `docs/frontend-architecture.md` §5.4 says they will read rollups (Phase 10, ADR-0010); teams are not
 a dimension on that screen yet; and it deliberately cannot answer "who is best".
 
 From step 4: `digest` is not implemented and has no column; six of the thirteen notification types
-`FR-NOT-2` lists do not exist because the modules behind them do not; and the release cron is the
+`FR-NOT-2` lists do not exist because the modules behind them do not (step 6's nudge is a type the
+product needed, not one off that list); and the release cron is the
 only deliverer of a held notification, so a worker that stays down holds them indefinitely.
 
 From step 3: the **unread WhatsApp** section of the Today mock-up arrives with the Phase 5 inbox;

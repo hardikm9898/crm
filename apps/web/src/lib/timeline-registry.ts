@@ -1,4 +1,5 @@
 import { formatDateTime, formatMoney } from './lead-format';
+import { describeCallDuration as describeDuration } from './calls';
 
 /**
  * The timeline renderer registry (`FR-TL-1`, ADR-0009, docs/frontend-architecture.md §5.2).
@@ -433,6 +434,32 @@ const DESCRIBERS: Readonly<Record<string, Describer>> = {
     } and has not been done.`,
     tone: 'danger',
   }),
+
+  // ── Calls (`FR-CALL-1..3`) ────────────────────────────────────────────────
+  //
+  // Two types, because an attempt and a result are two different facts: with the manual telephony
+  // driver the product hands a number to a phone and never learns what happened, so a lead showing
+  // three attempts and no outcomes is telling a manager something true rather than being a gap.
+  'call.attempted': (payload) => ({
+    label: 'Dialled',
+    description: `Called ${text(payload, 'toE164') ?? 'them'} — no outcome recorded yet.`,
+    // Amber, not grey: this row is asking somebody for something.
+    tone: 'warning',
+  }),
+  'call.logged': (payload) => {
+    const duration = number(payload, 'durationSeconds');
+    const spoke = payload['reached'] === true;
+    return {
+      label: spoke ? 'Spoke' : 'Call',
+      description: `${text(payload, 'outcome') ?? 'A call'}${
+        duration !== null && duration > 0 ? ` — ${describeDuration(duration)}` : ''
+      }${text(payload, 'note') ? ` (${text(payload, 'note')})` : ''}.`,
+      // Only a call that reached somebody is green. A timeline where every logged call reads as
+      // success is one nobody can scan for the ones that went well — the same rule the task
+      // outcomes follow.
+      tone: spoke ? ('success' as const) : ('neutral' as const),
+    };
+  },
 
   // ── SLA (`FR-TSK-8`) ──────────────────────────────────────────────────────
   //

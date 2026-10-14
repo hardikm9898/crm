@@ -2405,3 +2405,267 @@ describe('layer 3 — notification settings belong to one person in one tenant (
     await h.unscoped.user.delete({ where: { id: leaving } });
   });
 });
+
+describe('layer 3 — a call cannot be stitched to another tenant (FR-CALL-1..3)', () => {
+  /** An outcome in whichever workspace is asked for. Named by the random tail of its own id. */
+  async function outcome(organizationId: string, category = 'connected') {
+    const id = newId();
+    await h.unscoped.callOutcome.create({
+      data: {
+        id,
+        organizationId,
+        name: `Spoke ${id.slice(-8)}`,
+        category: category as never,
+      },
+    });
+    return id;
+  }
+
+  /** A minimal settled call on the given workspace's own lead. */
+  function base(organizationId: string, leadId: string | null, agentUserId: string) {
+    return {
+      organizationId,
+      leadId,
+      direction: 'outbound' as const,
+      status: 'completed' as const,
+      toE164: '+919845012345',
+      agentUserId,
+      startedAt: new Date('2026-04-01T10:00:00.000Z'),
+      endedAt: new Date('2026-04-01T10:04:00.000Z'),
+    };
+  }
+
+  it('blocks a call against another tenant’s lead, agent, outcome or task', async () => {
+    await expect(
+      h.unscoped.call.create({
+        data: { id: newId(), ...base(h.orgA.organizationId, h.orgB.leadId, h.orgA.userId) },
+      }),
+    ).rejects.toThrow(/calls_lead_same_org_fk|foreign key/i);
+
+    await expect(
+      h.unscoped.call.create({
+        data: { id: newId(), ...base(h.orgA.organizationId, h.orgA.leadId, h.orgB.userId) },
+      }),
+    ).rejects.toThrow(/calls_agent_same_org_fk|foreign key/i);
+
+    // Created, not found: a test that looks for "some other workspace's outcome" passes only
+    // because an earlier run left one behind.
+    const theirs = await outcome(h.orgB.organizationId);
+    await expect(
+      h.unscoped.call.create({
+        data: {
+          id: newId(),
+          ...base(h.orgA.organizationId, h.orgA.leadId, h.orgA.userId),
+          outcomeId: theirs,
+        },
+      }),
+    ).rejects.toThrow(/calls_outcome_same_org_fk|foreign key/i);
+
+    const theirTask = newId();
+    await h.unscoped.task.create({
+      data: {
+        id: theirTask,
+        organizationId: h.orgB.organizationId,
+        leadId: h.orgB.leadId,
+        title: 'Their follow-up',
+        dueAt: new Date('2026-04-01T10:00:00.000Z'),
+        dueDate: new Date('2026-04-01T00:00:00.000Z'),
+        dueTime: new Date('1970-01-01T15:30:00.000Z'),
+      },
+    });
+    await expect(
+      h.unscoped.call.create({
+        data: {
+          id: newId(),
+          ...base(h.orgA.organizationId, h.orgA.leadId, h.orgA.userId),
+          taskId: theirTask,
+        },
+      }),
+    ).rejects.toThrow(/calls_task_same_org_fk|foreign key/i);
+  });
+
+  it('keeps a call with no number at all unrepresentable', async () => {
+    // Both numbers are nullable because which end is "us" depends on the direction, and a
+    // provider may not report its own — but a call with neither is a row about nothing.
+    const row = base(h.orgA.organizationId, h.orgA.leadId, h.orgA.userId);
+    await expect(
+      h.unscoped.call.create({
+        data: { ...row, id: newId(), toE164: null, fromE164: null },
+      }),
+    ).rejects.toThrow(/calls_has_a_number/i);
+  });
+
+  it('refuses a number that is not E.164, so a call can be matched to a lead', async () => {
+    const row = base(h.orgA.organizationId, h.orgA.leadId, h.orgA.userId);
+    await expect(
+      h.unscoped.call.create({ data: { ...row, id: newId(), toE164: '9845012345' } }),
+    ).rejects.toThrow(/calls_to_e164_format/i);
+  });
+
+  it('refuses a duration on a call that did not connect, and one three weeks long', async () => {
+    const row = base(h.orgA.organizationId, h.orgA.leadId, h.orgA.userId);
+    await expect(
+      h.unscoped.call.create({
+        data: { ...row, id: newId(), status: 'no_answer', durationSeconds: 240 },
+      }),
+    ).rejects.toThrow(/calls_duration_needs_completion/i);
+
+    // The typo guard: somebody entering seconds into a minutes box, or a provider reporting
+    // milliseconds, poisons every average built on the column.
+    await expect(
+      h.unscoped.call.create({ data: { ...row, id: newId(), durationSeconds: 252_000 } }),
+    ).rejects.toThrow(/calls_duration_sane/i);
+  });
+
+  it('insists a call that is over says when it ended, and one still dialing cannot', async () => {
+    const row = base(h.orgA.organizationId, h.orgA.leadId, h.orgA.userId);
+    await expect(
+      h.unscoped.call.create({ data: { ...row, id: newId(), endedAt: null } }),
+    ).rejects.toThrow(/calls_settled_has_ended/i);
+
+    // Written as a `CASE` rather than a biconditional, because `status` has five values and only
+    // one of them is the open state — the trap the payment timestamps paid for.
+    await expect(
+      h.unscoped.call.create({
+        data: { ...row, id: newId(), status: 'dialing', endedAt: new Date() },
+      }),
+    ).rejects.toThrow(/calls_settled_has_ended/i);
+
+    const dialing = newId();
+    await h.unscoped.call.create({
+      data: { ...row, id: dialing, status: 'dialing', endedAt: null },
+    });
+    expect(dialing).toBeTruthy();
+  });
+
+  it('refuses a call that ended before it started, and two places for one recording', async () => {
+    const row = base(h.orgA.organizationId, h.orgA.leadId, h.orgA.userId);
+    await expect(
+      h.unscoped.call.create({
+        data: { ...row, id: newId(), endedAt: new Date('2026-04-01T09:00:00.000Z') },
+      }),
+    ).rejects.toThrow(/calls_ended_after_started/i);
+
+    await expect(
+      h.unscoped.call.create({
+        data: {
+          ...row,
+          id: newId(),
+          recordingUrl: 'https://example.test/a.mp3',
+          recordingDocumentId: newId(),
+        },
+      }),
+    ).rejects.toThrow(/calls_one_recording/i);
+  });
+
+  it('refuses a provider call id with no provider to attribute it to', async () => {
+    const row = base(h.orgA.organizationId, h.orgA.leadId, h.orgA.userId);
+    await expect(
+      h.unscoped.call.create({ data: { ...row, id: newId(), providerCallId: 'CA123' } }),
+    ).rejects.toThrow(/calls_provider_pair/i);
+  });
+
+  it('lets two workspaces hold the same provider call id, and refuses one twice', async () => {
+    // `calls_provider_call_unique` is the idempotency gate a telephony webhook needs, and it is
+    // partial: every hand-logged call has no provider id, and a complete unique index would allow
+    // exactly one of those per workspace.
+    for (const org of [h.orgA, h.orgB]) {
+      await h.unscoped.call.create({
+        data: {
+          ...base(org.organizationId, org.leadId, org.userId),
+          id: newId(),
+          provider: 'twilio',
+          providerCallId: 'CA-shared',
+        },
+      });
+    }
+    await expect(
+      h.unscoped.call.create({
+        data: {
+          ...base(h.orgA.organizationId, h.orgA.leadId, h.orgA.userId),
+          id: newId(),
+          provider: 'twilio',
+          providerCallId: 'CA-shared',
+        },
+      }),
+    ).rejects.toThrow(/unique|duplicate key/i);
+
+    // And two hand-logged calls, both with no provider id, are fine.
+    for (let index = 0; index < 2; index += 1) {
+      await h.unscoped.call.create({
+        data: { ...base(h.orgA.organizationId, h.orgA.leadId, h.orgA.userId), id: newId() },
+      });
+    }
+  });
+
+  it('keeps an unattributed call representable, because that is the point of a nullable lead', async () => {
+    // An inbound call from a number nobody recognises is exactly the call most worth keeping.
+    const id = newId();
+    await h.unscoped.call.create({
+      data: {
+        ...base(h.orgA.organizationId, null, h.orgA.userId),
+        id,
+        direction: 'inbound',
+        toE164: null,
+        fromE164: '+919000000009',
+      },
+    });
+    const found = await tenantContext.run(h.orgA.principal, async () =>
+      h.db.call.findFirst({ where: { id } }),
+    );
+    expect(found?.leadId).toBeNull();
+  });
+
+  it('keeps the outcome vocabulary scoped, and its names free across workspaces', async () => {
+    const name = 'Asked to call back';
+    for (const org of [h.orgA, h.orgB]) {
+      await h.unscoped.callOutcome.create({
+        data: { id: newId(), organizationId: org.organizationId, name, category: 'callback' },
+      });
+    }
+    await expect(
+      h.unscoped.callOutcome.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          name,
+          category: 'callback',
+        },
+      }),
+    ).rejects.toThrow(/unique|duplicate key/i);
+
+    const mine = await tenantContext.run(h.orgA.principal, async () =>
+      h.db.callOutcome.findMany({ where: { name } }),
+    );
+    expect(mine).toHaveLength(1);
+    expect(mine[0]?.organizationId).toBe(h.orgA.organizationId);
+  });
+
+  it('refuses an outcome with a blank name', async () => {
+    await expect(
+      h.unscoped.callOutcome.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          name: '   ',
+          category: 'connected',
+        },
+      }),
+    ).rejects.toThrow(/call_outcomes_name_present/i);
+  });
+
+  it('scopes the call log like every other tenant table', async () => {
+    const mineId = newId();
+    await h.unscoped.call.create({
+      data: { ...base(h.orgA.organizationId, h.orgA.leadId, h.orgA.userId), id: mineId },
+    });
+    await h.unscoped.call.create({
+      data: { ...base(h.orgB.organizationId, h.orgB.leadId, h.orgB.userId), id: newId() },
+    });
+
+    const theirs = await tenantContext.run(h.orgB.principal, async () =>
+      h.db.call.findFirst({ where: { id: mineId } }),
+    );
+    expect(theirs).toBeNull();
+  });
+});

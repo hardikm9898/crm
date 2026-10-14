@@ -77,6 +77,42 @@ All adapters live in `apps/api/src/infra/providers/<provider-key>/` and are regi
 `ProviderRegistry` keyed by provider key; the registry resolves `(organizationId, capability)` →
 adapter + decrypted credentials, and is the only component that can decrypt.
 
+> **Amendment, 2026-10-14 (implementation, Phase 3 step 6).** `TelephonyPort` is built, in
+> `apps/api/src/infra/telephony/`, with one driver — `ManualTelephony` — and it is **narrower** than
+> the sketch above. The contract is written from what the CRM needs rather than from what a provider
+> offers ([ADR-0027](./decisions/ADR-0027-calls-sit-behind-a-port-and-an-attempt-is-not-a-contact.md)):
+>
+> ```ts
+> export interface TelephonyPort {
+>   readonly driver: string;
+>   readonly placesCalls: boolean;
+>   dial(request: { to: string; from?: string; callId: string }): Promise<DialOutcome>;
+> }
+> type DialOutcome =
+>   | { mode: 'device'; href: string }
+>   | { mode: 'provider'; provider: string; providerCallId: string };
+> ```
+>
+> - **`dial` answers how the call will be placed, not that it was.** A cloud provider rings both
+>   parties server-side; the manual driver hands the number to the device. Those are genuinely
+>   different outcomes, so the port says which happened — a port that pretended otherwise would make
+>   every caller guess. `placesCalls` is what lets the screen say "this opens your phone" instead of
+>   implying the product is dialling.
+> - **`getCall` and `parseWebhook` are not on it.** A webhook arrives on a call that already exists,
+>   so it is an **update to a row** — and the row, its provider columns and the partial unique index
+>   that makes an at-least-once delivery idempotent are already in place for it. Pulling a snapshot
+>   through the port would put the webhook's work in two places.
+> - **There is no hangup.** Nothing in this product can end a call it did not place, and the manual
+>   driver could never implement one. A port method a driver has to throw from is a lie in the
+>   contract.
+> - **`capabilities` collapsed to `placesCalls`.** A four-flag capability object invites callers to
+>   branch on flags nothing reads; the one flag the product actually behaves differently on is
+>   whether the call is placed here or on the device.
+>
+> It is **not** in `infra/providers/` and not in the `ProviderRegistry`: there are no stored
+> credentials to decrypt yet. `TelephonyModule` is `@Global()`, like storage and mail, so the Phase 4
+> webhook controller needs no wiring to reach it.
+
 ---
 
 ## 3. Connection lifecycle

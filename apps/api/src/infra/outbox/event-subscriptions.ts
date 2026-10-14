@@ -46,8 +46,16 @@ export const EVENT_SUBSCRIPTIONS: Readonly<Record<string, readonly EventSubscrip
   'lead.status_changed': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }],
   'lead.stage_changed': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }],
   'lead.touchpoint_added': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }],
+  // A call is the one thing a salesperson does that a score should move on, and the payload carries
+  // `outcomeCategory` so a rule can score "spoke to them" and "wrong number" differently
+  // (`FR-CALL-1`). Its envelope names the **lead** as the aggregate, not the call: the processor
+  // reads its subject from `payload.aggregateId`, and an unlinked inbound call has no lead to score
+  // — which is why `CallsService` emits this when the call is attributed rather than when it is
+  // logged.
+  'call.logged': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }],
   // Recorded but not yet consumed. Listed explicitly so the set of known events is visible, and so
   // a typo in an event name shows up as "unsubscribed" rather than silently doing nothing.
+  'call.attempted': [],
   'task.created': [],
   'task.completed': [],
   'task.rescheduled': [],

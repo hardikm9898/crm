@@ -259,6 +259,52 @@ GET  /my/leads | /my/conversations
 GET  /sla/board                              at-risk + breached (manager)  `sla:read`
 ```
 
+### Calls & telephony · `call:*`
+
+```
+GET  /calls                                  ?leadId=&mine=&open=&linked=&category=&from=&to=
+GET  /calls/config                           outcomes + what the dial button will actually do
+GET  /calls/{id}
+POST /calls                                  log one that happened  { status, outcomeId, … }  ← outcome REQUIRED
+POST /calls/dial                             click-to-call; answers how it is being placed
+POST /calls/{id}/outcome                     what happened on a call the product dialled
+PATCH/DELETE /calls/{id}                     attribute an unknown number · correct a note · remove
+CRUD /settings/call-outcomes                 the tenant's own list  `settings:manage` to write
+```
+
+> **Amendment, 2026-10-14 (implementation, Phase 3 step 6).** The sketch above had
+> `CRUD /leads/{id}/calls`. Calls are a **top-level** collection filtered by `?leadId=`, exactly as
+> tasks settled in step 1 and for the same two reasons: a call does not have to belong to a lead at
+> all (an inbound call from a number nobody recognises is the call most worth keeping), and the log
+> is a screen of its own that a manager reads across leads. Five further points:
+>
+> - **`POST /calls/dial` needs `call:log`, not `call:read`** — which is the whole reason the two
+>   permissions are separate. A workspace can let somebody read what the team did on the phone
+>   without letting them ring a customer from the product; the auditor template holds `call:read`
+>   alone.
+> - **It answers how the call is being placed**, not that it was:
+>   `{ mode: 'device', href: 'tel:…' }` or `{ mode: 'provider', provider, providerCallId }`. The
+>   client opens the link in the first case and does nothing in the second, so a response that
+>   pretended they were the same would force every caller to guess
+>   ([ADR-0027](./decisions/ADR-0027-calls-sit-behind-a-port-and-an-attempt-is-not-a-contact.md)).
+> - **`POST /calls/{id}/outcome` is its own endpoint**, not a `status` on the PATCH — the same
+>   arrangement completion, reschedule and cancel have on a task. It marks the lead contacted,
+>   satisfies a first-response promise and emits the event scoring reads; a PATCH that happened to
+>   carry a status could check none of them. The PATCH is for attributing an unknown number and
+>   fixing a note.
+> - **`POST /calls` takes an optional `finishFollowUp`** and answers `{ call, followUpCompleted }`,
+>   because completing a follow-up and logging the call that finished it are one action to the person
+>   doing them (`FR-TSK-6`). The flag is in the response so the screen never claims more than
+>   happened.
+> - **`GET /calls` returns `meta.totalTalkTimeSeconds` and `meta.connected`** over the whole filter,
+>   never the page — a panel that summed the twenty rows it loaded would tell a manager their team
+>   spent a fifth of the time on the phone that it did. `?open=` and `?linked=` keep `undefined` as
+>   `undefined`, because absent means "both".
+>
+> `GET /calls/config` is readable with `call:read` rather than `settings:manage`, like
+> `GET /tasks/config`: the outcome dropdown is part of logging a call, and a sales executive has no
+> business holding a settings permission to do their job.
+
 > **Amendment, 2026-10-06 (implementation, Phase 3 step 1).** Everything above except `/my/*` and
 > `/sla/*` is built. Four corrections to what this section said:
 >

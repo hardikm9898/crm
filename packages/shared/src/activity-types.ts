@@ -38,7 +38,15 @@ export const ACTIVITY_TYPES = {
   TASK_RESCHEDULED: 'task.rescheduled',
   TASK_CANCELLED: 'task.cancelled',
   TASK_OVERDUE: 'task.overdue',
-  // conversations and channels (Phases 4–5)
+  // calls (Phase 3 step 6) and the other channels (Phases 4–5)
+  /**
+   * Somebody pressed the call button and the dialling started. Distinct from `call.logged`, which
+   * is written when the call is **over** and what happened is known: with the manual driver the
+   * product hands the number to a phone and never learns the result, so an attempt and a result are
+   * two different facts — the same reasoning as `lead.converted` beside `customer.created`. A lead
+   * whose history shows three attempts and no outcomes is telling a manager something true.
+   */
+  CALL_ATTEMPTED: 'call.attempted',
   CALL_LOGGED: 'call.logged',
   CALL_MISSED: 'call.missed',
   WHATSAPP_SENT: 'whatsapp.sent',

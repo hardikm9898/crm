@@ -30,6 +30,8 @@ export const TENANT_MODELS = [
   'Notification',
   'NotificationPreference',
   'NotificationSetting',
+  'Call',
+  'CallOutcome',
   // Phase 2 — CRM core
   'CustomFieldSection',
   'CustomFieldDefinition',

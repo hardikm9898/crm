@@ -31,3 +31,4 @@ A decision is changed by writing a **new** ADR that supersedes the old one, neve
 | [0024](./ADR-0024-today-is-one-request-and-its-taps-are-queued.md)                 | Today is one request with no parameters; its taps are queued in the browser     | Accepted |
 | [0025](./ADR-0025-quiet-hours-hold-a-notification-and-the-release-re-checks-it.md) | Quiet hours hold a notification; the release re-checks whether it still matters | Accepted |
 | [0026](./ADR-0026-oversight-has-no-single-score.md)                                | Oversight ranks nothing and counts no activity                                  | Accepted |
+| [0027](./ADR-0027-calls-sit-behind-a-port-and-an-attempt-is-not-a-contact.md)      | Calls sit behind a port, and an attempt is not a contact                        | Accepted |

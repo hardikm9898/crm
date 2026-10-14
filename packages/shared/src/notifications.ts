@@ -39,7 +39,12 @@ export function isDeliverableChannel(value: string): value is NotificationChanne
  * at 08:30 must not arrive at 09:00 as "overdue". Resolved by the API, which has the database —
  * this is only the name of the question, so that nothing about Prisma reaches this package.
  */
-export const STALENESS_CHECKS = ['never', 'task_still_open', 'clock_still_running'] as const;
+export const STALENESS_CHECKS = [
+  'never',
+  'task_still_open',
+  'clock_still_running',
+  'call_still_open',
+] as const;
 export type StalenessCheck = (typeof STALENESS_CHECKS)[number];
 
 export interface NotificationTypeSpec {
@@ -92,6 +97,26 @@ export const NOTIFICATION_TYPES: readonly NotificationTypeSpec[] = [
     optOut: true,
     respectsQuietHours: true,
     staleness: 'task_still_open',
+  },
+  {
+    type: 'call.outcome_missing',
+    label: 'Calls with no outcome recorded',
+    hint: 'When you dialled somebody from the product and never said what happened.',
+    group: 'work',
+    defaultChannels: ['in_app'],
+    optOut: true,
+    respectsQuietHours: true,
+    /**
+     * The nudge exists because the manual telephony driver cannot know how a call went: it hands
+     * the number to a phone, and the `dialing` row it leaves is honest but useless until somebody
+     * says what happened. Without this, a workspace's call log quietly fills with attempts and
+     * "what happened on those forty calls" stays unanswerable — which is the whole thing the
+     * feature was built to answer.
+     *
+     * Stale the moment the outcome is recorded, which is the common case: somebody rings at 21:40,
+     * logs it at 21:45, and must not be told at 07:00 to do what they already did.
+     */
+    staleness: 'call_still_open',
   },
   {
     type: 'sla.at_risk',

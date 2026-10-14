@@ -106,6 +106,15 @@ export const SCHEDULES: readonly ScheduleDefinition[] = [
   },
   {
     queue: QUEUES.MAINTENANCE,
+    jobName: JOBS.CALL_OUTCOME_SWEEP,
+    // Every ten minutes. The grace period is fifteen, so a call gets its question between fifteen
+    // and twenty-five minutes after it was dialled — soon enough that the person still remembers
+    // the conversation, late enough that it never arrives while they are still on the phone.
+    cron: '*/10 * * * *',
+    description: 'Ask what happened on the calls that were dialled and never recorded',
+  },
+  {
+    queue: QUEUES.MAINTENANCE,
     jobName: JOBS.SLA_SWEEP,
     // Every five minutes, which `docs/queue-event-architecture.md` §5 specifies. Frequent on
     // purpose: the near-breach warning is only worth sending while there is still time to act on

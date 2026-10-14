@@ -135,6 +135,17 @@ const REQUIRED_INDEXES = [
   // What the notification release sweep scans (`FR-NOT-3`). Un-prefixed by `organization_id`
   // deliberately: the sweep is platform-wide, like the two SLA ones.
   'notifications_awaiting_release',
+  // Calls (`FR-CALL-1..3`). `calls_provider_call_unique` is the idempotency gate a telephony
+  // webhook needs, partial because every hand-logged call has no provider id and a complete unique
+  // index would allow exactly one of those per workspace. `calls_unlinked` is the queue that
+  // exists because `lead_id` is nullable: an inbound call from a number nobody recognises.
+  'calls_provider_call_unique',
+  'calls_live_by_lead',
+  'calls_live_by_agent',
+  'calls_unlinked',
+  // Keyed on `started_at` alone, which is the only index on this table that is not prefixed by
+  // `organization_id`: the nudge sweep runs across every tenant and cannot use one that is.
+  'calls_awaiting_outcome',
 ];
 
 /**
@@ -406,6 +417,23 @@ const REQUIRED_CONSTRAINTS = [
   'notification_settings_quiet_hours_pair',
   'notification_settings_quiet_hours_distinct',
   'notification_settings_membership_same_org_fk',
+  // Calls. The status/timestamp rule is a `CASE` rather than a biconditional because `status` has
+  // five values and only one is the open state; `calls_duration_needs_completion` is what stops a
+  // four-minute no-answer being averaged into a report.
+  'calls_has_a_number',
+  'calls_from_e164_format',
+  'calls_to_e164_format',
+  'calls_duration_sane',
+  'calls_ended_after_started',
+  'calls_settled_has_ended',
+  'calls_duration_needs_completion',
+  'calls_provider_pair',
+  'calls_one_recording',
+  'call_outcomes_name_present',
+  'calls_lead_same_org_fk',
+  'calls_task_same_org_fk',
+  'calls_outcome_same_org_fk',
+  'calls_agent_same_org_fk',
 ];
 
 describe('hand-written indexes survive every generated migration', () => {

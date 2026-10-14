@@ -90,6 +90,13 @@ export const SCORING_TRIGGERS: readonly ScoringTriggerSpec[] = [
     describe: 'Take points away from a lead nobody has touched, so an old score cannot look hot.',
   },
   {
+    event: 'call.logged',
+    label: 'A call is logged',
+    live: true,
+    describe:
+      'Score what happened on the phone — a rule can read `event.outcomeCategory`, so "spoke to them" and "wrong number" are different answers.',
+  },
+  {
     event: 'message.received',
     label: 'A WhatsApp reply arrives',
     live: false,

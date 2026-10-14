@@ -35,6 +35,7 @@ import {
   SlaEscalationNotificationProcessor,
   SlaSweepProcessor,
 } from '../../modules/sla/sla.processor.js';
+import { CallOutcomeSweepProcessor } from '../../modules/calls/calls.processor.js';
 import { ImportProcessProcessor } from '../../modules/imports/imports.processor.js';
 import type { JobProcessor } from './job-processor.js';
 
@@ -75,6 +76,8 @@ export const PROCESSOR_TYPES: readonly Type<JobProcessor>[] = [
   TaskReminderDispatchProcessor,
   TaskOverdueSweepProcessor,
   SlaSweepProcessor,
+  // calls
+  CallOutcomeSweepProcessor,
   // scoring
   LeadScoreProcessor,
   ScoreDecaySweepProcessor,

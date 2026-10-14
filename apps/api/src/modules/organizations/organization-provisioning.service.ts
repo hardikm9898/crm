@@ -10,6 +10,7 @@ import {
   seedCrmDefaults,
   seedDealPipeline,
   seedPaymentMethods,
+  seedCallOutcomes,
   seedTaskConfig,
   seedSlaPolicy,
   seedWorkingHours,
@@ -171,6 +172,7 @@ export class OrganizationProvisioningService {
         await seedDealPipeline(tx, organizationId);
         await seedPaymentMethods(tx, organizationId);
         await seedTaskConfig(tx, organizationId);
+        await seedCallOutcomes(tx, organizationId);
         await seedWorkingHours(tx, organizationId);
         await seedSlaPolicy(tx, organizationId);
         // The owner is the only member at signup, so they are the pool. A round-robin of one still

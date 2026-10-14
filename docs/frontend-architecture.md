@@ -261,6 +261,34 @@ The timeline renderer is a registry: `activity.type → component`. An unknown t
 generic row rather than crashing — so a backend that ships a new activity type before the frontend
 does is safe (`FR-TL-1`).
 
+> **Amendment, 2026-10-14 (implementation, Phase 3 step 6 — calls).** The mock-up above puts
+> **Calls** in the centre tabs and `[Call]` among the quick actions. As built, the calls panel is a
+> card in the Overview column, between the follow-ups and the custom fields, because the sequence
+> somebody working a lead reads in is _what is owed · what was said · who this is_ — and a tab hides
+> the panel behind a click on the one screen where the phone is the point.
+>
+> - **The attempt nobody has recorded comes first, in amber, with its form already open.** A dialled
+>   call leaves a `dialing` row, and with no telephony provider the product cannot know how it went;
+>   an amber row asking the question is the only thing that reliably turns an attempt into a record.
+>   `dialing` is the one status on the screen somebody can still do something about, which is why
+>   it is the one that is not grey.
+> - **The dial button says what it will do.** `GET /calls/config` carries `telephony.placesCalls`, so
+>   the sentence under it reads "this opens your phone, and logs the attempt here" today and changes
+>   itself the day a provider is connected. The server cannot open a `tel:` link, so the action hands
+>   the href back and the button follows it — which is why `ActionState`'s success variant gained a
+>   small `data` map.
+> - **The outcome form asks once.** Not "did it connect?" and "what happened?" — the status is
+>   derived from the chosen outcome's category (`statusForCategory`), and the duration boxes appear
+>   only for a call that connected, because the API refuses a duration on one that did not.
+> - **The follow-up is closed from the same form**, when the lead has exactly one open follow-up.
+>   With more than one, guessing is worse than not offering it: closing the wrong follow-up is a lie
+>   about what was done, and the queue screen is one click away.
+> - **`/calls`** is the log: the calls awaiting an outcome first, as work, then the history. Four
+>   figures over the whole filter — not the page — and `/settings/calls` holds the outcome
+>   vocabulary, beside the follow-up vocabulary and for the same reason: renaming an outcome changes
+>   what every past call reads as, which is not a thing to do from the screen where somebody is
+>   logging one.
+
 ### 5.3 Shared WhatsApp inbox (`FR-WA-7/8`)
 
 Three panes on desktop (conversations | messages | lead context), stacked with back navigation on
