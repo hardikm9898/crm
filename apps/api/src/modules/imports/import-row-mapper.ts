@@ -5,6 +5,7 @@ import {
   parseAmount,
   parseBoolean,
   parseSpreadsheetDate,
+  splitFullName,
   splitList,
   type CountryCode,
   type FieldError,
@@ -282,13 +283,15 @@ export function mapImportRow(
   };
 }
 
-/** `Priya Sharma Nair` → first `Priya Sharma`, last `Nair`; a single word is a first name. */
-export function splitFullName(value: string): { firstName: string; lastName: string | null } {
-  const parts = value.split(/\s+/).filter((part) => part !== '');
-  if (parts.length <= 1) return { firstName: parts[0] ?? '', lastName: null };
-  const lastName = parts.pop() as string;
-  return { firstName: parts.join(' '), lastName };
-}
+/**
+ * Re-exported, not reimplemented.
+ *
+ * The definition moved to `@leados/shared` when the public lead API became the third channel that
+ * splits a name — the capture form's first draft had taken the *first* word as the given name, so
+ * the same person's name was split two ways depending on which door they came in through. This
+ * export stays because the mapper's own spec and its callers name it here.
+ */
+export { splitFullName } from '@leados/shared';
 
 /**
  * The error for a name that matched nothing.

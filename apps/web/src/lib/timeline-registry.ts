@@ -78,6 +78,26 @@ const money = (payload: ActivityPayload, key: string, currencyKey: string): stri
 };
 
 /**
+ * `label: value` for each answer a capture carried, ignoring anything whose shape is not that.
+ *
+ * Shared by the form and the integration describers, because the answers are the same fact
+ * arriving through different doors — and a second copy would be the one that stopped printing the
+ * message.
+ */
+function answerLines(payload: Record<string, unknown>): string[] {
+  const answers = Array.isArray(payload['answers']) ? payload['answers'] : [];
+  return answers
+    .filter(
+      (answer): answer is { label: string; value: string } =>
+        typeof answer === 'object' &&
+        answer !== null &&
+        typeof (answer as { label?: unknown }).label === 'string' &&
+        typeof (answer as { value?: unknown }).value === 'string',
+    )
+    .map((answer) => `${answer.label}: ${answer.value}`);
+}
+
+/**
  * Only the types Phase 2 can actually produce are described here.
  *
  * Adding a describer for `whatsapp.sent` today would be writing copy for a screen nobody can reach,
@@ -101,19 +121,23 @@ const DESCRIBERS: Readonly<Record<string, Describer>> = {
     // The answers, verbatim, because that is the whole value of the entry. An activity type with no
     // describer renders as a bare row and its payload never reaches the screen — the trap
     // `deal.won` paid for — and here the payload *is* what the business owner opened the page for.
-    const answers = Array.isArray(payload['answers']) ? payload['answers'] : [];
-    const lines = answers
-      .filter(
-        (answer): answer is { label: string; value: string } =>
-          typeof answer === 'object' &&
-          answer !== null &&
-          typeof (answer as { label?: unknown }).label === 'string' &&
-          typeof (answer as { value?: unknown }).value === 'string',
-      )
-      .map((answer) => `${answer.label}: ${answer.value}`);
+    const lines = answerLines(payload);
     return {
       label: 'Form',
       description: `Filled in ${text(payload, 'formName') ?? 'a form'}${
+        lines.length > 0 ? ` — ${lines.join(' · ')}` : ''
+      }.`,
+    };
+  },
+  'lead.enquiry_received': (payload) => {
+    // The same answers a form submission carries, from a channel that has no form behind it: the
+    // public lead API today. Its own sentence rather than an invented form name, because "Filled
+    // in the public API" describes something that did not happen.
+    const lines = answerLines(payload);
+    const channel = text(payload, 'channel');
+    return {
+      label: 'Enquiry',
+      description: `Arrived through ${channel ? humanise(channel) : 'an integration'}${
         lines.length > 0 ? ` — ${lines.join(' · ')}` : ''
       }.`,
     };

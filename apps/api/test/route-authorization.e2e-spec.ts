@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { newId, newToken } from '@leados/shared';
+import { newId, newToken, signRequest } from '@leados/shared';
 import { RouteAuditService } from '../src/infra/authz/route-audit.service.js';
 import { bootTestApp, call, cleanupUsers, type EnvelopeBody, type TestApp } from './app-harness.js';
 
@@ -81,6 +81,10 @@ interface Tenant {
   callOutcomeId: string;
   // Phase 4, step 1 — capture forms.
   formId: string;
+  // Phase 4, step 2 — the public lead API. The payload is produced by a real signed capture, so
+  // the replay route is aimed at a row the product itself wrote.
+  apiKeyId: string;
+  payloadId: string;
 }
 
 let orgA: Tenant;
@@ -348,6 +352,35 @@ async function createTenant(label: string): Promise<Tenant> {
     token,
   });
 
+  // An API key of org A's own, and a payload it sent. The payload is written by a *failed* capture
+  // on purpose: `POST /ingestion/payloads/:id/replay` refuses one that already became a lead, and
+  // a route the sweep aims at has to reach the authorization check rather than a 422.
+  const apiKey = await call<EnvelopeBody<{ id: string; keyId: string; secret: string }>>(ctx.app, {
+    method: 'POST',
+    url: '/api/v1/api-keys',
+    payload: { name: `Sweep key ${label}`, scopes: ['ingest:write'] },
+    token,
+  });
+  const organizationRow = await ctx.db.organization.findUniqueOrThrow({
+    where: { id: organizationId },
+    select: { publicKey: true },
+  });
+  const unusableBody = JSON.stringify({ city: 'Pune' });
+  const signedAt = Math.floor(Date.now() / 1000);
+  await call(ctx.app, {
+    method: 'POST',
+    url: `/api/v1/public/leads/${organizationRow.publicKey}`,
+    payload: JSON.parse(unusableBody),
+    headers: {
+      'x-api-key': apiKey.body.data.keyId,
+      'x-signature': signRequest(apiKey.body.data.secret, signedAt, unusableBody),
+    },
+  });
+  const payload = await ctx.db.inboundPayload.findFirstOrThrow({
+    where: { organizationId, status: 'failed' },
+    orderBy: { receivedAt: 'desc' },
+  });
+
   const slaClock = await ctx.db.slaClock.findFirstOrThrow({
     where: { organizationId, leadId: lead.body.data.id },
   });
@@ -416,6 +449,8 @@ async function createTenant(label: string): Promise<Tenant> {
     callId: dialled.body.data.call.id,
     callOutcomeId: callConfig.body.data.outcomes[0]?.id ?? '',
     formId: form.body.data.id,
+    apiKeyId: apiKey.body.data.id,
+    payloadId: payload.id,
   };
 }
 
@@ -500,7 +535,20 @@ describe('every route declares its authorization', () => {
    * validated against the form's own field set; and nothing the caller sends can choose the
    * pipeline, the source, the assignment or the owner — those come from the form.
    */
-  const PUBLIC_CAPTURE_WRITES = ['POST /public/forms/:key/submissions'];
+  const PUBLIC_CAPTURE_WRITES = [
+    'POST /public/forms/:key/submissions',
+    /**
+     * The public lead API (`FR-CAP-6`). Authenticated by **three** things rather than a session:
+     * the workspace's own public key in the path, an API key in `X-Api-Key`, and an HMAC-SHA256
+     * signature over the raw body in `X-Signature` whose timestamp must be within five minutes
+     * (ADR-0030). A key is scoped (`ingest:write`), optionally restricted to a list of addresses,
+     * rate-limited per minute, revocable and rotatable; a key belonging to another workspace is
+     * refused with the same 401 as one that does not exist. Nothing the caller sends chooses the
+     * pipeline, the owner or the source — the first two come from the workspace's rules and the
+     * third is resolved by name against its own list.
+     */
+    'POST /public/leads/:organizationPublicKey',
+  ];
 
   it('gates every write outside /auth behind a permission', () => {
     // Authentication endpoints are necessarily public or self-scoped; everything else that
@@ -672,6 +720,11 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       '/calls/:id': `/calls/${orgA.callId}`,
       '/calls/:id/outcome': `/calls/${orgA.callId}/outcome`,
       '/settings/call-outcomes/:id': `/settings/call-outcomes/${orgA.callOutcomeId}`,
+      // Phase 4, step 2 — the public lead API
+      '/api-keys/:id': `/api-keys/${orgA.apiKeyId}`,
+      '/api-keys/:id/rotate': `/api-keys/${orgA.apiKeyId}/rotate`,
+      '/api-keys/:id/revoke': `/api-keys/${orgA.apiKeyId}/revoke`,
+      '/ingestion/payloads/:id/replay': `/ingestion/payloads/${orgA.payloadId}/replay`,
       // Phase 4, step 1 — capture forms
       '/forms/:id': `/forms/${orgA.formId}`,
       '/forms/:id/fields': `/forms/${orgA.formId}/fields`,

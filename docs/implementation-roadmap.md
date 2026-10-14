@@ -1834,6 +1834,93 @@ unmapped answers are kept whole and logged today. `inbound_payloads`, `ingestion
 `form_submissions` grows with traffic the tenant does not control, refusals included: it is indexed
 for the two questions anybody asks and will need the retention treatment Phase 10 writes down.
 
+### Step 2 — the public lead API: a credential, a signature, and nothing lost ✅ _(landed 2026-10-14)_
+
+`FR-CAP-3`, `FR-CAP-4`, `FR-CAP-5`, `FR-CAP-6`, `FR-CAP-7`, `FR-API-2`, `FR-API-5`. A capture form
+is a page a person fills in; this is the door a **program** comes through — a website's server, a
+Zapier step, an agency's integration. It has no session, so everything about it is credentials,
+idempotency and the promise that nothing is lost. **Three of Phase 4's six exit criteria are this
+step**, and all three are now met and tested.
+
+**Four tenant tables.** `api_keys` (one credential pair), `inbound_payloads` (**the never-lose
+store**, partitioned monthly by arrival like `activities`), `ingestion_errors` (why a payload did
+not become a lead, naming the stage) and `idempotency_keys` (the first **response** to a key). The
+migration arrived with **15 spurious `DROP`s** at the top — every composite FK, partial index and
+trigger the earlier migrations added by hand — which were removed, and all 24 new objects are in
+`schema-objects.int-spec.ts`. Prisma cannot create a partitioned table, so the `CREATE TABLE` was
+edited by hand and `ensure_inbound_payload_partition` creates months ahead beside the activities
+one.
+
+**The secret is encrypted, not hashed** — the decision this step turned on, and the first draft had
+it wrong. Verifying an HMAC needs the shared secret, so a digest is useless: `sha256(secret)` by
+analogy with a password could not have worked. AES-256-GCM under the deployment's master key with
+the key's own id as AAD, a CHECK that refuses anything that is not an envelope (and refuses a value
+beginning `sk_`, which is what the mistake looks like), and the trade-off stated rather than hidden:
+somebody with the database **and** the master key can read it, which is what rotation is for. All of
+it is [ADR-0030](./decisions/ADR-0030-the-public-lead-api-verifies-a-signature-and-never-loses-a-payload.md).
+
+**The order of the checks is deliberate**: workspace public key (404), API key (401 — identical for
+unknown, revoked, expired and another workspace's), IP allowlist (403), scope (403), workspace
+standing (403), rate limit (429), signature (401). The rate limit is counted **before** the
+signature, so grinding signatures costs an attacker requests. The signature is over `"<unix>.<raw
+body>"` with a five-minute tolerance, verified against the **bytes as sent** — `{"a":1}` and
+`{ "a": 1 }` are the same object and different bytes, and a verifier that re-serialised would reject
+every client whose JSON writer disagrees with ours.
+
+**The payload row is written before anything is attempted**, in status `received`. A row written once
+the outcome is known is precisely the row that is missing when it did not happen, which is what
+`FR-CAP-3` asks for and what makes "killing the worker mid-ingestion loses no lead" true: such a
+payload is finished by `POST /ingestion/payloads/:id/replay`, tested in the suite and driven from the
+screen. Idempotency is a stored **response** in a non-partitioned table — a unique on a partitioned
+table must contain the partition key, which makes it a race guard rather than a point read — and a
+replay of the same key with a different body is a 409 rather than a lie.
+
+**`FR-CAP-5` is a round trip, not a button.** Unknown fields are kept whole, named in the response,
+and counted across stored payloads with a sample of each. The one click on `/ingestion` creates the
+field through `POST /custom-fields` — the same endpoint the field builder uses — and the **mapper
+matches an integration's top-level key through the same derivation** (`customFieldKeyFor`), so
+`propertyType` lands in the `property_type` somebody just made. Without that second half the click
+creates a field nothing ever writes to: a feature that looks built. The value is validated against
+the definition first, so making it a `number` field while the integration keeps sending words leaves
+the key unmapped with a note rather than turning a capture that worked yesterday into a 400.
+
+**The test tool runs the step it previews.** It answers `wouldCreate`, the phone as it would be
+**stored** beside the phone as sent, and notes naming what matched nothing — through
+`normalizeContactNumbers` and `buildDisplayName`, the two functions the write path itself uses. Its
+first version echoed the number as sent, which is the import's dry-run lie in a new place.
+
+**Two screens** (§10.8 of `frontend-architecture.md`): `/settings/api-keys`, where the secret is
+shown once and travels in `ActionState.data` because no endpoint will ever answer it again, and
+`/ingestion`, which leads with the test tool and the payloads that are not leads and puts the log
+last. The printed `curl` carries this workspace's own public key and reads both halves of the
+credential from shell variables.
+
+**Three defects worth the note.** A payload row inserted by raw SQL carries **microsecond**
+`received_at`, which a JavaScript `Date` cannot write back, so an update keyed on `(id, received_at)`
+failed on a row sitting in front of it — and Postgres refuses to alter the type of a partition key
+column, so the status updates are keyed on the id alone. `recordFailure`'s own write then threw and
+**replaced the 400 that said what was wrong with a 404 about the payload**: a recorder of failures
+may not fail the request. And the replay button's success message could never be seen, because a
+successful replay removes its row from the screen — the confirmation is rendered from the server tree
+instead. All three are in `CLAUDE.md`.
+
+**Verified.** 2 105 tests green — 930 unit and 1 175 integration — with about 120 of them new: a
+**33-case** public API suite over real HTTP (every refusal above, the idempotent replay, the
+never-lose criterion, the one-click round trip in both directions, the dry run's two verdicts), 24
+new objects in the schema-objects guard, 12 cross-tenant database guarantees, 25 shared-vocabulary
+cases and 29 in the web app's reconciliation spec. Then **57 HTTP checks** against a live API,
+worker and scheduler, and **63 browser checks** driving both screens end to end with real
+signatures. The schema guard also caught the hash→encrypt rename it was still asserting the old name
+for, which is the one job that suite has.
+
+**Carried forward, named rather than assumed:** `api_logs` (`FR-SA-4`) arrives with the authenticated
+REST surface, where there is a request volume worth logging per endpoint — today `inbound_payloads`
+is the log for the one endpoint that exists. Scopes stay at `ingest:write` / `ingest:read` rather
+than inventing the read scopes of a surface that does not exist. Bulk replay is deliberately absent:
+a thousand failures whose cause has not been fixed would be a thousand more. Outbound webhooks,
+OpenAPI, the integration framework, Meta Lead Ads and Google Ads lead forms are the rest of this
+phase.
+
 ---
 
 ## Phase 5 — WhatsApp
@@ -2011,7 +2098,7 @@ partially landed, with the specific gaps named.
 ## Immediate next step
 
 _This section names the next step only; what each landed step actually did is in the step entries
-above. Last reviewed 2026-10-14, after Phase 4 step 1._
+above. Last reviewed 2026-10-14, after Phase 4 step 2._
 
 **Phase 3 is finished, exit criteria included.** Every item of scope is built — tasks, reminders,
 reschedule with a mandatory reason, complete-with-next-follow-up, "no next action", the overdue
@@ -2025,27 +2112,38 @@ after the sign-in link. The other four were already met and tested: `/my/today` 
 overdue and near-breach escalating exactly once, and Today usable one-handed at 375 px with queued
 actions.
 
-**Phase 4 has started.** Step 1 built capture forms: the builder, the public renderer at
-`/f/[key]`, the embed snippet, and a submission store that keeps every payload whether or not a
-lead came out of it. The next step is the **public lead API** (`FR-CAP-6`, `FR-API-2..5`): a
-server-to-server shell around the same `LeadsService.create` call, authenticated by a public key
-and an HMAC signature rather than by a URL, idempotent on a client-supplied key, writing
-`inbound_payloads` as the never-lose store for every channel after this one, with
-`ingestion_errors` and a replay. Three of Phase 4's six exit criteria are about that endpoint, and
-`FR-CAP-5`'s one-click "create a custom field from this unmapped answer" belongs with it: the
-surfacing is the same for a form's unmapped answer and a payload nobody mapped at all.
+**Phase 4 is two steps in.** Step 1 built capture forms: the builder, the public renderer at
+`/f/[key]`, the embed snippet, and a submission store that keeps every payload whether or not a lead
+came out of it. Step 2 built the **public lead API** — a public key and an HMAC signature instead of
+a session, `inbound_payloads` as the never-lose store for every channel after this one,
+`ingestion_errors` naming the stage, a stored-response idempotency window, a replay, a self-serve
+test tool, API keys with scopes/rotation/allowlist, and `FR-CAP-5`'s one click, which creates the
+custom field **and** is matched by the mapper so the next payload fills it in. Three of this phase's
+six exit criteria are met and tested.
 
-Then the rest of **Phase 4**: API keys with scopes, rotation and an IP allowlist; api logs;
-outbound webhooks; OpenAPI; the integration framework; and Meta/Google lead ads. The
-inbound webhook built in step 7 is the first of that shape and deliberately not under
-`/wh/{provider}/{connectionId}`: connection ids arrive with the framework, and the email webhook has
-no per-tenant connection to name.
+**The next step is outbound webhooks** (`FR-API-6`, `FR-API-7`): the other direction of the same
+contract, and the phase's fourth exit criterion — signed deliveries, a per-attempt delivery log,
+retries on a schedule, auto-disable after 15 consecutive failures, manual retry, and SSRF
+protections tested against private addresses and redirects to them. The signing is already written
+(`signRequest` over `"<unix>.<raw body>"`), the outbox is already the thing that decides what to
+send, and the inbound webhook built in Phase 3 step 7 is the first of that shape — deliberately not
+under `/wh/{provider}/{connectionId}`, because connection ids arrive with the integration framework.
+
+Then the rest of **Phase 4**: `api_logs` (`FR-SA-4`), with the authenticated REST surface that gives
+it a volume worth logging; OpenAPI and published docs with a diff check; the integration framework
+(provider registry, credential vault, health checks, mapping templates); and Meta/Google lead ads.
+
+Carried forward from Phase 4 step 2: `api_logs` does not exist, so `inbound_payloads` plus
+`api_keys.last_used_at` / `last_used_ip` are the whole request record for the one public endpoint;
+there is no bulk replay, on purpose; and the signature's five-minute tolerance means a client with a
+badly wrong clock is refused with a message about the signature rather than the clock, which is the
+honest answer but not an obvious one.
 
 Carried forward from Phase 4 step 1: the embed is a copyable `<iframe>` rather than a hosted
-loader (Phase 9, with the website builder); `FR-CAP-5`'s one-click "create a custom field from this"
-waits for the public lead API, where the same surfacing is needed; CAPTCHA is a settings flag with
-no provider behind it; and `form_submissions` grows with traffic the tenant does not control, so it
-belongs in the retention policy Phase 10 writes down.
+loader (Phase 9, with the website builder); CAPTCHA is a settings flag with no provider behind it;
+and `form_submissions` grows with traffic the tenant does not control, so it belongs in the
+retention policy Phase 10 writes down — as does `inbound_payloads`, which grows the same way and is
+partitioned monthly precisely so a retention policy can drop a partition rather than delete rows.
 
 Carried forward from step 8: the walk-through and the thirteen browser checks before it are run by
 hand from scripts that are not in the repository — the same arrangement every phase has used, and

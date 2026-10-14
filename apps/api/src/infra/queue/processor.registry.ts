@@ -37,6 +37,7 @@ import {
   SlaSweepProcessor,
 } from '../../modules/sla/sla.processor.js';
 import { CallOutcomeSweepProcessor } from '../../modules/calls/calls.processor.js';
+import { IdempotencyPruneProcessor } from '../../modules/ingestion/ingestion.processor.js';
 import { ImportProcessProcessor } from '../../modules/imports/imports.processor.js';
 import type { JobProcessor } from './job-processor.js';
 
@@ -80,6 +81,7 @@ export const PROCESSOR_TYPES: readonly Type<JobProcessor>[] = [
   SlaSweepProcessor,
   // calls
   CallOutcomeSweepProcessor,
+  IdempotencyPruneProcessor,
   // scoring
   LeadScoreProcessor,
   ScoreDecaySweepProcessor,

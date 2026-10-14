@@ -157,6 +157,13 @@ const REQUIRED_INDEXES = [
   // became a lead, partial so it stays small however many succeed.
   'forms_live_slug',
   'form_submissions_unresolved',
+  // The public lead API (`FR-CAP-6`, `FR-API-2`). `api_keys_live_by_key_id` is the hot path the
+  // authenticator takes on every request; the other two are the operator's queues, and
+  // `inbound_payloads_unresolved` is keyed on `received_at` alone because the sweep that reads it
+  // runs across every tenant and cannot use an index whose leading column it does not filter on.
+  'api_keys_live_by_key_id',
+  'inbound_payloads_unresolved',
+  'ingestion_errors_replayable',
 ];
 
 /**
@@ -485,6 +492,36 @@ const REQUIRED_CONSTRAINTS = [
   'form_submissions_lead_same_org_fk',
   'leads_form_same_org_fk',
   'lead_touchpoints_form_same_org_fk',
+  // The public lead API. The format checks are the load-bearing ones: `api_keys_secret_is_encrypted`
+  // is what stops a service writing a plaintext `sk_live_…` into the column it is supposed to
+  // encrypt into, and `api_keys_prefix_matches_key` keeps the displayed prefix honest about which
+  // key it names.
+  'api_keys_has_a_scope',
+  'api_keys_name_present',
+  'api_keys_key_id_format',
+  'api_keys_secret_is_encrypted',
+  'api_keys_prefix_matches_key',
+  'api_keys_rate_limit_positive',
+  'api_keys_revocation_is_accounted_for',
+  'inbound_payloads_outcome_has_a_lead',
+  'inbound_payloads_failure_is_explained',
+  'inbound_payloads_body_is_an_object',
+  'inbound_payloads_headers_is_an_object',
+  'inbound_payloads_dedupe_hash_format',
+  'inbound_payloads_idempotency_key_present',
+  'inbound_payloads_attempts_positive',
+  'ingestion_errors_stage_is_known',
+  'ingestion_errors_message_present',
+  'ingestion_errors_details_is_object',
+  'idempotency_keys_key_present',
+  'idempotency_keys_request_hash_format',
+  'idempotency_keys_response_is_an_answer',
+  'idempotency_keys_expires_after_creation',
+  // The composite FK into a **partitioned** parent, which spans three columns because a unique
+  // constraint on a partitioned table must contain the partition key.
+  'ingestion_errors_payload_same_org_fk',
+  'inbound_payloads_api_key_same_org_fk',
+  'api_keys_creator_same_org_fk',
 ];
 
 describe('hand-written indexes survive every generated migration', () => {
@@ -526,6 +563,30 @@ describe('the objects Prisma cannot describe at all', () => {
     const rows = await h.unscoped.$queryRaw<
       { count: bigint }[]
     >`SELECT count(*) AS count FROM pg_proc WHERE proname = 'ensure_activity_partition'`;
+    expect(Number(rows[0]?.count ?? 0)).toBe(1);
+  });
+
+  it('keeps inbound_payloads partitioned by range, with its own default partition', async () => {
+    // The never-lose store grows with traffic the tenant does not control, so it is pruned by
+    // month like `activities` — and a table that stopped being partitioned would answer every
+    // query exactly as before, which is why this is asserted rather than assumed (`FR-CAP-3`).
+    const rows = await h.unscoped.$queryRaw<
+      { partition_strategy: string | null; partitions: bigint }[]
+    >`
+      SELECT (SELECT partstrat::text FROM pg_partitioned_table WHERE partrelid = 'inbound_payloads'::regclass)
+               AS partition_strategy,
+             (SELECT count(*) FROM pg_inherits WHERE inhparent = 'inbound_payloads'::regclass)
+               AS partitions
+    `;
+    expect(rows[0]?.partition_strategy).toBe('r');
+    expect(Number(rows[0]?.partitions ?? 0)).toBeGreaterThan(1);
+    expect(await indexExists('inbound_payloads_default_pkey')).toBe(true);
+  });
+
+  it('keeps the inbound-payload partition function, so the months stay ahead of the calendar', async () => {
+    const rows = await h.unscoped.$queryRaw<
+      { count: bigint }[]
+    >`SELECT count(*) AS count FROM pg_proc WHERE proname = 'ensure_inbound_payload_partition'`;
     expect(Number(rows[0]?.count ?? 0)).toBe(1);
   });
 

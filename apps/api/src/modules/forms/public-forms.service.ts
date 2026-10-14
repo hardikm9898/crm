@@ -9,6 +9,7 @@ import {
   isHoneypotTripped,
   newId,
   normalizeUtm,
+  splitFullName,
   systemPrincipal,
   tenantContext,
   validateFormSubmission,
@@ -367,11 +368,14 @@ export class PublicFormsService {
           continue;
         }
         if (spec.leadField === 'fullName') {
-          // The capture path splits a single name field; passing it as `firstName` would make
-          // "Rohit Kulkarni" somebody's first name.
-          const parts = String(raw).trim().split(/\s+/);
-          lead['firstName'] = parts[0];
-          if (parts.length > 1) lead['lastName'] = parts.slice(1).join(' ');
+          // `splitFullName` from the shared package, which the import has used since Phase 2: the
+          // surname is the **last** word. This code's first draft took the first word as the given
+          // name and the rest as the surname, so "Priya Sharma Nair" was split one way through a
+          // form and another way through a spreadsheet — the same person, two names, nothing
+          // failing.
+          const split = splitFullName(String(raw));
+          lead['firstName'] = split.firstName;
+          if (split.lastName) lead['lastName'] = split.lastName;
           recorded.push({ label: view.label, value: String(raw).trim() });
           continue;
         }

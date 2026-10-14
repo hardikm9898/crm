@@ -658,3 +658,57 @@ no session at all, a missing answer named under its own box, the thank-you in th
 words, the submission and the lead it became, the timeline entry carrying what they typed, a bot
 thanked exactly as a person is with the refusal visible to the workspace, and a switched-off form
 answering a sentence a visitor can act on.
+
+### 10.8 As built — Phase 4, step 2 (the lead API's two screens)
+
+`/settings/api-keys` and `/ingestion`, both behind `api_key:manage`. The first is where a
+credential is made; the second is where somebody finds out what an integration actually sent. They
+are two screens rather than one because they are read by the same person at different moments: the
+key is created once, and the log is opened every time a lead does not appear.
+
+- **The secret travels in `ActionState.data`, and nowhere else.** `create` and `rotate` are the only
+  actions in this app that hand a credential to the browser. The API answers the secret exactly once
+  and no endpoint will answer it again, so it cannot come from the re-rendered server tree the way
+  every other value on the screen does — which is what `data` was added for (click-to-call needed
+  the same thing for a `tel:` href). A refresh loses it; a browser check asserts that the page's
+  HTML no longer contains it afterwards. Both halves are `readOnly` inputs rather than text: a
+  credential somebody has to select by hand arrives in a config file with a space on the end.
+- **The request to make is printed with this workspace's own public key in it**, and reads both
+  halves of the credential from shell variables (`$LEADOS_KEY_ID`, `$LEADOS_SECRET`). A snippet with
+  a secret pasted into it is a secret in a browser's history, in a screenshot and in a support
+  ticket. The key id is not a secret and is still not printed in the list — the list shows the
+  16-character prefix, because a screen printing full credentials invites a photograph of itself.
+- **Three standings, not two.** Live, Expired and Revoked: a revoked key was switched off
+  deliberately, and an expired one ran out while nobody was watching, which is the one of the two
+  that is probably a broken integration right now. "Never used — nothing has signed a request with
+  it yet" is said in words, because a key that was created and pasted somewhere wrong is the
+  commonest question this screen answers.
+- **`/ingestion` leads with the test tool and the failures, and puts the log last.** A screen that
+  led with the log would bury the handful of rows somebody has to act on under the hundreds that
+  worked — the same argument the forms screen makes for showing refused submissions above the forms.
+  The headline sentence carries a plural per clause and omits what is zero.
+- **The dry run's verdict is a sentence, not an inference.** "This would create a lead" or "This
+  would be refused — see why below", above the normalised payload: a tool that printed JSON and left
+  the answer to be worked out from it would be a tool for the person who wrote the endpoint. The
+  result comes back as pre-formatted strings in `ActionState.data`, because a POST that persists
+  nothing has no server tree to render from.
+- **A replay reports itself from the server tree.** The button has no success message: a successful
+  replay revalidates the screen, the payload leaves the "did not become leads" list, and the form is
+  unmounted with its action state. The payload's own row says "Tried again just now — it became a
+  lead", which survives a refresh and is the honest record. A refusal keeps the row, so its notice
+  stays beside it.
+- **The one click is three editable boxes and a button.** The key, the label and the kind are
+  prefilled — `propertyType` → `property_type`, "Property type", and a kind guessed from the samples
+  — and editable before the press, because a custom field's key appears in stored values, saved
+  views, import mappings and index names and cannot be changed afterwards. A name that cannot be a
+  key at all (a collision with a lead's own column) says so instead of offering a button that is
+  certain to be refused, and the button is hidden entirely from somebody without
+  `custom_field:manage`.
+
+**One suite, 63 checks**, all green: a key created by clicking from the menu, its secret read out of
+the card and then absent from the page's HTML after a refresh, that same credential signing a real
+capture over HTTP, the log's sentence and figures agreeing with what was sent, a payload stored by a
+crash finished from the screen (and the lead it became carrying what they said on its timeline), the
+test tool's two verdicts with the reason the endpoint would give, the one click creating `agent_code`
+and **the next payload filling it in**, rotation invalidating the old secret within a second, and a
+revoked key reading as revoked with nothing able to post through it.

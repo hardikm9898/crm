@@ -104,6 +104,19 @@ export const NAV_SECTIONS: readonly NavSection[] = [
         href: '/settings/sla',
         permissions: ['settings:manage'],
       },
+      // The lead API's two screens sit beside each other, and in Workspace rather than Grow: a key
+      // is a credential, and the log behind it is read by whoever built the integration — not by
+      // the person running the campaign the leads came from.
+      {
+        label: 'Lead API keys',
+        href: '/settings/api-keys',
+        permissions: ['api_key:manage'],
+      },
+      {
+        label: 'Integration log',
+        href: '/ingestion',
+        permissions: ['api_key:manage'],
+      },
       { label: 'Your security', href: '/settings/security', permissions: [] },
     ],
   },

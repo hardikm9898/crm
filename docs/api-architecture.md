@@ -410,8 +410,8 @@ POST /whatsapp/campaigns                     consent-checked bulk (FR-WA-10)
 CRUD /forms | PUT /forms/{id}/fields   POST /forms/{id}/rotate-key
 GET  /forms/submissions?formId=       GET /forms/builder-options
 CRUD /api-keys                      POST /api-keys/{id}/rotate | /revoke
-GET  /api-logs                      GET /ingestion/payloads | /ingestion/errors
-POST /ingestion/errors/{id}/replay
+GET  /api-logs                      GET /ingestion/payloads | /ingestion/errors | /ingestion/unmapped
+POST /ingestion/payloads/{id}/replay   POST /ingestion/test   (dry run, 200, persists nothing)
 CRUD /webhooks (endpoints)          POST /webhooks/{id}/test
 GET  /webhooks/{id}/deliveries      POST /webhooks/deliveries/{id}/retry
 CRUD /integrations                  POST /integrations/{provider}/connect | /disconnect | /test
@@ -820,10 +820,57 @@ Other public endpoints: `POST /api/public/v1/forms/{formSlug}/submit`,
 > string the client already has. `GET /forms/submissions?formId=` is top-level and filtered, like
 > calls and tasks before it, because the refusals are read across forms.
 
+> **Amendment, 2026-10-14 (implementation, Phase 4 step 2 — the public lead API).** The endpoint in
+> §6 is built, at `POST /api/v1/public/leads/{organizationPublicKey}` — the same prefix decision the
+> form endpoints took, for the same reason: one envelope, one exception filter, one
+> route-authorization sweep. Everything else in §6 holds, with three clarifications
+> ([ADR-0030](./decisions/ADR-0030-the-public-lead-api-verifies-a-signature-and-never-loses-a-payload.md)):
+>
+> - **The signature is required, not optional.** §6 marked `X-Api-Key` "required for
+>   server-to-server" and left the signature implicit; both are required here, and every way a
+>   signature can be wrong — absent, malformed, outside the five-minute window, over a modified
+>   body, from the wrong secret — answers `401` with a message that says what to send. The
+>   browser-origin case §6 describes (public key, no HMAC, origin allowlist) is served by the
+>   **form** endpoints from step 1, which is where a browser belongs.
+> - **`status` is `created` | `duplicate_attached` | `replayed`**, with `201` for the first and
+>   `200` for the other two. `replayed` is the one §6 did not name: a client that retried is owed
+>   the answer it missed, including the lead id, rather than being told "duplicate". A replay of the
+>   same key with a different body is `409 IDEMPOTENT_REPLAY_MISMATCH`, as §6 promised.
+> - **`202` is not used.** §6 reserved it for "validation passed but processing is queued"; the
+>   capture is synchronous, so a `202` would be a lie about work that has already happened. The
+>   never-lose store plus `POST /ingestion/payloads/:id/replay` is what covers a crash instead.
+>
+> The operator's half is built as sketched: `GET /ingestion/payloads`, `/ingestion/errors`,
+> `POST /ingestion/errors`-adjacent replay as `POST /ingestion/payloads/{id}/replay` (the payload is
+> the unit a person replays, not the error), the self-serve test tool as `POST /ingestion/test`
+> (a POST that answers **200**, because it persists nothing), and `GET /ingestion/unmapped` for
+> `FR-CAP-5`'s surfacing. All of it behind `api_key:manage`. `GET /api-logs` waits for the
+> authenticated REST surface, which is the first thing with a request volume worth logging per
+> endpoint.
+>
+> **The dry run answers a verdict, not only a preview.** `POST /ingestion/test` returns
+> `wouldCreate`, `normalized` (including `phone` as it would be **stored** and `phoneAsSent` beside
+> it), `unmappedFields` and `notes`. The normalize step is genuinely performed, through the same
+> `normalizeContactNumbers` and `buildDisplayName` the write path uses — §6's sketch said "each
+> step's decision", and a preview that re-checked the schema instead would be the import's
+> dry-run lie in a new place. The duplicate verdict and the chosen assignee are **not** answered:
+> both depend on rows this call deliberately does not create, and the honest ones would require
+> running the duplicate rules and the assignment engine against a lead that does not exist. That
+> remains sketched rather than built, and is named here rather than implied.
+>
+> **`GET /ingestion/unmapped` is counted over the stored payloads**, not from a column maintained
+> beside them, and each field carries up to three sample values with `meta.payloadsScanned` saying
+> what the count is over. The web app's one click then calls `POST /custom-fields` — there is no
+> second creation endpoint for a field, and the mapper matches an integration's top-level key
+> through the same derivation the button fills its key box with, so the field somebody makes is the
+> field the next payload fills in.
+
 **Test tooling per tenant (`FR-CAP-6`):** `POST /api/v1/ingestion/test` replays a sample payload
 against the live pipeline in dry-run mode and returns each step's decision (normalized values,
 duplicate verdict, chosen assignee, created follow-up) without persisting — the "why did my lead
-not appear" answer, self-serve.
+not appear" answer, self-serve. _(As built: the normalized values, the unmapped fields, the notes
+and a `wouldCreate` verdict. The duplicate verdict and the assignee are not answered — see the
+amendment above.)_
 
 ---
 

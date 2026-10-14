@@ -202,7 +202,7 @@ export class OutboxReapProcessor implements JobProcessor {
 }
 
 /**
- * Keeps the `activities` table's partitions ahead of the calendar.
+ * Keeps the partitioned tables' partitions ahead of the calendar.
  *
  * Two jobs in one, because they are two halves of the same invariant:
  *
@@ -236,22 +236,33 @@ export class ActivityPartitionProcessor implements JobProcessor {
           SELECT ensure_activity_partition(${target}::timestamptz)
         `;
         if (row) created.push(row.ensure_activity_partition);
+        // `inbound_payloads` is partitioned the same way and for the same reason (`FR-CAP-3`), so
+        // it is kept ahead by the same job rather than by a second one that could be forgotten.
+        const [payloadRow] = await this.db.client.$queryRaw<
+          { ensure_inbound_payload_partition: string }[]
+        >`
+          SELECT ensure_inbound_payload_partition(${target}::timestamptz)
+        `;
+        if (payloadRow) created.push(payloadRow.ensure_inbound_payload_partition);
       }
 
       const [stranded] = await this.db.client.$queryRaw<{ count: bigint }[]>`
         SELECT count(*)::bigint AS count FROM activities_default
       `;
-      const strandedCount = Number(stranded?.count ?? 0n);
+      const [strandedPayloads] = await this.db.client.$queryRaw<{ count: bigint }[]>`
+        SELECT count(*)::bigint AS count FROM inbound_payloads_default
+      `;
+      const strandedCount = Number(stranded?.count ?? 0n) + Number(strandedPayloads?.count ?? 0n);
 
       if (strandedCount > 0) {
         // Warn, not error: the rows are readable and the product works. What they block is the next
         // attach, which is a scheduled problem rather than an outage.
         this.logger.warn(
           { strandedCount },
-          'activities are sitting in the default partition; they block attaching the months they belong to',
+          'rows are sitting in a default partition; they block attaching the months they belong to',
         );
       }
-      this.logger.info({ partitions: created, strandedCount }, 'activity partitions checked');
+      this.logger.info({ partitions: created, strandedCount }, 'partitions checked');
     });
   }
 }

@@ -68,28 +68,35 @@ export interface CaptureContext {
 }
 
 /**
- * The timeline entry a form capture adds, or nothing when the capture did not come from a form.
+ * The timeline entry a capture's **answers** produce, or nothing when there were none.
+ *
+ * Keyed on the answers rather than on the form, because the public lead API carries a message with
+ * no form behind it and dropping it would break rule 6 for the channel most likely to be somebody's
+ * only integration. The *type* then says which door it came through: `lead.form_submitted` when a
+ * form was named, `lead.enquiry_received` otherwise — "Filled in the public API" is a sentence
+ * about something that did not happen.
  *
  * A function rather than an inline ternary because both capture paths — a new lead and a repeat
  * capture attached to an existing one — need exactly the same entry, and the second one is where
  * the answers matter most: enrichment only fills blanks, so the sentence on the timeline is the
  * only place "they now want a bigger flat" survives.
  */
-function formEntry(
-  input: CaptureContext,
+function captureEntry(
+  input: CaptureContext & { createdVia?: string },
   leadId: string,
   occurredAt: Date,
 ): { type: ActivityType; leadId: string; occurredAt: Date; payload: Record<string, unknown> }[] {
-  if (!input.formId) return [];
+  const answers = input.formAnswers ?? [];
+  if (!input.formId && answers.length === 0) return [];
   return [
     {
-      type: ACTIVITY_TYPES.LEAD_FORM_SUBMITTED,
+      type: input.formId ? ACTIVITY_TYPES.LEAD_FORM_SUBMITTED : ACTIVITY_TYPES.LEAD_ENQUIRY_RECEIVED,
       leadId,
       occurredAt,
       payload: {
-        formId: input.formId,
-        formName: input.formName ?? null,
-        answers: input.formAnswers ?? [],
+        ...(input.formId ? { formId: input.formId, formName: input.formName ?? null } : {}),
+        ...(input.formId ? {} : { channel: input.createdVia ?? 'api' }),
+        answers,
       },
     },
   ];
@@ -634,12 +641,12 @@ export class LeadsService {
             utm: input.utm ?? {},
           },
         },
-        // What they typed, written in the capture's own transaction (`FR-CAP-2`). Two entries
-        // rather than one, for the reason `lead.converted` and `customer.created` are two: where
-        // somebody came from and what they said are different facts, and a form that captured a
-        // phone number and dropped "I need possession by March" would have thrown away the reason
-        // for the call.
-        ...formEntry(input, id, now),
+        // What they said, written in the capture's own transaction (`FR-CAP-2`, `FR-CAP-6`). Two
+        // entries rather than one, for the reason `lead.converted` and `customer.created` are two:
+        // where somebody came from and what they said are different facts, and a capture that kept
+        // the phone number and dropped "I need possession by March" would have thrown away the
+        // reason for the call.
+        ...captureEntry(input, id, now),
         ...(assignedUserId
           ? [
               {
@@ -914,7 +921,7 @@ export class LeadsService {
         // A repeat capture through a form said something too, and it is often the newer, better
         // answer: the enrichment rule only fills blanks, so the sentence on the timeline is where
         // "they now want a bigger flat" actually survives.
-        ...formEntry(input, match.leadId, now),
+        ...captureEntry(input, match.leadId, now),
       ]);
 
       await this.audit.recordInTransaction(tx, {

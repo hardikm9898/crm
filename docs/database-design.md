@@ -879,6 +879,46 @@ message search (`FR-VIEW-1`).
 > specified and unbuilt: they belong to the public lead API and the outbound webhook steps. A form's
 > own payload lives in `form_submissions`, which is the same guarantee for this channel.
 
+> **Amendment, 2026-10-14 (implementation, Phase 4 step 2 — the public lead API).** `api_keys`,
+> `inbound_payloads`, `ingestion_errors` and `idempotency_keys` are built as specified above, with
+> four changes
+> ([ADR-0030](./decisions/ADR-0030-the-public-lead-api-verifies-a-signature-and-never-loses-a-payload.md)):
+>
+> - **`api_keys.secret_hash` became `secret_encrypted`.** The specification's `secret_hash` cannot
+>   work: this endpoint verifies an HMAC the caller computed with the secret, and an HMAC cannot be
+>   recomputed from a digest — a receiver of signed requests holds the shared secret. The column
+>   holds an AES-256-GCM envelope under the deployment's master key with the key's own id as AAD,
+>   and `api_keys_secret_is_encrypted` refuses anything that is not an envelope or that looks like
+>   a plaintext `sk_…`. `key_id` is also unique across the platform, because it is the caller's
+>   identity rather than a per-workspace label.
+> - **`inbound_payloads.organization_id` is NOT NULL**, where §8 wrote `org?`. A request whose key
+>   resolves to no workspace is refused before a row is written, so there are no unattributed rows:
+>   a nullable column would put the table half inside the tenant registry — where the scoping
+>   extension hides exactly the rows with no workspace — and would let anybody fill a tenant's
+>   table by posting nonsense. It is partitioned monthly by `received_at` as specified, which makes
+>   its unique `(organization_id, channel, idempotency_key, received_at)`: a unique constraint on a
+>   partitioned table must contain the partition key, so the replay guarantee is a **stored
+>   response** in `idempotency_keys` and this constraint is the race guard.
+> - **`inbound_payloads.status` gained nothing but a default of `received`**, which §8 already
+>   listed; what is new is that the row is written _in_ that state before the capture is attempted.
+>   A crash then leaves a replayable row, which is the phase's "killing the worker mid-ingestion
+>   loses no lead" criterion.
+> - **`ingestion_errors` carries `payload_received_at`** as well as `payload_id`, because the
+>   composite FK into a partitioned parent must include the partition key. `stage` is a CHECK over
+>   the seven names `FR-CAP-4` gives the pipeline, so an error cannot name a step that does not
+>   exist.
+> - **`received_at` is written by the service, never left to the column default.** It is
+>   `timestamptz(6)` and a JavaScript `Date` is milliseconds, so a row inserted by raw SQL carries a
+>   microsecond instant the application can read and cannot write back — which makes the primary key
+>   `(id, received_at)` unusable for that row and breaks the composite FK above. Postgres refuses to
+>   alter the type of a column named in a partition key, so this is a rule about writers rather than
+>   a schema change: the service passes an explicit `Date`, and status updates are keyed on the id
+>   alone (`inbound_payload_tenant_key` makes that unambiguous per workspace).
+>
+> `api_logs` and the webhook tables remain specified and unbuilt: they belong to the authenticated
+> REST surface and the outbound webhook steps. For the one public endpoint that exists,
+> `inbound_payloads` is the request log.
+
 ---
 
 ## 9. Automation

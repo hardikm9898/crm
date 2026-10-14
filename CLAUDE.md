@@ -616,6 +616,20 @@ prisma migrate deploy` after generating a migration.
   own choice, the same mistake as a timeline reading "Changed billingLine1". Anywhere a `select`'s
   answer is displayed, map the value back to its label, from the form's own override or from the
   definition.
+- **An HMAC cannot be verified against a hash of the secret.** The public lead API's first draft
+  stored `sha256(secret)` by analogy with a password, and could not have worked: recomputing an
+  HMAC needs the secret itself, which is what "shared secret" means. A receiver of signed requests
+  stores the secret **encrypted** (`EncryptionService`, with the row's own id as AAD) and says so,
+  rather than keeping a digest nothing can use. `api_keys_secret_is_encrypted` refuses a value that
+  is not an envelope — and refuses one beginning `sk_`, which is exactly what the mistake looks
+  like. `EncryptionService`'s envelope is dot-separated (`v1.1.iv.tag.ciphertext`), not
+  colon-separated: a CHECK written for `v1:%` refused every row.
+- **A unique constraint on a partitioned table cannot be the idempotency lookup.** It has to
+  contain the partition key, so `inbound_payloads`' unique is
+  `(organization_id, channel, idempotency_key, received_at)` — which makes it a race guard and not
+  a point read: the same key next month would be allowed. The replay guarantee therefore lives in
+  `idempotency_keys`, which is **not** partitioned and stores the first **response** so a client's
+  retry gets the answer it missed, including the lead id.
 - **Advice on a screen has to be shown when somebody can take it.** Today's summary offered "a good
   moment to call the leads nobody has reached" under the condition "no other clause is true" — and
   the uncalled-lead clause is itself one of those clauses, so the suggestion appeared **only** on
@@ -624,6 +638,41 @@ prisma migrate deploy` after generating a migration.
   Both were invisible to the existing browser check, whose "omits what is zero" assertion tested
   `/ 0 /` against a string whose zero was the first character. A sentence assembled from clauses
   needs a test per shape, not per clause.
+
+- **A timestamp that is half of a key must be a precision the application can express.**
+  `inbound_payloads` is partitioned by `received_at` (`timestamptz(6)`) and its primary key is
+  `(id, received_at)`; a JavaScript `Date` is milliseconds. A row inserted by raw SQL — a fixture, a
+  backfill — therefore carries microseconds the application can read but cannot write back, so
+  `update({ where: { id_receivedAt } })` failed with "no record was found" on a row sitting in front
+  of it. Postgres refuses to alter the type of a column named in a partition key, so the column is
+  not the thing to change: a status update keyed on the **id alone** (`updateMany`, with the per-org
+  unique making it the same row) cannot be defeated by a precision we do not control. The composite
+  FK on `ingestion_errors` still needs the parent's exact instant, which is why the service is the
+  only thing that writes `received_at`.
+- **A recorder of failures must not be able to fail the request.** `recordFailure` wrote the
+  `ingestion_errors` row and the payload's status — and when its own write threw, the throw replaced
+  the 400 that said what was actually wrong with a **404 about the payload**, so the screen told
+  somebody their stored payload did not exist. What a caller needs from such a method is the
+  original error: the explanation is best-effort, its own failure is logged, and the diagnosis
+  survives.
+- **A form whose success removes its own row cannot report success from its own state.** The replay
+  button's confirmation was never visible: a successful replay revalidates the screen, the payload
+  leaves the "did not become leads" list, and the component is unmounted with its `useActionState`.
+  The confirmation belongs in the re-rendered server tree — the payload's own row now reads "Tried
+  again just now — it became a lead", which also survives a refresh and is the honest record. A
+  refusal keeps the row, so its notice stays where it is.
+- **A one-click "make this a field" is half a feature until something maps to it.** `FR-CAP-5`'s
+  button creates a custom field from an unmapped payload key; an integration sending `propertyType`
+  at the top level would then have gone on being unmapped forever, because the mapper only ever
+  looked inside `customFields`. The button and the mapper now share one derivation
+  (`customFieldKeyFor`), so the field somebody makes is the field the next payload fills in — and
+  the value is validated against the definition first, because otherwise making it a `number` field
+  turns every capture that worked yesterday into a 400.
+- **A dry run has to run the step it is previewing.** The test tool echoed the phone number as sent,
+  so a payload the endpoint would refuse for an unreadable number was shown as "what would be
+  saved" — the import's lie in a new place. It now normalises through `normalizeContactNumbers` and
+  refuses through `buildDisplayName`, the same two functions the write path uses, and answers
+  `wouldCreate` honestly with the phone as stored beside the phone as sent.
 
 ## Reporting work
 

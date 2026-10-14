@@ -151,6 +151,31 @@ describe('an unknown type degrades to a sentence, which is the whole point', () 
     expect(described.description).toBe('Filled in Popup.');
   });
 
+  it('describes an enquiry that arrived with no form behind it', () => {
+    const described = describeEntry(
+      entry({
+        type: 'lead.enquiry_received',
+        module: 'lead',
+        payload: {
+          channel: 'api',
+          answers: [{ label: 'Message', value: 'Need a 3BHK before Diwali' }],
+        },
+      }),
+    );
+    // Its own sentence, not a form submission with an invented form name.
+    expect(described.label).toBe('Enquiry');
+    expect(described.description).toContain('Api');
+    expect(described.description).toContain('Need a 3BHK before Diwali');
+    expect(described.description).not.toContain('Filled in');
+  });
+
+  it('still reads as a sentence when an enquiry carried no message', () => {
+    expect(
+      describeEntry(entry({ type: 'lead.enquiry_received', module: 'lead', payload: {} }))
+        .description,
+    ).toBe('Arrived through an integration.');
+  });
+
   it('ignores an answer whose shape is not what it expects', () => {
     const described = describeEntry(
       entry({

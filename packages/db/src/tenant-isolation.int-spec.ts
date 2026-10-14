@@ -2932,3 +2932,210 @@ describe('layer 3 — a capture form cannot be stitched to another tenant (FR-CA
     expect(theirs.submissions).toEqual([]);
   });
 });
+
+describe('layer 3 — the public lead API’s own tables (FR-CAP-6, FR-API-2)', () => {
+  /** A key in whichever workspace is asked for. The ciphertext is a plausible envelope. */
+  async function apiKey(organizationId: string, over: Record<string, unknown> = {}) {
+    const id = newId();
+    await h.unscoped.apiKey.create({
+      data: {
+        id,
+        organizationId,
+        name: `Key ${id.slice(-8)}`,
+        keyId: `pk_live_${id.replace(/-/g, '').slice(0, 20)}`,
+        keyPrefix: `pk_live_${id.slice(0, 8)}`,
+        secretEncrypted: `v1.1.${id.slice(-8)}.${id.slice(-8)}.${id.slice(-8)}`,
+        scopes: ['ingest:write'],
+        ...over,
+      },
+    });
+    return id;
+  }
+
+  async function payload(organizationId: string, over: Record<string, unknown> = {}) {
+    const id = newId();
+    await h.unscoped.inboundPayload.create({
+      data: {
+        id,
+        organizationId,
+        channel: 'public_api',
+        rawBody: { phone: '+919845012345' },
+        idempotencyKey: `key-${id.slice(-12)}`,
+        dedupeHash: 'a'.repeat(64),
+        ...over,
+      },
+    });
+    return id;
+  }
+
+  it('refuses a key whose secret is not an envelope, or is the secret itself', async () => {
+    // The mistake the first draft of this step made in the other direction: once a secret has to
+    // be recoverable, the obvious thing is to store it as it was generated.
+    await expect(
+      apiKey(h.orgA.organizationId, { secretEncrypted: 'sk_live_the_actual_secret' }),
+    ).rejects.toThrow(/api_keys_secret_is_encrypted/i);
+    await expect(
+      apiKey(h.orgA.organizationId, { secretEncrypted: 'not-even-close' }),
+    ).rejects.toThrow(/api_keys_secret_is_encrypted/i);
+  });
+
+  it('refuses a key with no scopes, which could do nothing but would look live', async () => {
+    await expect(apiKey(h.orgA.organizationId, { scopes: [] })).rejects.toThrow(
+      /api_keys_has_a_scope/i,
+    );
+  });
+
+  it('keeps the public key id unique across the platform, because it is the caller’s identity', async () => {
+    const shared = `pk_live_${newId().replace(/-/g, '').slice(0, 20)}`;
+    await apiKey(h.orgA.organizationId, { keyId: shared });
+    await expect(apiKey(h.orgB.organizationId, { keyId: shared })).rejects.toThrow(
+      /api_key_id_key|unique/i,
+    );
+  });
+
+  it('refuses half a revocation', async () => {
+    const id = await apiKey(h.orgA.organizationId);
+    await expect(
+      h.unscoped.apiKey.update({ where: { id }, data: { revokedAt: new Date() } }),
+    ).rejects.toThrow(/api_keys_revocation_is_accounted_for/i);
+    await expect(
+      h.unscoped.apiKey.update({
+        where: { id },
+        data: { revokedAt: new Date(), revokedBy: h.orgA.userId },
+      }),
+    ).resolves.toBeTruthy();
+  });
+
+  it('refuses a prefix that does not belong to its key', async () => {
+    await expect(
+      apiKey(h.orgA.organizationId, { keyPrefix: 'pk_live_somebodyelse' }),
+    ).rejects.toThrow(/api_keys_prefix_matches_key/i);
+  });
+
+  it('blocks a payload against another tenant’s key', async () => {
+    const theirs = await apiKey(h.orgB.organizationId);
+    await expect(payload(h.orgA.organizationId, { apiKeyId: theirs })).rejects.toThrow(
+      /inbound_payloads_api_key_same_org_fk|foreign key/i,
+    );
+  });
+
+  it('insists a payload that became a lead names one, and a failure says why', async () => {
+    // `received` is the state the row is written in — before anything is attempted — which is what
+    // makes this a never-lose store rather than a record of what worked (`FR-CAP-3`).
+    await expect(payload(h.orgA.organizationId)).resolves.toBeTruthy();
+    await expect(payload(h.orgA.organizationId, { status: 'processed' })).rejects.toThrow(
+      /inbound_payloads_outcome_has_a_lead/i,
+    );
+    await expect(payload(h.orgA.organizationId, { status: 'failed' })).rejects.toThrow(
+      /inbound_payloads_failure_is_explained/i,
+    );
+    await expect(
+      payload(h.orgA.organizationId, { status: 'failed', error: 'No way to reach them' }),
+    ).resolves.toBeTruthy();
+    await expect(
+      payload(h.orgA.organizationId, { status: 'processed', leadId: h.orgA.leadId }),
+    ).resolves.toBeTruthy();
+  });
+
+  it('refuses a payload with no idempotency key or a dedupe hash that is not one', async () => {
+    await expect(payload(h.orgA.organizationId, { idempotencyKey: '  ' })).rejects.toThrow(
+      /inbound_payloads_idempotency_key_present/i,
+    );
+    await expect(payload(h.orgA.organizationId, { dedupeHash: 'short' })).rejects.toThrow(
+      /inbound_payloads_dedupe_hash_format/i,
+    );
+  });
+
+  it('keeps one workspace from replaying another’s idempotency key', async () => {
+    // The same key in two workspaces is two keys: the unique is `(organization_id, endpoint, key)`.
+    const shared = `shared-${newId().slice(-12)}`;
+    const row = (organizationId: string) => ({
+      id: newId(),
+      organizationId,
+      key: shared,
+      endpoint: 'POST /public/leads',
+      requestHash: 'b'.repeat(64),
+      responseStatus: 201,
+      responseBody: { leadId: newId() },
+      expiresAt: new Date(Date.now() + 3_600_000),
+    });
+    await expect(
+      h.unscoped.idempotencyKey.create({ data: row(h.orgA.organizationId) }),
+    ).resolves.toBeTruthy();
+    await expect(
+      h.unscoped.idempotencyKey.create({ data: row(h.orgB.organizationId) }),
+    ).resolves.toBeTruthy();
+    // And the same key twice in one workspace is the replay guard.
+    await expect(
+      h.unscoped.idempotencyKey.create({ data: row(h.orgA.organizationId) }),
+    ).rejects.toThrow(/idempotency_replay_key|unique/i);
+  });
+
+  it('refuses to remember a response that is not an answer', async () => {
+    // A 500 is not worth replaying: a client retrying would be handed the failure it was retrying.
+    await expect(
+      h.unscoped.idempotencyKey.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          key: `bad-${newId().slice(-8)}`,
+          endpoint: 'POST /public/leads',
+          requestHash: 'c'.repeat(64),
+          responseStatus: 500,
+          responseBody: {},
+          expiresAt: new Date(Date.now() + 3_600_000),
+        },
+      }),
+    ).rejects.toThrow(/idempotency_keys_response_is_an_answer/i);
+  });
+
+  it('refuses an ingestion error naming a stage the pipeline does not have', async () => {
+    const payloadId = await payload(h.orgA.organizationId);
+    const row = await h.unscoped.inboundPayload.findFirstOrThrow({ where: { id: payloadId } });
+    const create = (stage: string) =>
+      h.unscoped.ingestionError.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          payloadId,
+          payloadReceivedAt: row.receivedAt,
+          stage,
+          errorCode: 'VALIDATION_FAILED',
+          message: 'No way to reach them',
+        },
+      });
+    await expect(create('validate')).resolves.toBeTruthy();
+    await expect(create('somewhere_else')).rejects.toThrow(/ingestion_errors_stage_is_known/i);
+  });
+
+  it('blocks an ingestion error against another tenant’s payload', async () => {
+    const theirs = await payload(h.orgB.organizationId);
+    const row = await h.unscoped.inboundPayload.findFirstOrThrow({ where: { id: theirs } });
+    await expect(
+      h.unscoped.ingestionError.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          payloadId: theirs,
+          payloadReceivedAt: row.receivedAt,
+          stage: 'validate',
+          errorCode: 'VALIDATION_FAILED',
+          message: 'Not mine',
+        },
+      }),
+    ).rejects.toThrow(/ingestion_errors_payload_same_org_fk|foreign key/i);
+  });
+
+  it('scopes the keys, the payloads and the errors like every other tenant table', async () => {
+    const mineKey = await apiKey(h.orgA.organizationId);
+    const minePayload = await payload(h.orgA.organizationId, { apiKeyId: mineKey });
+    const theirs = await tenantContext.run(h.orgB.principal, async () => ({
+      key: await h.db.apiKey.findFirst({ where: { id: mineKey } }),
+      payload: await h.db.inboundPayload.findFirst({ where: { id: minePayload } }),
+      keys: await h.db.apiKey.findMany({}),
+    }));
+    expect(theirs.key).toBeNull();
+    expect(theirs.payload).toBeNull();
+    expect(theirs.keys.every((row) => row.organizationId === h.orgB.organizationId)).toBe(true);
+  });
+});

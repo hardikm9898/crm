@@ -63,6 +63,14 @@ export const SCHEDULES: readonly ScheduleDefinition[] = [
   },
   {
     queue: QUEUES.MAINTENANCE,
+    jobName: JOBS.IDEMPOTENCY_PRUNE,
+    // Hourly, not daily: the window is 48 hours, so an hourly sweep keeps the table within an
+    // hour of the truth and each run deletes a small set rather than a day's worth.
+    cron: '17 * * * *',
+    description: 'Forget the idempotency keys whose replay window has closed',
+  },
+  {
+    queue: QUEUES.MAINTENANCE,
     jobName: JOBS.LEAD_RECYCLE,
     // Early morning, before the working day: a lead returned to the pool at 6am is one somebody
     // can pick up at 9, which is the whole point.

@@ -792,6 +792,10 @@ model Organization {
   /// `SetNull` would null a NOT NULL `organization_id`.
   industryTemplate    IndustryTemplate? @relation(fields: [industryTemplateKey], references: [key], onDelete: SetNull)
   industryTemplateKey String?           @map("industry_template_key")
+  apiKeys             ApiKey[]
+  inboundPayloads     InboundPayload[]
+  ingestionErrors     IngestionError[]
+  idempotencyKeys     IdempotencyKey[]
 
   @@index([status])
   @@index([createdAt])
@@ -928,7 +932,8 @@ model Membership {
 
   slaClocks SlaClock[] @relation("sla_clock_assignee")
 
-  createdForms Form[] @relation("form_creator")
+  createdForms   Form[]   @relation("form_creator")
+  createdApiKeys ApiKey[] @relation("api_key_creator")
 
   @@unique([organizationId, id], name: "membership_tenant_key")
   @@unique([organizationId, userId])
@@ -3739,4 +3744,210 @@ model FormSubmission {
   /// The referencing side of the FK into `leads`.
   @@index([organizationId, leadId])
   @@map("form_submissions")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Phase 4, step 2 — the public lead API (docs/database-design.md §8)
+// ═══════════════════════════════════════════════════════════════════════════
+
+enum IngestChannel {
+  public_api
+  webhook
+  meta_ads
+  google_ads
+  form
+  whatsapp
+  import
+
+  @@map("ingest_channel")
+}
+
+enum InboundStatus {
+  /// Written before anything is attempted. The reason this is a never-lose store (`FR-CAP-3`).
+  received
+  processed
+  duplicate
+  failed
+
+  @@map("inbound_status")
+}
+
+/// A credential pair for the public API (`FR-API-2`, `FR-CAP-7`).
+///
+/// `key_id` is public and stored in full — it is in a header and on a screen. The secret is shown
+/// exactly once, at creation, and stored **encrypted** rather than hashed: this endpoint verifies
+/// an HMAC the caller computed with the secret, and an HMAC cannot be checked against a digest —
+/// the receiver of a signed request has to hold the shared secret. So it is AES-256-GCM under the
+/// deployment's master key, with the key's own id as the AAD so a ciphertext cannot be moved to
+/// another row, and the consequence is stated rather than hidden: somebody with both the database
+/// and the master key can read it, which is what rotation is for (ADR-0030).
+model ApiKey {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  /// What a person calls it: "website server", "Zapier".
+  name            String
+  /// `pk_live_…`. Unique across the platform, because it is what identifies the caller.
+  keyId           String @map("key_id")
+  /// The first characters of `key_id`, for logs and screens that must not print the whole thing.
+  keyPrefix       String @map("key_prefix")
+  /// The `v1:…` envelope `EncryptionService` produces. Never a plaintext secret, which a CHECK
+  /// enforces by refusing anything that looks like one.
+  secretEncrypted String @map("secret_encrypted")
+
+  /// From `API_KEY_SCOPES` in `@leados/shared`. A TEXT[] rather than a join table: it is written
+  /// once and read as a whole, and nothing ever asks "which keys hold this scope".
+  scopes          String[]
+  /// Empty means "from anywhere". A CIDR list is checked before the signature.
+  ipAllowlist     String[] @map("ip_allowlist")
+  /// Per key, per minute. Null means the plan's default.
+  rateLimitPerMin Int?     @map("rate_limit_per_min")
+
+  expiresAt   DateTime? @map("expires_at") @db.Timestamptz(6)
+  /// So "is this key still in use" is answerable before somebody revokes it.
+  lastUsedAt  DateTime? @map("last_used_at") @db.Timestamptz(6)
+  lastUsedIp  String?   @map("last_used_ip")
+  revokedAt   DateTime? @map("revoked_at") @db.Timestamptz(6)
+  revokedBy   String?   @map("revoked_by") @db.Uuid
+  createdById String?   @map("created_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  creator      Membership?  @relation("api_key_creator", fields: [organizationId, createdById], references: [organizationId, userId], onDelete: Restrict, map: "api_keys_creator_same_org_fk")
+
+  payloads InboundPayload[]
+
+  @@unique([organizationId, id], name: "api_key_tenant_key")
+  /// Global: the key id is the caller's identity, and two workspaces must never mint the same one.
+  @@unique([keyId], name: "api_key_id_key")
+  @@index([organizationId, revokedAt])
+  @@map("api_keys")
+}
+
+/// **The never-lose-a-lead store** (`FR-CAP-3`, `NFR-REL-2`).
+///
+/// The raw body is written here **before** any processing, in its own transaction, so a 5xx can
+/// never mean a lost lead: whatever broke, the payload is a row an operator can read and replay.
+/// Partitioned monthly by `received_at`, like `activities`, because it grows with traffic the
+/// tenant does not control and is pruned by month.
+///
+/// `organization_id` is NOT NULL, deliberately: a request whose key resolves to no workspace is
+/// refused before a row is written. A nullable column here would put the table half inside the
+/// tenant registry — where the scoping extension hides exactly the rows that have no workspace —
+/// and would let anybody fill a tenant's table by posting nonsense (ADR-0030).
+model InboundPayload {
+  id             String @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  channel  IngestChannel
+  apiKeyId String?       @map("api_key_id") @db.Uuid
+
+  /// Exactly what arrived. Parsed JSON, because every channel this table serves is JSON; the
+  /// signature was checked against the raw bytes before this row was written.
+  rawBody Json @map("raw_body") @db.JsonB
+  /// Request headers, redacted: the signature and the key are removed before storing.
+  headers Json @default("{}") @db.JsonB
+
+  signatureValid Boolean @default(false) @map("signature_valid")
+  /// The client's `Idempotency-Key`, or one derived from the body when it sent none.
+  idempotencyKey String  @map("idempotency_key")
+  /// SHA-256 of the raw body, so two identical bodies are recognisable as such.
+  dedupeHash     String  @map("dedupe_hash")
+
+  status       InboundStatus @default(received)
+  leadId       String?       @map("lead_id") @db.Uuid
+  /// The refusal or the failure, in the words the endpoint answered with.
+  error        String?
+  attempts     Int           @default(1)
+  /// Set when an operator replayed it, so a second attempt is visible rather than inferred.
+  replayedAt   DateTime?     @map("replayed_at") @db.Timestamptz(6)
+  replayedById String?       @map("replayed_by_id") @db.Uuid
+
+  ipHash     String?  @map("ip_hash")
+  userAgent  String?  @map("user_agent")
+  /// The partition key. When it arrived, which is the only instant this table can be pruned by.
+  receivedAt DateTime @default(now()) @map("received_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  apiKey       ApiKey?      @relation(fields: [organizationId, apiKeyId], references: [organizationId, id], onDelete: Restrict, map: "inbound_payloads_api_key_same_org_fk")
+
+  errors IngestionError[]
+
+  @@id([id, receivedAt])
+  @@unique([organizationId, id, receivedAt], name: "inbound_payload_tenant_key")
+  /// The idempotency race guard. It carries `received_at` because a unique constraint on a
+  /// partitioned table must contain the partition key — which is also why the *lookup* is a read
+  /// over a window rather than a point read on this key.
+  @@unique([organizationId, channel, idempotencyKey, receivedAt], name: "inbound_payload_idempotency_key")
+  @@index([organizationId, receivedAt(sort: Desc)])
+  @@index([organizationId, status, receivedAt(sort: Desc)])
+  @@index([organizationId, channel, idempotencyKey])
+  @@index([organizationId, apiKeyId, receivedAt(sort: Desc)])
+  @@map("inbound_payloads")
+}
+
+/// Why a payload did not become a lead (`FR-CAP-6`: "error log").
+///
+/// One row per failure, naming the **stage** of the shared pipeline it happened in, because a
+/// tenant can act on "normalize — that phone number has no country code" and can do nothing with a
+/// stack trace. Separate from the payload so a replay can fail differently the second time and
+/// both attempts are readable.
+model IngestionError {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  payloadId         String   @map("payload_id") @db.Uuid
+  /// The other half of the partitioned parent's key.
+  payloadReceivedAt DateTime @map("payload_received_at") @db.Timestamptz(6)
+
+  stage        String
+  errorCode    String    @map("error_code")
+  message      String
+  details      Json      @default("{}") @db.JsonB
+  /// False for a refusal nothing can fix by re-running it — a malformed body, a refused duplicate.
+  isReplayable Boolean   @default(true) @map("is_replayable")
+  replayedAt   DateTime? @map("replayed_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  payload      InboundPayload @relation(fields: [organizationId, payloadId, payloadReceivedAt], references: [organizationId, id, receivedAt], onDelete: Cascade, map: "ingestion_errors_payload_same_org_fk")
+
+  @@unique([organizationId, id], name: "ingestion_error_tenant_key")
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([organizationId, payloadId])
+  @@index([organizationId, stage, createdAt(sort: Desc)])
+  @@map("ingestion_errors")
+}
+
+/// `Idempotency-Key` for a mutating endpoint (`FR-API-5`).
+///
+/// It stores the **first response**, which is the whole point: a client that retries because it
+/// never saw the answer gets the same answer, with the same lead id, rather than a second lead. A
+/// replay whose body differs from the first is a client bug and answers `409`, because quietly
+/// returning the first answer to a different request would be worse.
+model IdempotencyKey {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  key         String
+  /// The route, so the same key on two endpoints is two keys.
+  endpoint    String
+  /// SHA-256 of the raw body, for the mismatch check.
+  requestHash String @map("request_hash")
+
+  responseStatus Int  @map("response_status")
+  responseBody   Json @map("response_body") @db.JsonB
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  /// Pruned by the maintenance sweep. A key that is remembered forever is a table that grows
+  /// forever, and a client's retry window is hours, not years.
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, id], name: "idempotency_tenant_key")
+  @@unique([organizationId, endpoint, key], name: "idempotency_replay_key")
+  @@index([expiresAt])
+  @@map("idempotency_keys")
 }

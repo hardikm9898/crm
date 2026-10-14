@@ -91,6 +91,13 @@ export const TENANT_MODELS = [
   'Form',
   'FormField',
   'FormSubmission',
+  // Phase 4, step 2 — the public lead API. `InboundPayload` carries a NOT NULL
+  // `organization_id` on purpose: a request whose key resolves to no workspace is refused before a
+  // row is written, so there are no unattributed rows for the scoping extension to hide (ADR-0030).
+  'ApiKey',
+  'InboundPayload',
+  'IngestionError',
+  'IdempotencyKey',
 ] as const;
 
 export type TenantModel = (typeof TENANT_MODELS)[number];

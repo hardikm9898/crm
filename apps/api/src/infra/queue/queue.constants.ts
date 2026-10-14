@@ -65,6 +65,11 @@ export const JOBS = {
   LEAD_RECYCLE: 'maintenance.lead-recycle',
   QUOTATION_EXPIRY: 'maintenance.quotation-expiry',
   /**
+   * The public lead API's idempotency window, swept (`FR-API-5`). A key is remembered for 48
+   * hours; without a sweep the guarantee stays correct and the table grows forever.
+   */
+  IDEMPOTENCY_PRUNE: 'maintenance.idempotency-prune',
+  /**
    * The two names `docs/queue-event-architecture.md` §5 gives them. Both live on `maintenance`
    * because both are platform-scoped sweeps over every tenant.
    */

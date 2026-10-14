@@ -4,6 +4,20 @@ import type { FastifyRequest } from 'fastify';
 type ParserDone = (error: Error | null, body?: unknown) => void;
 
 /**
+ * The raw request body, kept on the request for the one caller that needs it.
+ *
+ * An HMAC over a **re-serialised** body is an HMAC over different bytes: `{"a":1}` and
+ * `{ "a": 1 }` are the same object and a signature over one does not verify over the other, so a
+ * verifier that re-serialised would reject every client whose JSON writer spaces things
+ * differently from ours. The public ingestion endpoint therefore reads these bytes, and nothing
+ * else does — which is why this is a property on the request rather than a parameter decorator
+ * every route has to know about.
+ */
+export interface WithRawBody {
+  rawBody?: string;
+}
+
+/**
  * Lets an action endpoint be called with no body.
  *
  * Fastify's default JSON parser rejects an empty body when `content-type: application/json` is set,
@@ -27,8 +41,11 @@ type ParserDone = (error: Error | null, body?: unknown) => void;
  * behaviour; a convention that holds in production but not in tests is one the tests cannot defend.
  */
 export function allowEmptyJsonBody(app: NestFastifyApplication, bodyLimit: number): void {
-  const parse = (_request: FastifyRequest, body: Buffer | string, done: ParserDone): void => {
-    const text = Buffer.isBuffer(body) ? body.toString('utf8').trim() : String(body ?? '').trim();
+  const parse = (request: FastifyRequest, body: Buffer | string, done: ParserDone): void => {
+    const raw = Buffer.isBuffer(body) ? body.toString('utf8') : String(body ?? '');
+    // Before trimming, and before parsing: this is what a signature was computed over.
+    (request as FastifyRequest & WithRawBody).rawBody = raw;
+    const text = raw.trim();
     if (text === '') {
       done(null, {});
       return;

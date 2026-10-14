@@ -24,6 +24,15 @@ export const ACTIVITY_TYPES = {
    * number and threw away the reason for the call.
    */
   LEAD_FORM_SUBMITTED: 'lead.form_submitted',
+  /**
+   * An enquiry that arrived through a channel with no form behind it — the public lead API today,
+   * an ad connector next (`FR-CAP-1`).
+   *
+   * Its own type rather than `lead.form_submitted` with an invented form name, because "Filled in
+   * the public API" is a sentence about something that did not happen. What the two share is the
+   * **answers**: whatever the person said is on the lead either way, which is what rule 6 asks for.
+   */
+  LEAD_ENQUIRY_RECEIVED: 'lead.enquiry_received',
   LEAD_ASSIGNED: 'lead.assigned',
   LEAD_REASSIGNED: 'lead.reassigned',
   LEAD_UNASSIGNED: 'lead.unassigned',
