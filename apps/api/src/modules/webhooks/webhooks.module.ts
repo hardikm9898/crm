@@ -1,18 +1,51 @@
 import { Module } from '@nestjs/common';
+import { NotificationsModule } from '../notifications/notifications.module.js';
 import { EmailWebhookController } from './email-webhook.controller.js';
+import { WebhookDispatchService } from './webhook-dispatch.service.js';
+import { WebhookUrlService } from './webhook-url.service.js';
+import { WebhooksController } from './webhooks.controller.js';
+import {
+  WebhookDeliverProcessor,
+  WebhookFanoutProcessor,
+  WebhookRetrySweepProcessor,
+} from './webhooks.processor.js';
+import { WebhooksService } from './webhooks.service.js';
 
 /**
- * Inbound webhooks from providers.
+ * Webhooks, in **both** directions.
  *
- * A module of its own, and in `modules/` rather than `infra/`, because a public HTTP route is a
- * product surface: it has an authentication story, an idempotency story and a contract with
- * somebody else's system. The adapters it drives live in `infra/`, which is the right way round —
- * the provider's vocabulary is translated at the port, and this controller only authenticates,
- * dispatches and counts.
+ * Inbound (`EmailWebhookController`, Phase 3 step 7, §7 of `api-architecture.md`): somebody else's
+ * provider posting to us. Outbound (everything else here, `FR-API-4`, §8): us posting to somebody
+ * else's server. They share a module because they share a vocabulary — a signature over a raw body,
+ * an idempotency story, a contract with a system we do not control — and because a reader looking
+ * for "the webhook code" should find both in one place.
  *
- * The telephony and WhatsApp webhooks (Phase 4–5) belong here too, for the same reasons.
+ * They do **not** share a prefix by accident: `POST /webhooks/email` is a literal segment and the
+ * outbound routes take a UUID, which the global `UuidParamPipe` keeps unambiguous. A later inbound
+ * collector arrives under `/wh/{provider}/{connectionId}` with the integration framework, where
+ * connection ids come from.
+ *
+ * `NotificationsModule` because an endpoint that fails fifteen times in a row is switched off and
+ * somebody has to be told — a workspace whose integration has silently stopped receiving everything
+ * is the failure this phase exists to prevent on the way in, seen from the way out.
  */
 @Module({
-  controllers: [EmailWebhookController],
+  imports: [NotificationsModule],
+  controllers: [EmailWebhookController, WebhooksController],
+  providers: [
+    WebhooksService,
+    WebhookDispatchService,
+    WebhookUrlService,
+    WebhookFanoutProcessor,
+    WebhookDeliverProcessor,
+    WebhookRetrySweepProcessor,
+  ],
+  exports: [
+    WebhooksService,
+    WebhookDispatchService,
+    WebhookFanoutProcessor,
+    WebhookDeliverProcessor,
+    WebhookRetrySweepProcessor,
+  ],
 })
 export class WebhooksModule {}

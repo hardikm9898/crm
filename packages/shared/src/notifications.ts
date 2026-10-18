@@ -75,9 +75,12 @@ export interface NotificationTypeSpec {
 /**
  * Every type this product actually sends.
  *
- * `FR-NOT-2` lists thirteen; seven exist, because the channels and the modules behind the other six
- * have not been built. Listing all thirteen would give the screen six switches that control
+ * `FR-NOT-2` lists thirteen; eight exist, because the channels and the modules behind the others
+ * have not been built. Listing all thirteen would give the screen five switches that control
  * nothing — the kind of half-truth that makes somebody stop believing the rest of the screen.
+ * `webhook.disabled` is not one of `FR-NOT-2`'s thirteen and is here anyway: `FR-API-4` asks for a
+ * failure alert, and an integration that has silently stopped is exactly what a notification is
+ * for.
  */
 export const NOTIFICATION_TYPES: readonly NotificationTypeSpec[] = [
   {
@@ -165,6 +168,22 @@ export const NOTIFICATION_TYPES: readonly NotificationTypeSpec[] = [
     defaultChannels: ['in_app'],
     optOut: true,
     respectsQuietHours: true,
+    staleness: 'never',
+  },
+  {
+    type: 'webhook.disabled',
+    label: 'An integration we stopped sending to',
+    hint: 'When an endpoint fails fifteen times in a row, or tells us to stop. These cannot be turned off.',
+    group: 'workspace',
+    defaultChannels: ['in_app'],
+    /**
+     * Not opt-out, for the same reason as the trial notice below: an auto-disabled endpoint means
+     * the workspace's integration has stopped receiving **everything**, silently, and the one
+     * message that explains it must not be suppressible by the person who would have to fix it.
+     */
+    optOut: false,
+    respectsQuietHours: true,
+    // A fact about the past: the endpoint was disabled, and it is still disabled in the morning.
     staleness: 'never',
   },
   {

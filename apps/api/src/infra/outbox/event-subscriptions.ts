@@ -15,6 +15,16 @@ export interface EventSubscription {
   readonly jobName: JobName;
 }
 
+/**
+ * Every webhook-eligible event goes to one fan-out job (`FR-API-4`).
+ *
+ * Written once and spread, rather than repeated twenty-five times: the queue and job name are one
+ * decision, and `event-subscriptions.spec.ts` asserts that **every** type in
+ * `WEBHOOK_EVENT_TYPES` has it — a type offered on the settings screen with no subscription here
+ * is an endpoint that looks subscribed and receives nothing.
+ */
+const WEBHOOK: EventSubscription = { queue: QUEUES.WEBHOOKS, jobName: JOBS.WEBHOOK_FANOUT };
+
 export const EVENT_SUBSCRIPTIONS: Readonly<Record<string, readonly EventSubscription[]>> = {
   'invitation.sent': [{ queue: QUEUES.NOTIFICATIONS, jobName: JOBS.MAIL_INVITATION }],
   'user.registered': [{ queue: QUEUES.NOTIFICATIONS, jobName: JOBS.MAIL_EMAIL_VERIFICATION }],
@@ -32,7 +42,7 @@ export const EVENT_SUBSCRIPTIONS: Readonly<Record<string, readonly EventSubscrip
   // A missed follow-up is told about through the event rather than by the sweep, so "mark it
   // reported" and "tell somebody" retry independently — and a second consumer (the Phase 3
   // escalation policy, a WhatsApp nudge) is a line here rather than a change to the sweep.
-  'task.overdue': [{ queue: QUEUES.NOTIFICATIONS, jobName: JOBS.NOTIFY_TASK_OVERDUE }],
+  'task.overdue': [{ queue: QUEUES.NOTIFICATIONS, jobName: JOBS.NOTIFY_TASK_OVERDUE }, WEBHOOK],
   // One processor serves both, dispatching on the envelope's event name — and the recipients were
   // resolved and stored by the sweep, so the escalation row and the notifications cannot disagree.
   'sla.at_risk': [{ queue: QUEUES.NOTIFICATIONS, jobName: JOBS.NOTIFY_SLA_ESCALATION }],
@@ -40,11 +50,11 @@ export const EVENT_SUBSCRIPTIONS: Readonly<Record<string, readonly EventSubscrip
   // Scoring reacts to what a lead does (`FR-SCR-2`). Every one of these is a trigger a tenant may
   // write a rule on, and the job name is the same for all of them — the processor reads which event
   // it was from the envelope, so adding a trigger is a line here and an entry in `SCORING_TRIGGERS`.
-  'lead.created': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }],
-  'lead.updated': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }],
-  'lead.assigned': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }],
-  'lead.status_changed': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }],
-  'lead.stage_changed': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }],
+  'lead.created': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }, WEBHOOK],
+  'lead.updated': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }, WEBHOOK],
+  'lead.assigned': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }, WEBHOOK],
+  'lead.status_changed': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }, WEBHOOK],
+  'lead.stage_changed': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }, WEBHOOK],
   'lead.touchpoint_added': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }],
   // A call is the one thing a salesperson does that a score should move on, and the payload carries
   // `outcomeCategory` so a rule can score "spoke to them" and "wrong number" differently
@@ -52,23 +62,44 @@ export const EVENT_SUBSCRIPTIONS: Readonly<Record<string, readonly EventSubscrip
   // reads its subject from `payload.aggregateId`, and an unlinked inbound call has no lead to score
   // — which is why `CallsService` emits this when the call is attributed rather than when it is
   // logged.
-  'call.logged': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }],
+  'call.logged': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }, WEBHOOK],
   // Recorded but not yet consumed. Listed explicitly so the set of known events is visible, and so
   // a typo in an event name shows up as "unsubscribed" rather than silently doing nothing.
   'call.attempted': [],
-  'task.created': [],
-  'task.completed': [],
-  'task.rescheduled': [],
+  'task.created': [WEBHOOK],
+  'task.completed': [WEBHOOK],
+  'task.rescheduled': [WEBHOOK],
   'task.cancelled': [],
   'organization.created': [],
   'onboarding.completed': [],
-  'lead.deleted': [],
-  'lead.merged': [],
+  'lead.deleted': [WEBHOOK],
+  'lead.merged': [WEBHOOK],
   'lead.merge_undone': [],
   'lead.recycled': [],
-  'lead.score_changed': [],
+  'lead.score_changed': [WEBHOOK],
   'import.completed': [],
   'export.completed': [],
+  /**
+   * Emitted since Phase 2 and 3 and **never listed here**, which `isKnownEvent` reported as
+   * "unknown" and the dispatcher treated as "no subscribers" — the same answer for a typo and for a
+   * real event nothing had been wired to yet. Listing them is what Phase 4 step 3 needed anyway:
+   * every one of them is a webhook event somebody can subscribe to (`FR-API-4`).
+   */
+  'lead.converted': [WEBHOOK],
+  'customer.created': [WEBHOOK],
+  'customer.updated': [WEBHOOK],
+  'customer.deleted': [],
+  'deal.created': [WEBHOOK],
+  'deal.stage_changed': [WEBHOOK],
+  'deal.won': [WEBHOOK],
+  'deal.lost': [WEBHOOK],
+  'quotation.created': [],
+  'quotation.sent': [WEBHOOK],
+  'quotation.accepted': [WEBHOOK],
+  'quotation.rejected': [WEBHOOK],
+  'payment.received': [WEBHOOK],
+  'payment.refunded': [WEBHOOK],
+  'onboarding.industry_template_applied': [],
 };
 
 export function subscribersFor(eventName: string): readonly EventSubscription[] {

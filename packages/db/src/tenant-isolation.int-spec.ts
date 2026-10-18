@@ -3139,3 +3139,222 @@ describe('layer 3 — the public lead API’s own tables (FR-CAP-6, FR-API-2)', 
     expect(theirs.keys.every((row) => row.organizationId === h.orgB.organizationId)).toBe(true);
   });
 });
+
+describe('layer 3 — an outbound webhook cannot be stitched to another tenant (FR-API-4)', () => {
+  /**
+   * An endpoint, created on the **unscoped** client on purpose: these tests are the
+   * "application bug" scenario, where the extension has been bypassed and only the database is
+   * left to refuse. Each test makes its own, because a shared fixture trips the uniqueness rules it
+   * is not testing — `webhook_endpoint_url_key` allows one endpoint per URL per workspace.
+   */
+  async function endpoint(organizationId: string, overrides: Record<string, unknown> = {}) {
+    const id = newId();
+    await h.unscoped.webhookEndpoint.create({
+      data: {
+        id,
+        organizationId,
+        url: `https://hooks.example.com/${id.slice(-8)}`,
+        secretEncrypted: 'v1.1.aaaa.bbbb.cccc',
+        eventTypes: ['lead.created'],
+        ...overrides,
+      } as never,
+    });
+    return id;
+  }
+
+  async function delivery(organizationId: string, endpointId: string) {
+    const id = newId();
+    const createdAt = new Date();
+    await h.unscoped.webhookDelivery.create({
+      data: {
+        id,
+        organizationId,
+        endpointId,
+        eventId: newId(),
+        eventType: 'lead.created',
+        payload: { id: 'evt', type: 'lead.created' },
+        createdAt,
+      } as never,
+    });
+    return { id, createdAt };
+  }
+
+  it('blocks a delivery aimed at another tenant’s endpoint', async () => {
+    const theirs = await endpoint(h.orgB.organizationId);
+    await expect(
+      h.unscoped.webhookDelivery.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          endpointId: theirs,
+          eventId: newId(),
+          eventType: 'lead.created',
+          payload: {},
+          createdAt: new Date(),
+        } as never,
+      }),
+    ).rejects.toThrow(/webhook_deliveries_endpoint_same_org_fk|foreign key/i);
+  });
+
+  it('blocks an attempt against another tenant’s delivery', async () => {
+    const theirEndpoint = await endpoint(h.orgB.organizationId);
+    const theirDelivery = await delivery(h.orgB.organizationId, theirEndpoint);
+    await expect(
+      h.unscoped.webhookAttempt.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          deliveryId: theirDelivery.id,
+          deliveryCreatedAt: theirDelivery.createdAt,
+          attemptNo: 1,
+          statusCode: 200,
+          durationMs: 12,
+        } as never,
+      }),
+    ).rejects.toThrow(/webhook_attempts_delivery_same_org_fk|foreign key/i);
+  });
+
+  it('refuses an endpoint that is not somewhere we could post to', async () => {
+    await expect(endpoint(h.orgA.organizationId, { url: 'file:///etc/passwd' })).rejects.toThrow(
+      /webhook_endpoints_url_is_http/i,
+    );
+  });
+
+  it('refuses an endpoint subscribed to nothing', async () => {
+    // `cardinality`, not `array_length`: on an empty array the latter is NULL and the CHECK passes.
+    await expect(endpoint(h.orgA.organizationId, { eventTypes: [] })).rejects.toThrow(
+      /webhook_endpoints_has_event_types/i,
+    );
+  });
+
+  it('refuses a signing secret stored as it was generated', async () => {
+    await expect(
+      endpoint(h.orgA.organizationId, { secretEncrypted: 'whsec_plaintext_secret_value' }),
+    ).rejects.toThrow(/webhook_endpoints_secret_is_encrypted/i);
+  });
+
+  it('refuses an endpoint disabled without a reason, and one disabled while still active', async () => {
+    await expect(
+      endpoint(h.orgA.organizationId, { disabledAt: new Date(), isActive: false }),
+    ).rejects.toThrow(/webhook_endpoints_disabled_is_accounted_for/i);
+    await expect(
+      endpoint(h.orgA.organizationId, {
+        disabledAt: new Date(),
+        disabledReason: 'Too many failures',
+        isActive: true,
+      }),
+    ).rejects.toThrow(/webhook_endpoints_disabled_is_accounted_for/i);
+  });
+
+  it('refuses a delivery that claims success with no delivery instant', async () => {
+    const mine = await endpoint(h.orgA.organizationId);
+    await expect(
+      h.unscoped.webhookDelivery.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          endpointId: mine,
+          eventId: newId(),
+          eventType: 'lead.created',
+          payload: {},
+          status: 'succeeded',
+          attemptCount: 1,
+          createdAt: new Date(),
+        } as never,
+      }),
+    ).rejects.toThrow(/webhook_deliveries_delivered_has_timestamp/i);
+  });
+
+  it('refuses a finished delivery with something still due', async () => {
+    // Without this, an exhausted row with a `next_attempt_at` is retried by the sweep forever.
+    const mine = await endpoint(h.orgA.organizationId);
+    await expect(
+      h.unscoped.webhookDelivery.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          endpointId: mine,
+          eventId: newId(),
+          eventType: 'lead.created',
+          payload: {},
+          status: 'exhausted',
+          attemptCount: 8,
+          nextAttemptAt: new Date(Date.now() + 60_000),
+          createdAt: new Date(),
+        } as never,
+      }),
+    ).rejects.toThrow(/webhook_deliveries_finished_has_nothing_due/i);
+  });
+
+  it('refuses a pending delivery that has already been attempted', async () => {
+    const mine = await endpoint(h.orgA.organizationId);
+    await expect(
+      h.unscoped.webhookDelivery.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          endpointId: mine,
+          eventId: newId(),
+          eventType: 'lead.created',
+          payload: {},
+          status: 'pending',
+          attemptCount: 2,
+          createdAt: new Date(),
+        } as never,
+      }),
+    ).rejects.toThrow(/webhook_deliveries_pending_is_untried/i);
+  });
+
+  it('refuses an attempt with no outcome at all', async () => {
+    const mine = await endpoint(h.orgA.organizationId);
+    const row = await delivery(h.orgA.organizationId, mine);
+    await expect(
+      h.unscoped.webhookAttempt.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          deliveryId: row.id,
+          deliveryCreatedAt: row.createdAt,
+          attemptNo: 1,
+          durationMs: 30,
+        } as never,
+      }),
+    ).rejects.toThrow(/webhook_attempts_has_an_outcome/i);
+  });
+
+  it('allows one row per attempt and refuses the second copy of one', async () => {
+    const mine = await endpoint(h.orgA.organizationId);
+    const row = await delivery(h.orgA.organizationId, mine);
+    const attempt = (attemptNo: number) =>
+      h.unscoped.webhookAttempt.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          deliveryId: row.id,
+          deliveryCreatedAt: row.createdAt,
+          attemptNo,
+          statusCode: 500,
+          durationMs: 40,
+        } as never,
+      });
+    await expect(attempt(1)).resolves.toBeTruthy();
+    await expect(attempt(2)).resolves.toBeTruthy();
+    // A retried job must not be able to log the same attempt twice.
+    await expect(attempt(2)).rejects.toThrow(/webhook_attempt_number_key|unique/i);
+  });
+
+  it('scopes the endpoints, the deliveries and the attempts like every other tenant table', async () => {
+    const mine = await endpoint(h.orgA.organizationId);
+    const row = await delivery(h.orgA.organizationId, mine);
+    const theirs = await tenantContext.run(h.orgB.principal, async () => ({
+      endpoint: await h.db.webhookEndpoint.findFirst({ where: { id: mine } }),
+      delivery: await h.db.webhookDelivery.findFirst({ where: { id: row.id } }),
+      endpoints: await h.db.webhookEndpoint.findMany({}),
+    }));
+    expect(theirs.endpoint).toBeNull();
+    expect(theirs.delivery).toBeNull();
+    expect(theirs.endpoints.every((entry) => entry.organizationId === h.orgB.organizationId)).toBe(
+      true,
+    );
+  });
+});

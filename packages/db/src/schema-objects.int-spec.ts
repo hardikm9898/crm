@@ -164,6 +164,9 @@ const REQUIRED_INDEXES = [
   'api_keys_live_by_key_id',
   'inbound_payloads_unresolved',
   'ingestion_errors_replayable',
+  // The retry sweep's index, keyed on `next_attempt_at` alone for the same reason: it runs across
+  // every workspace, and an `IN` over two statuses cannot be the leading column of a range scan.
+  'webhook_deliveries_due',
 ];
 
 /**
@@ -522,6 +525,24 @@ const REQUIRED_CONSTRAINTS = [
   'ingestion_errors_payload_same_org_fk',
   'inbound_payloads_api_key_same_org_fk',
   'api_keys_creator_same_org_fk',
+  // Outbound webhooks. The endpoint's own rules, the delivery's status/timestamp pairs written as
+  // `CASE` (the payments lesson), and the attempt's "every attempt has an outcome".
+  'webhook_endpoints_url_is_http',
+  'webhook_endpoints_has_event_types',
+  'webhook_endpoints_secret_is_encrypted',
+  'webhook_endpoints_failure_count_sane',
+  'webhook_endpoints_disabled_is_accounted_for',
+  'webhook_deliveries_delivered_has_timestamp',
+  'webhook_deliveries_finished_has_nothing_due',
+  'webhook_deliveries_attempts_sane',
+  'webhook_deliveries_pending_is_untried',
+  'webhook_attempts_number_positive',
+  'webhook_attempts_duration_sane',
+  'webhook_attempts_has_an_outcome',
+  'webhook_deliveries_endpoint_same_org_fk',
+  'webhook_endpoints_creator_same_org_fk',
+  // The second three-column composite FK into a partitioned parent.
+  'webhook_attempts_delivery_same_org_fk',
 ];
 
 describe('hand-written indexes survive every generated migration', () => {
@@ -587,6 +608,29 @@ describe('the objects Prisma cannot describe at all', () => {
     const rows = await h.unscoped.$queryRaw<
       { count: bigint }[]
     >`SELECT count(*) AS count FROM pg_proc WHERE proname = 'ensure_inbound_payload_partition'`;
+    expect(Number(rows[0]?.count ?? 0)).toBe(1);
+  });
+
+  it('keeps webhook_deliveries partitioned by range, with its own default partition', async () => {
+    // One row per event per subscribed endpoint makes this the fastest-growing table in the
+    // product, and §15 prunes it at 90 days — which is a partition drop, not a delete.
+    const rows = await h.unscoped.$queryRaw<
+      { partition_strategy: string | null; partitions: bigint }[]
+    >`
+      SELECT (SELECT partstrat::text FROM pg_partitioned_table WHERE partrelid = 'webhook_deliveries'::regclass)
+               AS partition_strategy,
+             (SELECT count(*) FROM pg_inherits WHERE inhparent = 'webhook_deliveries'::regclass)
+               AS partitions
+    `;
+    expect(rows[0]?.partition_strategy).toBe('r');
+    expect(Number(rows[0]?.partitions ?? 0)).toBeGreaterThan(1);
+    expect(await indexExists('webhook_deliveries_default_pkey')).toBe(true);
+  });
+
+  it('keeps the webhook-delivery partition function the maintenance job calls', async () => {
+    const rows = await h.unscoped.$queryRaw<
+      { count: bigint }[]
+    >`SELECT count(*) AS count FROM pg_proc WHERE proname = 'ensure_webhook_delivery_partition'`;
     expect(Number(rows[0]?.count ?? 0)).toBe(1);
   });
 

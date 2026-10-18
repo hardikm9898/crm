@@ -1923,6 +1923,107 @@ phase.
 
 ---
 
+### Step 3 — outbound webhooks: signed, retried from their own row, and never following a redirect ✅ _(landed 2026-10-18)_
+
+`FR-API-4`. Step 2 built the door a program comes in through; this is the one the product goes out
+of. It is the phase's fourth exit criterion in full — signed deliveries, a log per attempt, retries
+on a schedule, auto-disable after fifteen consecutive failures, manual retry, and SSRF protection
+tested against private addresses **and** against redirects to them — which makes **four of Phase 4's
+six exit criteria** met and tested.
+
+**Three tenant tables.** `webhook_endpoints` (one row per place a workspace wants events, with the
+signing secret encrypted and the event types it subscribed to), `webhook_deliveries` (one row per
+event per endpoint, **partitioned monthly** by `created_at` like `activities` and `inbound_payloads`,
+and the thing the retry schedule lives on) and `webhook_attempts` (what happened on each try: the
+code, the duration, the error). The migration arrived with **15 spurious `DROP`s** — two three-column
+composite FKs and thirteen GIN, trigram and partial indexes the earlier steps added by hand — which
+were removed, and all
+seventeen hand-written objects — twelve CHECKs, three composite FKs, the retry sweep's partial index
+and `ensure_webhook_delivery_partition` — are in `schema-objects.int-spec.ts`, which is the only
+thing that catches the ones Prisma's next diff would drop. `docs/database-design.md` §8 says what
+each CHECK is for.
+
+**The retry schedule is the row, not BullMQ**, and that is the decision this step turned on
+([ADR-0031](./decisions/ADR-0031-an-outbound-webhook-is-retried-from-its-own-row-and-never-follows-a-redirect.md)).
+Seven gaps — 10 s, 1 m, 5 m, 30 m, 2 h, 6 h, 24 h, each with ±20 % jitter — reach about 33 hours, and a
+delayed BullMQ job that far out lives in Redis: losing Redis would lose a day of deliveries
+silently, while a row survives a restart and is visible to the workspace. So the queue is
+`attempts: 1`, a failed attempt writes `next_attempt_at` and the job **succeeds**, and
+`maintenance.webhook-retry` enqueues what is due every minute — per-minute because the first gap is
+ten seconds, and cheap because `webhook_deliveries_due` is a partial index over nothing on almost
+every tick. Jitter is per delivery, so an endpoint that was down for an hour is not hit by
+everything it missed in the same second.
+
+**SSRF is checked twice, because once is not enough.** The static classification in
+`@leados/shared` refuses a non-`https` scheme in production, credentials in the URL, a port that is
+not 443, and any literal loopback, link-local, private, CGNAT, multicast or cloud-metadata address —
+each with its own sentence, so the screen can say which rule refused it. Then **every attempt
+re-resolves the hostname and checks the addresses it actually got**, because a name that resolved
+publicly when the endpoint was saved can resolve to `169.254.169.254` an hour later. `redirect:
+'manual'` on top of that: a 301 to a private address is not followed, it is recorded as the refusal
+it is, and the e2e proves both halves.
+
+**Fan-out found that the event registry had drifted.** `EVENT_SUBSCRIPTIONS` is keyed by event name
+and an unkeyed event reaches nobody, so `customer.created`, `lead.converted`, every `deal.*`,
+`quotation.*` and `payment.*` event and `onboarding.industry_template_applied` were being written to
+the outbox, marked published, and read by nothing — invisible, because an event with no subscribers
+looks exactly like one whose subscribers all succeeded. All 25 types the product emits are now
+registered, and the spec asserts the correspondence **in both directions**: an emitted event with no
+entry fails, and so does an entry for an event nobody emits.
+
+**Delivery is at-least-once and says so on the screen.** The payload carries the event id, so a
+receiver deduplicates on it; `X-LeadOS-Timestamp` and `X-LeadOS-Signature` are the same HMAC
+construction the inbound API verifies (`"<unix>.<raw body>"` over the bytes as sent); a 2xx stops
+the retries, `410 Gone` disables the endpoint immediately, and fifteen consecutive failures disables
+it with a `webhook.disabled` notification that **cannot be opted out of** — an integration switched
+off silently is one nobody can diagnose. `webhook.test` is a 26th event type that only the [Send
+test] button emits, so an endpoint can be proven before anything real depends on it.
+
+**One screen** (§10.9 of `frontend-architecture.md`): `/settings/webhooks`, behind `webhook:manage` —
+a permission in the catalogue since Phase 1 with nothing reading it until now. The endpoints, then
+what has been sent with each attempt folded inside its row, then the verification code the receiving
+server needs, on the page rather than in a document, because the one thing that makes a receiver
+unsafe is trusting a body without checking its signature. The secret travels in `ActionState.data`
+and is gone after a refresh, like the API key's.
+
+**Three defects worth the note.** The first version of
+`webhook_deliveries_pending_is_untried` was written as a biconditional, which made an honest state
+unrepresentable: a delivery whose endpoint is switched off between the fan-out and the attempt is
+abandoned having never been sent, so the mirror of a true constraint was false and the service would
+have had to lie. Writing the outbound module into `modules/webhooks/` **silently deleted
+`POST /webhooks/email`**, the inbound email webhook that has lived there since Phase 3 step 7 — no
+error, no failing unit test, caught only by the route-authorization sweep, which enumerates every
+declared route. And a browser check reading a delivery's signed body found an empty string, because
+a closed `<details>` has no `innerText`. All three are in `CLAUDE.md`.
+
+**Verified.** 2 235 tests green — 1 001 unit and 1 234 integration — with
+about 140 of them new: a **29-case** webhook suite over real HTTP against an in-process receiver
+whose answer is switchable mid-test (signature verified by hand, every refused URL, the retry
+schedule, the manual retry, `410 Gone`, the fifteenth failure, a redirect to a private address), 44
+shared-vocabulary cases, 24 in the web app's reconciliation spec, seventeen new objects in the
+schema-objects guard, 13 cross-tenant database guarantees, and the subscription registry's
+both-directions correspondence. Then **39 HTTP checks** against a live API, worker and scheduler with an
+in-process receiver that can be switched between answering 200, 500, a redirect to a private address
+and `410 Gone`, and **40 browser checks** driving the screen end to end — an endpoint created and
+its secret read out of the card, four refused URLs each naming their own rule, a test delivery whose
+signature the check verifies by hand, a real lead capture fanning out only to the endpoint that
+subscribed to it, a 500 producing a failed row with the next attempt stated, [Send again] delivering
+it once the receiver recovers, and `410 Gone` switching the endpoint off with its reason on the
+screen.
+
+**Carried forward, named rather than assumed:** there is no circuit breaker, deliberately — with the
+schedule on the row a dead endpoint's deliveries are already spread over about 33 hours and fifteen
+failures disables it, and a breaker would be a second piece of state that can disagree with
+`failure_count`. `webhook.reap-exhausted` (hourly, in §5 of `queue-event-architecture.md`) is not
+built and is not missing: the endpoint is disabled by the attempt that earns it, inside that
+attempt's transaction. There is no per-endpoint delivery replay of everything it missed while it was
+off, for the same reason bulk replay was left out of step 2. Deliveries are retained by the monthly
+partitions and pruned with them; a response body is truncated at 2 000 characters, because a server
+that answers an HTML error page should not fill a tenant's table with it. `api_logs`, OpenAPI with a
+diff check, the integration framework and the two ad-platform connectors are the rest of this phase.
+
+---
+
 ## Phase 5 — WhatsApp
 
 **Scope:** Cloud API adapter; WABA/number connection + health; webhook verify + inbound pipeline with
@@ -2098,7 +2199,7 @@ partially landed, with the specific gaps named.
 ## Immediate next step
 
 _This section names the next step only; what each landed step actually did is in the step entries
-above. Last reviewed 2026-10-14, after Phase 4 step 2._
+above. Last reviewed 2026-10-18, after Phase 4 step 3._
 
 **Phase 3 is finished, exit criteria included.** Every item of scope is built — tasks, reminders,
 reschedule with a mandatory reason, complete-with-next-follow-up, "no next action", the overdue
@@ -2112,68 +2213,38 @@ after the sign-in link. The other four were already met and tested: `/my/today` 
 overdue and near-breach escalating exactly once, and Today usable one-handed at 375 px with queued
 actions.
 
-**Phase 4 is two steps in.** Step 1 built capture forms: the builder, the public renderer at
-`/f/[key]`, the embed snippet, and a submission store that keeps every payload whether or not a lead
-came out of it. Step 2 built the **public lead API** — a public key and an HMAC signature instead of
-a session, `inbound_payloads` as the never-lose store for every channel after this one,
-`ingestion_errors` naming the stage, a stored-response idempotency window, a replay, a self-serve
-test tool, API keys with scopes/rotation/allowlist, and `FR-CAP-5`'s one click, which creates the
-custom field **and** is matched by the mapper so the next payload fills it in. Three of this phase's
-six exit criteria are met and tested.
+**Phase 4 is three steps in, and four of its six exit criteria are met and tested.** Step 1 built
+capture forms: the builder, the public renderer at `/f/[key]`, the embed snippet, and a submission
+store that keeps every payload whether or not a lead came out of it. Step 2 built the **public lead
+API** — a public key and an HMAC signature instead of a session, `inbound_payloads` as the
+never-lose store for every channel after this one, `ingestion_errors` naming the stage, a
+stored-response idempotency window, a replay, a self-serve test tool, API keys with
+scopes/rotation/allowlist, and `FR-CAP-5`'s one click, which creates the custom field **and** is
+matched by the mapper so the next payload fills it in. Step 3 built **outbound webhooks**: signed
+deliveries fanned out from the outbox to the endpoints that subscribed, a retry schedule that lives
+on the delivery row rather than in Redis, a log per attempt with what the receiving server answered,
+manual retry, auto-disable after fifteen consecutive failures with a notification nobody can opt out
+of, and SSRF refused twice — statically when the URL is saved and against the resolved addresses on
+every attempt, with redirects never followed.
 
-**The next step is outbound webhooks** (`FR-API-6`, `FR-API-7`): the other direction of the same
-contract, and the phase's fourth exit criterion — signed deliveries, a per-attempt delivery log,
-retries on a schedule, auto-disable after 15 consecutive failures, manual retry, and SSRF
-protections tested against private addresses and redirects to them. The signing is already written
-(`signRequest` over `"<unix>.<raw body>"`), the outbox is already the thing that decides what to
-send, and the inbound webhook built in Phase 3 step 7 is the first of that shape — deliberately not
-under `/wh/{provider}/{connectionId}`, because connection ids arrive with the integration framework.
+**The next step is the authenticated REST surface and `api_logs`** (`FR-API-1`, `FR-API-3`,
+`FR-SA-4`). It is the one remaining piece the rest of this phase stands on: OpenAPI with a diff
+check needs a documented surface to diff, published copy-paste examples need endpoints to call, and
+`api_logs` only earns its daily partitions once there is a request volume worth logging per
+endpoint — today `inbound_payloads` is the whole request record for the one public endpoint, and
+`webhook_deliveries` is its equivalent for everything we send. The pieces are already in place: the
+API key, its scopes and its rate limit exist and are enforced; `idempotency_keys` already stores a
+first response; and every service beneath the web app's server actions is already permission-checked
+and tenant-scoped, so the surface is a declaration and a log, not new business logic.
 
-Then the rest of **Phase 4**: `api_logs` (`FR-SA-4`), with the authenticated REST surface that gives
-it a volume worth logging; OpenAPI and published docs with a diff check; the integration framework
-(provider registry, credential vault, health checks, mapping templates); and Meta/Google lead ads.
+Then the rest of **Phase 4**: the integration framework (provider registry, credential vault, health
+checks, generic mapping templates) and the two ad-platform connectors — Meta Lead Ads and Google Ads
+lead forms — which are the phase's fifth exit criterion and the first consumers of
+`provider_events`, `integration_connections` and `sync_cursors`.
 
-Carried forward from Phase 4 step 2: `api_logs` does not exist, so `inbound_payloads` plus
-`api_keys.last_used_at` / `last_used_ip` are the whole request record for the one public endpoint;
-there is no bulk replay, on purpose; and the signature's five-minute tolerance means a client with a
-badly wrong clock is refused with a message about the signature rather than the clock, which is the
-honest answer but not an obvious one.
-
-Carried forward from Phase 4 step 1: the embed is a copyable `<iframe>` rather than a hosted
-loader (Phase 9, with the website builder); CAPTCHA is a settings flag with no provider behind it;
-and `form_submissions` grows with traffic the tenant does not control, so it belongs in the
-retention policy Phase 10 writes down — as does `inbound_payloads`, which grows the same way and is
-partitioned monthly precisely so a retention policy can drop a partition rather than delete rows.
-
-Carried forward from step 8: the walk-through and the thirteen browser checks before it are run by
-hand from scripts that are not in the repository — the same arrangement every phase has used, and
-one that will have to become a committed harness before a release the team does not personally
-drive. Nothing in Phase 3 remains open otherwise.
-
-Carried forward from step 7: `digest` is still not implemented and has no column — a daily roll-up
-is a different feature from a channel, and `FR-NOT-3` asks for both. The tenant-scoped
-`suppressions` table waits for marketing and `notification_deliveries` for a second channel.
-Nothing releases a suppression through a screen (`EmailSuppressionService.release` is called by no
-route; the operator console is Phase 10). And the platform suppression list is shared, so one
-workspace's bounce stops another's send to the same dead mailbox.
-
-Carried forward from step 6: `recording_url`, `recording_document_id`, `provider` and
-`provider_call_id` are on `calls` with no writer, waiting for the Phase 4 provider webhook; an
-unlinked inbound call can be attributed over the API but has no screen, because nothing creates one
-until a provider does; and `call.missed` has no describer for the same reason.
-
-Carried forward from step 5: the oversight cards read live aggregates where
-`docs/frontend-architecture.md` §5.4 says they will read rollups (Phase 10, ADR-0010); teams are not
-a dimension on that screen yet; and it deliberately cannot answer "who is best".
-
-From step 3: the **unread WhatsApp** section of the Today mock-up arrives with the Phase 5 inbox;
-`⌘K` and the keyboard paths of §4 are unbuilt; and the Today action queue is per-viewer browser
-storage, so a tap made on a phone that never regains signal is lost when the tab closes.
-`next_response` SLA clocks and `sla_clocks.paused_ms` still wait for the inbox.
-
-Two Phase 2 items are still open, both named in that phase's exit-criteria review: there is no
-settings screen for custom fields (they are created through the API or by a template), and the lead
-list itself has not been measured against a latency budget at 100 000 leads — `/my/today` and
-`/oversight` have been measured on that fixture, but the lead list, the board and the rendered pages
-have not; that belongs with the Phase 12 performance work, where the budget itself should be written
-down.
+Carried forward from Phase 4 step 3: there is no circuit breaker and no per-endpoint bulk replay,
+both deliberately (an endpoint is disabled by the attempt that earns it, and a thousand replays of
+an unfixed cause would be a thousand more failures); `webhook.reap-exhausted` from §5 of
+`queue-event-architecture.md` is not built because nothing is left for it to reap; and a delivery's
+retries stop at about 33 hours, so an endpoint down for two days loses what it missed — which is what the
+delivery log and the `webhook.disabled` notification exist to make visible rather than silent.

@@ -712,3 +712,50 @@ crash finished from the screen (and the lead it became carrying what they said o
 test tool's two verdicts with the reason the endpoint would give, the one click creating `agent_code`
 and **the next payload filling it in**, rotation invalidating the old secret within a second, and a
 revoked key reading as revoked with nothing able to post through it.
+
+### 10.9 As built — Phase 4, step 3 (where this workspace's events go)
+
+`/settings/webhooks`, one screen behind `webhook:manage` — a permission that has been in the
+catalogue since Phase 1 with nothing reading it. There is no read-only variant: a delivery's body
+carries the event's own data, so somebody who may read the log may already read the lead it is
+about, and a second, poorer view of the same rows would be a second thing to keep correct.
+
+- **The order is the order somebody uses it**: the endpoints, then what has been sent, then the code
+  their server needs to verify a delivery. The verification snippet is **on the screen** rather than
+  in a document, because the one thing that makes a receiving endpoint unsafe is trusting a body
+  without checking its signature, and a developer who has to go and find that page will ship without
+  it. Beside it, in words, is what the retries actually do — any 2xx stops them, `410 Gone` switches
+  the endpoint off, everything else is retried at 10 s, 1 m, 5 m, 30 m, 2 h, 6 h and 24 h.
+- **The secret is shown once, in `ActionState.data`**, exactly as the API key's is (§10.8): the API
+  answers it on create and on rotate and will not answer it again, so it cannot come from the
+  re-rendered server tree. Rotating keeps the endpoint and changes what signs it, which is the
+  sentence on the card, because the alternative reading — that rotating makes a new endpoint — is
+  how somebody ends up with two.
+- **A refused URL says which rule refused it.** The classification (`https` only in production, no
+  credentials in the URL, no loopback, link-local, private or metadata address, no non-443 port) is
+  shared with the API and every branch has its own sentence: "that address is inside our own
+  network" is actionable, "invalid URL" is not. The static check runs again against the **resolved**
+  addresses at send time, so a hostname that becomes private later is refused then too.
+- **The log is one row per delivery with its attempts folded inside it.** The status chip, the event,
+  the endpoint, what the server answered, and — behind "The body we signed" — the exact payload and
+  each attempt's code and duration. Folded, because the body is what you want on the one row in a
+  hundred you are investigating; printed in full, it would be a screen of JSON per event.
+- **[Send again] appears on the rows where it means something** — failed and exhausted, never on a
+  succeeded or still-pending one — and a pending row shows no button rather than a disabled one,
+  because a button that cannot be pressed is a question about why.
+- **Three figures, each totalling the set rather than the page**: the endpoints, the recent
+  deliveries (the API's `meta.pagination.total`, not the 25 rows rendered), and how many of them are
+  not delivered. The summary sentence above them carries a plural per clause and omits what is zero.
+- **"Switched off" is not one state.** An endpoint somebody switched off reads as off; one the
+  product disabled after fifteen consecutive failures is listed as failing, with the reason, because
+  those are opposite situations and the second one is an integration that is broken right now. The
+  same event also raises a `webhook.disabled` notification that cannot be opted out of.
+
+**One suite, 40 checks**, all green: an endpoint created from the form with its secret read out of
+the card and then absent from the page after a refresh, four refused URLs each naming their own rule,
+a test delivery arriving at a real in-process receiver with a signature the check verifies by hand,
+a real lead capture fanning out to the endpoint that subscribed to it and not to the one that did
+not, a 500 from the receiver producing a failed row with the next attempt stated, [Send again]
+delivering it once the receiver answers 200, `410 Gone` switching the endpoint off with its reason
+on the screen, the attempt list reading HTTP code and duration per attempt, and the verification
+snippet containing this workspace's own header names.

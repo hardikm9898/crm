@@ -70,6 +70,14 @@ export const SCHEDULES: readonly ScheduleDefinition[] = [
     description: 'Forget the idempotency keys whose replay window has closed',
   },
   {
+    queue: QUEUES.WEBHOOKS,
+    jobName: JOBS.WEBHOOK_RETRY_SWEEP,
+    // Every minute, because the first retry is ten seconds out and a schedule whose first step is
+    // ten seconds cannot be served by a five-minute sweep. Cheap: one indexed read of the due set.
+    cron: '* * * * *',
+    description: 'Enqueue the webhook deliveries whose next attempt is due',
+  },
+  {
     queue: QUEUES.MAINTENANCE,
     jobName: JOBS.LEAD_RECYCLE,
     // Early morning, before the working day: a lead returned to the pool at 6am is one somebody

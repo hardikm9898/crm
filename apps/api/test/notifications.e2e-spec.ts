@@ -238,6 +238,9 @@ describe('what a new member starts with', () => {
       'task.overdue',
       'task.reminder',
       'trial.expired',
+      // Phase 4 step 3: an endpoint the product stopped posting to. Like `trial.expired`, it
+      // cannot be switched off — an integration disabled silently is one nobody can diagnose.
+      'webhook.disabled',
     ]);
     for (const entry of settings.types) {
       // A switch with no sentence under it is a switch somebody turns off to find out what it does.

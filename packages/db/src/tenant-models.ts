@@ -98,6 +98,12 @@ export const TENANT_MODELS = [
   'InboundPayload',
   'IngestionError',
   'IdempotencyKey',
+  // Phase 4, step 3 — outbound webhooks. `WebhookAttempt` carries `organization_id` even though
+  // its parent delivery already does: without it the row would be outside the registry, and the
+  // scoping extension cannot narrow what it cannot see.
+  'WebhookEndpoint',
+  'WebhookDelivery',
+  'WebhookAttempt',
 ] as const;
 
 export type TenantModel = (typeof TENANT_MODELS)[number];

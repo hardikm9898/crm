@@ -244,6 +244,16 @@ export class ActivityPartitionProcessor implements JobProcessor {
           SELECT ensure_inbound_payload_partition(${target}::timestamptz)
         `;
         if (payloadRow) created.push(payloadRow.ensure_inbound_payload_partition);
+        // And `webhook_deliveries`, for the same reason a third time: one row per event per
+        // subscribed endpoint makes it the fastest-growing table here, and a month with no
+        // partition sends every delivery to the default one — which then blocks attaching the real
+        // month. Three tables, one job, because a second job is one somebody forgets to schedule.
+        const [deliveryRow] = await this.db.client.$queryRaw<
+          { ensure_webhook_delivery_partition: string }[]
+        >`
+          SELECT ensure_webhook_delivery_partition(${target}::timestamptz)
+        `;
+        if (deliveryRow) created.push(deliveryRow.ensure_webhook_delivery_partition);
       }
 
       const [stranded] = await this.db.client.$queryRaw<{ count: bigint }[]>`
@@ -252,7 +262,13 @@ export class ActivityPartitionProcessor implements JobProcessor {
       const [strandedPayloads] = await this.db.client.$queryRaw<{ count: bigint }[]>`
         SELECT count(*)::bigint AS count FROM inbound_payloads_default
       `;
-      const strandedCount = Number(stranded?.count ?? 0n) + Number(strandedPayloads?.count ?? 0n);
+      const [strandedDeliveries] = await this.db.client.$queryRaw<{ count: bigint }[]>`
+        SELECT count(*)::bigint AS count FROM webhook_deliveries_default
+      `;
+      const strandedCount =
+        Number(stranded?.count ?? 0n) +
+        Number(strandedPayloads?.count ?? 0n) +
+        Number(strandedDeliveries?.count ?? 0n);
 
       if (strandedCount > 0) {
         // Warn, not error: the rows are readable and the product works. What they block is the next

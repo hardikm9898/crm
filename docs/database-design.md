@@ -919,6 +919,55 @@ message search (`FR-VIEW-1`).
 > REST surface and the outbound webhook steps. For the one public endpoint that exists,
 > `inbound_payloads` is the request log.
 
+> **Amendment, 2026-10-18 (implementation, Phase 4 step 3 — outbound webhooks).**
+> `webhook_endpoints`, `webhook_deliveries` and `webhook_attempts` are built as specified above,
+> with six changes
+> ([ADR-0031](./decisions/ADR-0031-an-outbound-webhook-is-retried-from-its-own-row-and-never-follows-a-redirect.md)):
+>
+> - **`signing_secret_encrypted` is named `secret_encrypted`**, and the name is the point:
+>   `webhook_endpoints_secret_is_encrypted` refuses a value that is not an `EncryptionService`
+>   envelope (`v1.%`) _and_ refuses one that still begins `whsec_` — which is exactly what the
+>   mistake looks like. The envelope's AAD is the endpoint's own id, so a row copied between
+>   endpoints does not decrypt. `api_keys` holds the secret of requests we **receive**;
+>   this holds the secret of requests we **send**, and both are encrypted for the same reason: an
+>   HMAC cannot be recomputed from a digest.
+> - **`webhook_endpoints` gained `last_success_at`, `last_failure_at`, `last_status_code` and
+>   `created_by_id`.** The specification's `failure_count` says how bad it is and nothing about
+>   when; a workspace looking at a quiet endpoint needs to know whether it has ever worked. The
+>   creator is a `Membership` composite FK (`webhook_endpoints_creator_same_org_fk`, `RESTRICT`),
+>   per the registry checklist.
+> - **`webhook_deliveries.delivered_at` was added, and `status` is an enum of the four names §8
+>   lists.** `webhook_deliveries_delivered_has_timestamp` makes `succeeded` the only status with a
+>   delivery instant and the only one that has one; `webhook_deliveries_finished_has_nothing_due`
+>   makes a finished row's `next_attempt_at` NULL, because an `exhausted` row with a due instant is
+>   one the sweep would pick up forever. Both are written as a `CASE`, not a biconditional — the
+>   trap the `payments` pair paid for.
+> - **`webhook_deliveries_pending_is_untried` is deliberately one-directional.** `pending` with a
+>   non-zero `attempt_count` is a contradiction, so it is refused. The mirror — "anything not
+>   pending has been attempted" — reads just as sensibly and is **false**: a delivery whose endpoint
+>   is switched off between the fan-out and the attempt is abandoned as `exhausted` having never
+>   been sent. A CHECK that forbids an honest state makes the service lie instead.
+> - **The partition key is in the keys, so the attempt's FK carries it.** `webhook_deliveries` is
+>   partitioned monthly by `created_at`, so its primary key is `(id, created_at)`, its per-workspace
+>   unique is `(organization_id, id, created_at)`, its fan-out idempotency key is
+>   `(organization_id, endpoint_id, event_id, created_at)`, and `webhook_attempts` carries
+>   `delivery_created_at` for `webhook_attempts_delivery_same_org_fk` over three columns. Unlike
+>   `inbound_payloads`, `created_at` here is always written by the service as a millisecond
+>   `Date`, so the composite key is one the application can express — the lesson of step 2's
+>   microsecond `received_at`, applied at the point where it is cheap.
+> - **The sweep has a partial index, not a scan.** `webhook_deliveries_due` is
+>   `(next_attempt_at) WHERE next_attempt_at IS NOT NULL AND status IN ('pending','failed')`,
+>   hand-written because Prisma cannot express it, and it is what makes a once-a-minute sweep over a
+>   partitioned table cost nothing. `webhook_attempts_has_an_outcome` (a status code or an error,
+>   never neither) and `webhook_endpoints_has_event_types` (`cardinality`, never `array_length` —
+>   a CHECK that evaluates to NULL is satisfied) complete the set.
+>
+> All twelve CHECKs, the partial index, the three composite FKs, the partitioned table and
+> `ensure_webhook_delivery_partition` are listed in `packages/db/src/schema-objects.int-spec.ts`:
+> Prisma's next diff would otherwise drop every one of them. `api_logs` remains specified and
+> unbuilt; `inbound_payloads` is still the request log for the one public endpoint, and
+> `webhook_deliveries` is the equivalent for everything the product sends.
+
 ---
 
 ## 9. Automation

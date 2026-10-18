@@ -412,8 +412,9 @@ GET  /forms/submissions?formId=       GET /forms/builder-options
 CRUD /api-keys                      POST /api-keys/{id}/rotate | /revoke
 GET  /api-logs                      GET /ingestion/payloads | /ingestion/errors | /ingestion/unmapped
 POST /ingestion/payloads/{id}/replay   POST /ingestion/test   (dry run, 200, persists nothing)
-CRUD /webhooks (endpoints)          POST /webhooks/{id}/test
+CRUD /webhooks (endpoints)          POST /webhooks/{id}/test | /{id}/rotate-secret
 GET  /webhooks/{id}/deliveries      POST /webhooks/deliveries/{id}/retry
+GET  /webhooks/deliveries           (the workspace's whole recent log)
 CRUD /integrations                  POST /integrations/{provider}/connect | /disconnect | /test
 GET  /integrations/health
 CRUD /imports (upload → map → validate → run)  GET /imports/{id} | /imports/{id}/errors.csv
@@ -953,6 +954,42 @@ Delivery: at-least-once (consumers must dedupe on `X-LeadOS-Event-Id`); retries 
 10 s, 1 m, 5 m, 30 m, 2 h, 6 h, 24 h with jitter; 10 s timeout; 2xx = success; 410 disables the
 endpoint immediately; 15 consecutive failures auto-disables with an admin notification; full
 delivery log with response status + truncated body and manual retry (`FR-API-4`).
+
+> **Amendment, 2026-10-18 (implementation, Phase 4 step 3).** Built as specified above — the
+> headers, the envelope, the schedule, the 10 s timeout, the 410 rule, the fifteen-failure
+> auto-disable with its notification, the per-attempt log and the manual retry — with five things
+> said plainly rather than left implied
+> ([ADR-0031](./decisions/ADR-0031-an-outbound-webhook-is-retried-from-its-own-row-and-never-follows-a-redirect.md)).
+>
+> - **The event list is what the product emits**, not the list above. `conversation.*`,
+>   `message.*`, `automation.failed` and `integration.failed` arrive with the phases that emit them;
+>   there is no `payment.completed` (money arrives as `payment.received` and leaves as
+>   `payment.refunded`) and no `form.submitted` (a form's capture _is_ a `lead.created`, through the
+>   one ingestion path). `quotation.*`, `customer.*` and `call.logged` are offered and were not in
+>   the sketch. `WEBHOOK_EVENT_TYPES` in `@leados/shared` is the list, and a spec asserts every type
+>   in it has a fan-out subscription — a tick box for an event nothing fans out is an endpoint that
+>   looks subscribed and receives nothing.
+> - **`data` is the event's own payload, not a rendered resource.** A webhook says something
+>   happened; the REST API is the single source of truth for what the thing looks like now — the
+>   same argument §10 makes for realtime deltas. Embedding a full lead would also hand every
+>   consumer a snapshot that was already stale when it was signed.
+> - **A 3xx is not success and is never followed.** `redirect: 'manual'`: following one would send a
+>   signed payload to an address the SSRF classification never saw.
+> - **The URL is classified twice** — its text when it is saved, its resolved addresses before every
+>   attempt, refusing if _any_ resolve into a private, loopback, link-local, CGNAT or multicast
+>   range. A hostname that resolves publicly today can resolve to 127.0.0.1 tomorrow.
+> - **Retries live in `webhook_deliveries.next_attempt_at`** and a one-minute sweep, not in the
+>   queue: the schedule reaches 24 hours, and two retry mechanisms over one row would deliver the
+>   same event three times per failure. With no worker running nothing is retried, which is the same
+>   failure reminders and mail already have.
+>
+> The endpoints are as §5 lists them, plus two: `GET /webhooks/deliveries` (the whole workspace's
+> recent log — the view somebody debugging opens before they know which endpoint is at fault) and
+> `POST /webhooks/:id/test`, which sends a **real** signed delivery of a reserved `webhook.test`
+> event rather than a simulated one. All behind `webhook:manage`.
+>
+> `POST /webhooks/email` (§7's inbound email webhook) keeps its path: it is a literal segment and
+> every outbound route takes a UUID, which the global `UuidParamPipe` keeps unambiguous.
 
 ---
 

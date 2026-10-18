@@ -50,9 +50,12 @@ describe('the type registry', () => {
     expect(new Set(types).size).toBe(types.length);
   });
 
-  it('exempts exactly the billing notice from being switched off (FR-NOT-3)', () => {
+  it('exempts only the notices whose suppression would hide a broken product (FR-NOT-3)', () => {
+    // Two, and both for the same reason: every write is refused once a trial expires, and an
+    // auto-disabled webhook endpoint has silently stopped receiving everything. Somebody who had
+    // switched either off would experience the consequence with no explanation.
     const required = NOTIFICATION_TYPES.filter((spec) => !spec.optOut).map((spec) => spec.type);
-    expect(required).toEqual(['trial.expired']);
+    expect([...required].sort()).toEqual(['trial.expired', 'webhook.disabled']);
   });
 
   it('declares every channel the design names, and says which can be sent today', () => {

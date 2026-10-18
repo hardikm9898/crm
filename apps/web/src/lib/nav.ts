@@ -117,6 +117,13 @@ export const NAV_SECTIONS: readonly NavSection[] = [
         href: '/ingestion',
         permissions: ['api_key:manage'],
       },
+      // The other direction of the same contract, beside it: somebody wiring up an integration
+      // reads both screens in one sitting.
+      {
+        label: 'Outbound webhooks',
+        href: '/settings/webhooks',
+        permissions: ['webhook:manage'],
+      },
       { label: 'Your security', href: '/settings/security', permissions: [] },
     ],
   },

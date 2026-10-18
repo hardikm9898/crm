@@ -23,6 +23,13 @@ export const QUEUES = {
    * not be able to starve scoring or email. Concurrency is deliberately low for the same reason.
    */
   IMPORTS_EXPORTS: 'imports-exports',
+  /**
+   * Outbound webhooks. Separate because the work is **somebody else's server**: a customer whose
+   * endpoint takes ten seconds to answer, or has been down since Tuesday, must not be able to hold
+   * up an invitation email or a lead's score. Its retries are long (up to 24 hours) and its
+   * concurrency is the highest in the product, because the jobs are almost entirely waiting.
+   */
+  WEBHOOKS: 'webhooks',
 } as const;
 
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
@@ -70,6 +77,22 @@ export const JOBS = {
    */
   IDEMPOTENCY_PRUNE: 'maintenance.idempotency-prune',
   /**
+   * One event, fanned out to the endpoints that asked for it (`FR-API-4`). Reads the subscribed
+   * endpoints and writes a `webhook_deliveries` row per endpoint — the store that makes a delivery
+   * survive a worker restart, exactly as `inbound_payloads` does inbound.
+   */
+  WEBHOOK_FANOUT: 'webhook.fanout',
+  /** One attempt at one delivery: sign, post, record, and schedule the next attempt or give up. */
+  WEBHOOK_DELIVER: 'webhook.deliver',
+  /**
+   * Enqueues the deliveries whose next attempt is due (`maintenance.webhook-retry`).
+   *
+   * A sweep rather than a BullMQ delay, because the schedule reaches 24 hours and a delayed job is
+   * a promise held in Redis: `webhook_deliveries.next_attempt_at` is the durable record, and the
+   * sweep is what turns it into work. The same argument the notification release sweep makes.
+   */
+  WEBHOOK_RETRY_SWEEP: 'maintenance.webhook-retry',
+  /**
    * The two names `docs/queue-event-architecture.md` §5 gives them. Both live on `maintenance`
    * because both are platform-scoped sweeps over every tenant.
    */
@@ -111,6 +134,11 @@ export const QUEUE_POLICIES: Readonly<Record<QueueName, QueuePolicy>> = {
   // because a run resumes from the rows it has already recorded rather than starting again, so a
   // retry after a database blip is safe and finishes the job.
   [QUEUES.IMPORTS_EXPORTS]: { attempts: 3, backoffDelayMs: 10_000, concurrency: 5 },
+  // **One** attempt, deliberately: a delivery's retries are the schedule in `webhook_deliveries`,
+  // not BullMQ's. Two retry mechanisms over one row would deliver the same event three times for
+  // every failure and make `attempt_count` a number nobody could explain. High concurrency because
+  // each job is a 10-second wait on somebody else's server, not work.
+  [QUEUES.WEBHOOKS]: { attempts: 1, backoffDelayMs: 1_000, concurrency: 20 },
 };
 
 /**

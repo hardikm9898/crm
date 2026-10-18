@@ -39,6 +39,11 @@ import {
 import { CallOutcomeSweepProcessor } from '../../modules/calls/calls.processor.js';
 import { IdempotencyPruneProcessor } from '../../modules/ingestion/ingestion.processor.js';
 import { ImportProcessProcessor } from '../../modules/imports/imports.processor.js';
+import {
+  WebhookDeliverProcessor,
+  WebhookFanoutProcessor,
+  WebhookRetrySweepProcessor,
+} from '../../modules/webhooks/webhooks.processor.js';
 import type { JobProcessor } from './job-processor.js';
 
 /**
@@ -88,6 +93,10 @@ export const PROCESSOR_TYPES: readonly Type<JobProcessor>[] = [
   // imports and exports
   ImportProcessProcessor,
   ExportGenerateProcessor,
+  // outbound webhooks
+  WebhookFanoutProcessor,
+  WebhookDeliverProcessor,
+  WebhookRetrySweepProcessor,
 ];
 
 /** Resolves the processors from a Nest context (application or test). */

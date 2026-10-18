@@ -147,6 +147,39 @@ restore the tenant context; a job without one throws before touching data (`FR-T
 > is how one lands in the wrong workspace. Its `UPDATE` re-checks `status = 'sent'`, so a quotation
 > accepted between the read and the write is not quietly expired underneath the acceptance.
 
+> **Amendment, 2026-10-18 (implementation, Phase 4 step 3 — outbound webhooks).** The queue above is
+> built as **`webhooks`**, not `webhooks-out`: it carries the fan-out and the sweep as well as the
+> send, and a name that says "out" invites a second queue for the inbound direction that already
+> exists as a controller (`POST /webhooks/email`). Three jobs, and four changes to the row:
+>
+> | Job                         | What it does                                                                                                        |
+> | --------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+> | `webhook.fanout`            | One outbox event → one `webhook_deliveries` row per subscribed active endpoint, then one `webhook.deliver` job each |
+> | `webhook.deliver`           | One attempt at one delivery: sign, post, record the attempt, and either finish the row or schedule the next attempt |
+> | `maintenance.webhook-retry` | Every minute: enqueue the deliveries whose `next_attempt_at` has passed (`webhook_deliveries_due`)                  |
+>
+> - **`attempts: 1`.** The retry schedule is the delivery **row**, not BullMQ's. Seven attempts over
+>   24 hours cannot be a delayed job: a delayed job lives in Redis, and losing Redis would silently
+>   lose a day of deliveries, while the row survives a restart and is visible to the workspace in
+>   `/settings/webhooks`. So a `webhook.deliver` job that fails writes `next_attempt_at` and
+>   **succeeds**; the sweep re-enqueues it. BullMQ retrying on top of that would double every
+>   attempt ([ADR-0031](./decisions/ADR-0031-an-outbound-webhook-is-retried-from-its-own-row-and-never-follows-a-redirect.md)).
+> - **Concurrency 20, not 50.** Each attempt holds a socket for up to ten seconds, so 50 is 50
+>   simultaneous outbound connections from one worker, and the limit that matters is the slow
+>   endpoint's, not ours.
+> - **Eight attempts, `[10 s, 60 s, 5 m, 30 m, 2 h, 6 h, 24 h]` with ±20 % jitter**, which is the
+>   row's "7 / 10 s→24 h jittered" counted the way the code does: seven _gaps_, eight attempts, the
+>   last about 33 hours after the event. The jitter is per delivery, so an endpoint that was down
+>   for an hour is not hit by every delivery it missed in the same second.
+> - **Auto-disable after 15 consecutive failures**, as specified — `failure_count` on the endpoint,
+>   reset by any success — and it raises a `webhook.disabled` notification that cannot be opted out
+>   of. An endpoint switched off silently is an integration that stops working for a reason nobody
+>   can find.
+>
+> The circuit breaker in the row above is **not** built, deliberately: with the retry schedule on the
+> row, a dead endpoint's deliveries are already spread over about 33 hours, and 15 failures disables it.
+> A breaker would add a second piece of state that can disagree with `failure_count`.
+
 ### Fairness
 
 Per-org token buckets guard `ingestion`, `whatsapp-out`, `automation` and `rollups`. A job that
@@ -313,6 +346,20 @@ All schedules are working-hours/timezone aware where they touch humans — a fol
 > already goes through
 > ([ADR-0025](./decisions/ADR-0025-quiet-hours-hold-a-notification-and-the-release-re-checks-it.md)).
 
+> **Amendment, 2026-10-18 (implementation, Phase 4 step 3).** `webhook.reap-exhausted` (hourly, in
+> §5's table) is not built, and nothing is missing: an endpoint is disabled by the attempt that takes
+> it to 15 consecutive failures, inside the transaction that records that attempt, and the admin
+> alert is the `webhook.disabled` notification raised there. An hourly reaper would be a second
+> decider of the same fact, running up to an hour late.
+>
+> What replaced it is **`maintenance.webhook-retry`, every minute, on the `webhooks` queue**. The
+> first retry is ten seconds out, so a five-minute sweep cannot serve the schedule's first step; the
+> tick costs one indexed read of `webhook_deliveries_due` and almost always finds nothing. Like
+> `notifications.release`, this sweep **is** the mechanism rather than a safety net over a delayed
+> job: with no worker running, a failed delivery is not retried at all, which is the same honest
+> failure as mail and reminders and the reason both sweeps are per-minute. It runs platform-scoped
+> and enters each delivery's own tenant context to send.
+
 ---
 
 ## 6. Retry, failure and DLQ
@@ -430,6 +477,23 @@ repeated, thanks to step idempotency keys).
 
 Note how many rows end in "timeline": that is the product principle made operational. A new feature
 that does not appear on the lead timeline has not been finished.
+
+> **Amendment, 2026-10-18 (implementation, Phase 4 step 3).** The "outbound webhook" in eight of the
+> rows above is now real, and building it found that the **subscription registry had drifted from
+> this table**. `EVENT_SUBSCRIPTIONS` is keyed by event name, and an event with no key is dispatched
+> to nobody: `customer.created`, `customer.updated`, `lead.converted`, `deal.*`, `quotation.*`,
+> `payment.*` and `onboarding.industry_template_applied` were all being written to the outbox,
+> marked published, and read by nothing. Nothing noticed, because an event with no subscribers is
+> indistinguishable from one whose subscribers all succeeded.
+>
+> All 25 event types the product actually emits are now registered, each with the webhook fan-out
+> among its subscribers (`WEBHOOK_EVENT_TYPES` in `@leados/shared`), and
+> `event-subscriptions.spec.ts` asserts the correspondence **in both directions** — an emitted event
+> with no entry, and an entry for an event nobody emits, both fail. A registry that only has to be a
+> superset is a registry that drifts.
+>
+> A workspace subscribes an endpoint to a subset of those 25; `webhook.test` is a 26th that only the
+> [Send test] button emits, so an endpoint can be verified before anything real depends on it.
 
 ---
 

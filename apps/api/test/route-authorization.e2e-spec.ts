@@ -85,6 +85,8 @@ interface Tenant {
   // the replay route is aimed at a row the product itself wrote.
   apiKeyId: string;
   payloadId: string;
+  webhookEndpointId: string;
+  webhookDeliveryId: string;
 }
 
 let orgA: Tenant;
@@ -381,6 +383,34 @@ async function createTenant(label: string): Promise<Tenant> {
     orderBy: { receivedAt: 'desc' },
   });
 
+  // A webhook endpoint of org A's own, and a delivery to it. The delivery is left `failed` so
+  // `POST /webhooks/deliveries/:id/retry` reaches the authorization check rather than the 422 a
+  // switched-off endpoint would answer first — the lesson the call-outcome route taught this sweep.
+  const webhookEndpoint = await call<EnvelopeBody<{ id: string }>>(ctx.app, {
+    method: 'POST',
+    url: '/api/v1/webhooks',
+    payload: {
+      url: `https://hooks.example.com/sweep-${label}-${organizationId.slice(-8)}`,
+      eventTypes: ['lead.created'],
+    },
+    token,
+  });
+  const webhookDeliveryId = newId();
+  await ctx.db.webhookDelivery.create({
+    data: {
+      id: webhookDeliveryId,
+      organizationId,
+      endpointId: webhookEndpoint.body.data.id,
+      eventId: newId(),
+      eventType: 'lead.created',
+      payload: { id: 'evt', type: 'lead.created' },
+      status: 'failed',
+      attemptCount: 1,
+      nextAttemptAt: new Date(Date.now() + 600_000),
+      createdAt: new Date(),
+    },
+  });
+
   const slaClock = await ctx.db.slaClock.findFirstOrThrow({
     where: { organizationId, leadId: lead.body.data.id },
   });
@@ -451,6 +481,8 @@ async function createTenant(label: string): Promise<Tenant> {
     formId: form.body.data.id,
     apiKeyId: apiKey.body.data.id,
     payloadId: payload.id,
+    webhookEndpointId: webhookEndpoint.body.data.id,
+    webhookDeliveryId,
   };
 }
 
@@ -725,6 +757,12 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       '/api-keys/:id/rotate': `/api-keys/${orgA.apiKeyId}/rotate`,
       '/api-keys/:id/revoke': `/api-keys/${orgA.apiKeyId}/revoke`,
       '/ingestion/payloads/:id/replay': `/ingestion/payloads/${orgA.payloadId}/replay`,
+      // Phase 4, step 3 — outbound webhooks
+      '/webhooks/:id': `/webhooks/${orgA.webhookEndpointId}`,
+      '/webhooks/:id/rotate-secret': `/webhooks/${orgA.webhookEndpointId}/rotate-secret`,
+      '/webhooks/:id/test': `/webhooks/${orgA.webhookEndpointId}/test`,
+      '/webhooks/:id/deliveries': `/webhooks/${orgA.webhookEndpointId}/deliveries`,
+      '/webhooks/deliveries/:id/retry': `/webhooks/deliveries/${orgA.webhookDeliveryId}/retry`,
       // Phase 4, step 1 — capture forms
       '/forms/:id': `/forms/${orgA.formId}`,
       '/forms/:id/fields': `/forms/${orgA.formId}/fields`,

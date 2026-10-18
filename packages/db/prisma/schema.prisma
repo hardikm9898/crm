@@ -794,6 +794,9 @@ model Organization {
   industryTemplateKey String?           @map("industry_template_key")
   apiKeys             ApiKey[]
   inboundPayloads     InboundPayload[]
+  webhookEndpoints    WebhookEndpoint[]
+  webhookDeliveries   WebhookDelivery[]
+  webhookAttempts     WebhookAttempt[]
   ingestionErrors     IngestionError[]
   idempotencyKeys     IdempotencyKey[]
 
@@ -932,8 +935,9 @@ model Membership {
 
   slaClocks SlaClock[] @relation("sla_clock_assignee")
 
-  createdForms   Form[]   @relation("form_creator")
-  createdApiKeys ApiKey[] @relation("api_key_creator")
+  createdForms            Form[]            @relation("form_creator")
+  createdApiKeys          ApiKey[]          @relation("api_key_creator")
+  createdWebhookEndpoints WebhookEndpoint[] @relation("webhook_endpoint_creator")
 
   @@unique([organizationId, id], name: "membership_tenant_key")
   @@unique([organizationId, userId])
@@ -3950,4 +3954,151 @@ model IdempotencyKey {
   @@unique([organizationId, endpoint, key], name: "idempotency_replay_key")
   @@index([expiresAt])
   @@map("idempotency_keys")
+}
+
+/// An endpoint a workspace asked us to post to (`FR-API-4`, `docs/api-architecture.md` §8).
+///
+/// A tenant-chosen URL our server fetches is the textbook SSRF primitive, so the URL is classified
+/// before it is stored (scheme, port, credentials, literal address) and the **resolved** addresses
+/// are checked again at send time: a hostname that resolves to 169.254.169.254 is the same attack
+/// wearing a hat.
+model WebhookEndpoint {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  url             String
+  /// What a person calls it, so a list of three endpoints is readable.
+  description     String?
+  /// The `v1.…` envelope `EncryptionService` produces. Signing needs the secret itself, so this is
+  /// encrypted rather than hashed — the lesson ADR-0030 paid for on the inbound side — and a CHECK
+  /// refuses anything that still looks like the `whsec_…` value it was generated as.
+  secretEncrypted String  @map("secret_encrypted")
+
+  /// From `WEBHOOK_EVENT_TYPES` in `@leados/shared`. A TEXT[] because it is written and read as a
+  /// whole; nothing asks "which endpoints want this event" outside the fan-out, which reads them all.
+  eventTypes String[] @map("event_types")
+
+  isActive Boolean @default(true) @map("is_active")
+
+  /// Counted on **consecutive** failures and reset by any success: fifteen of them auto-disables
+  /// the endpoint (`FR-API-4`), and a success in between means the endpoint is simply flaky.
+  failureCount   Int       @default(0) @map("failure_count")
+  lastSuccessAt  DateTime? @map("last_success_at") @db.Timestamptz(6)
+  lastFailureAt  DateTime? @map("last_failure_at") @db.Timestamptz(6)
+  lastStatusCode Int?      @map("last_status_code")
+
+  /// Set together with `is_active = false`, which a CHECK enforces: an endpoint that is disabled
+  /// without a reason is one nobody can explain to the person whose integration stopped.
+  disabledAt     DateTime? @map("disabled_at") @db.Timestamptz(6)
+  disabledReason String?   @map("disabled_reason")
+
+  createdById String?  @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  creator      Membership?  @relation("webhook_endpoint_creator", fields: [organizationId, createdById], references: [organizationId, userId], onDelete: Restrict, map: "webhook_endpoints_creator_same_org_fk")
+
+  deliveries WebhookDelivery[]
+
+  @@unique([organizationId, id], name: "webhook_endpoint_tenant_key")
+  /// One endpoint per URL per workspace: two rows for one URL is every event delivered twice, and
+  /// the second copy is indistinguishable from a retry to whoever receives it.
+  @@unique([organizationId, url], name: "webhook_endpoint_url_key")
+  @@index([organizationId, isActive])
+  @@map("webhook_endpoints")
+}
+
+/// One event, aimed at one endpoint (`FR-API-4`).
+///
+/// Partitioned monthly by `created_at`, like `activities` and `inbound_payloads`: this is the
+/// fastest-growing table in the product (one row per event per subscribed endpoint) and §15's
+/// retention drops a partition rather than deleting rows. `created_at` is therefore written by the
+/// service with a millisecond `Date`, never left to the column default — it is half of the primary
+/// key, and a microsecond instant is one the application cannot write back.
+model WebhookDelivery {
+  id             String @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  endpointId String @map("endpoint_id") @db.Uuid
+  /// The outbox event's id, which is what a consumer deduplicates on.
+  eventId    String @map("event_id") @db.Uuid
+  eventType  String @map("event_type")
+  /// The body exactly as it was signed, so a retry sends the same bytes and the delivery log shows
+  /// what the endpoint was actually sent rather than what it would be sent today.
+  payload    Json   @db.JsonB
+
+  status        WebhookDeliveryStatus @default(pending)
+  attemptCount  Int                   @default(0) @map("attempt_count")
+  /// When the next attempt is due. Null for a delivery that is finished, succeeded or exhausted.
+  nextAttemptAt DateTime?             @map("next_attempt_at") @db.Timestamptz(6)
+
+  lastStatusCode   Int?      @map("last_status_code")
+  /// Truncated: a delivery log is not a mirror of somebody else's HTML error page.
+  lastResponseBody String?   @map("last_response_body")
+  lastError        String?   @map("last_error")
+  deliveredAt      DateTime? @map("delivered_at") @db.Timestamptz(6)
+
+  /// The partition key.
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  endpoint     WebhookEndpoint @relation(fields: [organizationId, endpointId], references: [organizationId, id], onDelete: Cascade, map: "webhook_deliveries_endpoint_same_org_fk")
+
+  attempts WebhookAttempt[]
+
+  @@id([id, createdAt])
+  @@unique([organizationId, id, createdAt], name: "webhook_delivery_tenant_key")
+  /// The fan-out race guard. It carries `created_at` because a unique on a partitioned table must
+  /// contain the partition key, so — exactly as with `inbound_payloads` — this is a guard within
+  /// the month and not the lookup: the fan-out reads by `(endpoint_id, event_id)` first.
+  @@unique([organizationId, endpointId, eventId, createdAt], name: "webhook_delivery_event_key")
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([organizationId, endpointId, createdAt(sort: Desc)])
+  @@index([organizationId, status, createdAt(sort: Desc)])
+  @@index([organizationId, endpointId, eventId])
+  @@map("webhook_deliveries")
+}
+
+/// One attempt at one delivery (`FR-API-4`'s "delivery log with response body/status").
+///
+/// Its own table rather than a JSONB array on the delivery: an array that grows is a read-then-write
+/// on a row several workers may be touching, and "what did the endpoint answer the third time" is a
+/// question somebody debugging an integration actually asks. Not partitioned; the composite FK
+/// carries the parent's `created_at` because the parent is.
+model WebhookAttempt {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  deliveryId        String   @map("delivery_id") @db.Uuid
+  /// The other half of the partitioned parent's key.
+  deliveryCreatedAt DateTime @map("delivery_created_at") @db.Timestamptz(6)
+
+  attemptNo    Int     @map("attempt_no")
+  statusCode   Int?    @map("status_code")
+  /// How long the endpoint took, which is how a workspace discovers its own server is the problem.
+  durationMs   Int     @map("duration_ms")
+  responseBody String? @map("response_body")
+  /// Set when there was no answer at all: a timeout, a refused connection, a blocked address.
+  error        String?
+
+  attemptedAt DateTime @default(now()) @map("attempted_at") @db.Timestamptz(6)
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  delivery     WebhookDelivery @relation(fields: [organizationId, deliveryId, deliveryCreatedAt], references: [organizationId, id, createdAt], onDelete: Cascade, map: "webhook_attempts_delivery_same_org_fk")
+
+  @@unique([organizationId, id], name: "webhook_attempt_tenant_key")
+  /// One row per attempt, so a retried job cannot double-log the same attempt.
+  @@unique([organizationId, deliveryId, attemptNo], name: "webhook_attempt_number_key")
+  @@index([organizationId, deliveryId, attemptNo])
+  @@map("webhook_attempts")
+}
+
+enum WebhookDeliveryStatus {
+  pending
+  succeeded
+  failed
+  exhausted
+
+  @@map("webhook_delivery_status")
 }

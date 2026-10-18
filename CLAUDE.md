@@ -679,3 +679,29 @@ prisma migrate deploy` after generating a migration.
 Per `docs/implementation-roadmap.md`: what was completed, files changed, database changes, API
 changes, UI changes, tests run, unresolved issues, and the single recommended next step. Never
 report something as done that is not done.
+
+- **Writing a module into a directory that already exists can silently delete a route.**
+  `modules/webhooks/` held the **inbound** email webhook controller since Phase 3 step 7; writing
+  the outbound webhook module's `webhooks.module.ts` over it removed `POST /webhooks/email` from
+  the app — no error, no failing unit test, just an endpoint the provider posts to that answers 404.
+  The route-authorization sweep caught it, because its fixture enumerates every declared route and
+  the count dropped. Before writing into an existing module directory, read what is already there;
+  a module file is a registry, and overwriting a registry loses whatever it registered.
+- **A CHECK's mirror can be false even when the constraint is right.**
+  `webhook_deliveries_pending_is_untried` refuses `pending` with a non-zero attempt count, which is
+  a contradiction. The mirror — "anything not pending has been attempted" — reads just as sensibly
+  and is wrong: a delivery whose endpoint was switched off between the fan-out and the attempt is
+  abandoned as `exhausted` having never been sent, and the first version of the constraint made that
+  honest state unrepresentable, so the service had to write a lie or fail. Write the direction that
+  is a contradiction, not the biconditional that merely sounds symmetrical — the same lesson as the
+  two payments CHECKs that together made a refund impossible.
+- **A closed `<details>` has no `innerText`.** A browser check asserting against the body a webhook
+  delivery was signed with found an empty string, because the payload is behind a
+  `<summary>`. Click the summary first (or read the node's `textContent` through
+  `evaluate`); `innerText` is what is _rendered_, and a collapsed disclosure renders nothing.
+- **`pkill`/`pgrep -f main.ts` matches the worker and the scheduler too.** `ROLE=worker` is in the
+  parent shell's environment, not in the child's argv, so every one of the three dev processes
+  appears as `node … src/main.ts` and a pattern kill aimed at the API takes all three down. The
+  symptom is a feature that worked a minute ago answering as though the queue were empty. Capture
+  each pid when starting it, or match on the full command line including the env the process was
+  started with (`ps -eo pid,args` plus `/proc/<pid>/environ`), and restart all three after any kill.
