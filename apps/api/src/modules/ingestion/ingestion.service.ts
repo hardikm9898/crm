@@ -2,6 +2,7 @@ import { createHmac } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import {
   AppError,
+  applyFieldMapping,
   buildDisplayName,
   customFieldKeyFor,
   dedupeHash,
@@ -16,6 +17,8 @@ import {
   validateCustomValues,
   withPlatformScope,
   type CountryCode,
+  type FieldMapping,
+  type IngestChannel,
   type IngestionStage,
 } from '@leados/shared';
 import type { Logger } from 'pino';
@@ -26,14 +29,53 @@ import { LOGGER } from '../../infra/observability/logger.module.js';
 import { requestStore } from '../../infra/http/request-store.js';
 import { FieldRegistryService } from '../custom-fields/field-registry.service.js';
 import { LeadsService } from '../leads/leads.service.js';
-import type { AuthenticatedCaller } from './ingest-auth.service.js';
 import type { PublicLeadInput } from './ingestion.dto.js';
+import { publicLeadSchema } from './ingestion.dto.js';
 
 /** How long a stored response answers a replay. Long enough for a client's retries, not forever. */
 const IDEMPOTENCY_TTL_HOURS = 48;
 
 /** The endpoint an idempotency key is scoped to, so the same key elsewhere is a different key. */
 const PUBLIC_LEAD_ENDPOINT = 'POST /public/leads';
+
+/**
+ * Who a capture is attributed to, which is as much as this pipeline needs to know about the caller.
+ *
+ * Narrower than `AuthenticatedCaller` on purpose: the public lead API authenticates a key, an
+ * integration connection authenticates a signature against a secret we minted, and a third door
+ * will authenticate something else again. What they have in common is a workspace and, sometimes, a
+ * credential row — and a pipeline that took the whole authenticated caller could not be reached by
+ * the second door without inventing an API key for it.
+ */
+export interface CaptureAttribution {
+  readonly organizationId: string;
+  readonly apiKeyRowId: string | null;
+}
+
+/** What `capture` needs beyond the payload, and what each door varies. */
+export interface CaptureOptions {
+  /** The bytes the signature was computed over. Hashed for the dedupe key, never re-serialised. */
+  readonly rawBody: string;
+  readonly idempotencyKey: string | undefined;
+  readonly headers: Record<string, string>;
+  /** Which door. Defaults to the public lead API's own. */
+  readonly channel?: IngestChannel;
+  /** The endpoint an idempotency key is scoped to. One per door, or two doors share a key space. */
+  readonly endpoint?: string;
+  /** The connection that brought it in, when a provider did rather than a key. */
+  readonly integrationConnectionId?: string | null;
+  /**
+   * The sender's field names mapped onto ours, applied **inside** this pipeline.
+   *
+   * Here rather than at the caller, because the stored payload must be what arrived — the
+   * never-lose store is worthless if it holds our interpretation of somebody's payload rather than
+   * their payload — and because the mapped result then goes through the same `publicLeadSchema`
+   * and the same mapper as every other capture.
+   */
+  readonly mapping?: readonly FieldMapping[];
+  /** Values a connection supplies when the payload does not, such as its own source name. */
+  readonly defaults?: Record<string, unknown>;
+}
 
 /** What a capture answers, whether it was accepted now or replayed from before. */
 export interface IngestResult {
@@ -85,23 +127,20 @@ export class IngestionService {
    * over, and the parsed payload is what the mapper reads.
    */
   async capture(
-    caller: AuthenticatedCaller,
-    payload: PublicLeadInput,
-    options: {
-      rawBody: string;
-      idempotencyKey: string | undefined;
-      headers: Record<string, string>;
-    },
+    caller: CaptureAttribution,
+    payload: Record<string, unknown>,
+    options: CaptureOptions,
   ): Promise<IngestResult> {
     const request = requestStore.get();
-    const key =
-      options.idempotencyKey?.trim() || derivedIdempotencyKey('public_api', options.rawBody);
+    const channel: IngestChannel = options.channel ?? 'public_api';
+    const endpoint = options.endpoint ?? PUBLIC_LEAD_ENDPOINT;
+    const key = options.idempotencyKey?.trim() || derivedIdempotencyKey(channel, options.rawBody);
     const requestHash = dedupeHash(options.rawBody);
 
     // ── A replay, answered before anything is written again ─────────────────
     const replay = await this.inTenant(caller.organizationId, async () =>
       this.db.client.idempotencyKey.findFirst({
-        where: { endpoint: PUBLIC_LEAD_ENDPOINT, key },
+        where: { endpoint, key },
       }),
     );
     if (replay) {
@@ -134,8 +173,12 @@ export class IngestionService {
         data: {
           id: payloadId,
           organizationId: caller.organizationId,
-          channel: 'public_api',
+          channel,
           apiKeyId: caller.apiKeyRowId,
+          integrationConnectionId: options.integrationConnectionId ?? null,
+          // Exactly what arrived, in the sender's own field names. The mapping is applied below,
+          // to a copy: a never-lose store holding our interpretation of a payload cannot answer
+          // "what did they actually send us", which is the only question it exists for.
           rawBody: payload as never,
           headers: options.headers as never,
           // The signature was verified before this method was reached; recorded so a payload read
@@ -152,8 +195,9 @@ export class IngestionService {
     });
 
     try {
+      const ours = this.applyMapping(payload, options);
       const mapped = await this.inTenant(caller.organizationId, async () =>
-        this.mapPayload(payload),
+        this.mapPayload(ours),
       );
       const capture = await this.inTenant(caller.organizationId, async () =>
         this.leads.create(mapped.input as never),
@@ -179,7 +223,7 @@ export class IngestionService {
         status: attached ? 'duplicate' : 'processed',
         leadId: capture.id,
       });
-      await this.remember(caller.organizationId, key, requestHash, result);
+      await this.remember(caller.organizationId, endpoint, key, requestHash, result);
       this.logger.info(
         { payloadId, leadId: capture.id, attached, unmapped: mapped.unmapped },
         'public lead API capture',
@@ -495,6 +539,50 @@ export class IngestionService {
     }
   }
 
+  /**
+   * Somebody else's field names as ours, checked against the schema the public endpoint publishes.
+   *
+   * Three things happen here that would each be a bug somewhere else:
+   *
+   *  * **The keys no mapping entry named are kept**, under the mapped values. `FR-CAP-5`'s
+   *    one-click custom field is driven by the unmapped keys of a stored payload, so a mapping that
+   *    dropped them would make that feature unreachable for every mapped provider — and the mapper
+   *    below absorbs a key that has since become a field, which is the other half of the same
+   *    feature.
+   *  * **The connection's own defaults go underneath both.** A connection named "Partner site"
+   *    supplies that source for a payload that does not name one; a payload that does name one
+   *    wins, because the sender knows more about one lead than the connection does about all of
+   *    them.
+   *  * **The result is parsed by `publicLeadSchema`**, the same schema the public endpoint's pipe
+   *    applies. A mapping that writes a 300-character city, or a `valueMinor` of "lots", is a
+   *    refusal at the validate stage with the field named — not a Prisma error about a column
+   *    width, and not a lead silently stored with a field missing.
+   */
+  private applyMapping(
+    payload: Record<string, unknown>,
+    options: CaptureOptions,
+  ): PublicLeadInput {
+    if (!options.mapping || options.mapping.length === 0) {
+      return { ...(options.defaults ?? {}), ...payload } as PublicLeadInput;
+    }
+    const result = applyFieldMapping(payload, options.mapping);
+    const kept: Record<string, unknown> = { ...(options.defaults ?? {}) };
+    for (const key of result.unmapped) kept[key] = payload[key];
+    const candidate = { ...kept, ...result.mapped };
+
+    const parsed = publicLeadSchema.safeParse(candidate);
+    if (!parsed.success) {
+      throw AppError.validation('The mapped payload is not something we can accept', [
+        ...parsed.error.issues.slice(0, 10).map((issue) => ({
+          field: issue.path.join('.') || 'payload',
+          code: 'INVALID_MAPPED_VALUE',
+          message: issue.message,
+        })),
+      ]);
+    }
+    return parsed.data;
+  }
+
   // ── The mapper ────────────────────────────────────────────────────────────
 
   /**
@@ -791,6 +879,7 @@ export class IngestionService {
 
   private async remember(
     organizationId: string,
+    endpoint: string,
     key: string,
     requestHash: string,
     result: IngestResult,
@@ -801,7 +890,7 @@ export class IngestionService {
           id: newId(),
           organizationId,
           key,
-          endpoint: PUBLIC_LEAD_ENDPOINT,
+          endpoint,
           requestHash,
           responseStatus: result.status === 'created' ? 201 : 200,
           responseBody: result as never,

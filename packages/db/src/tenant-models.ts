@@ -109,6 +109,11 @@ export const TENANT_MODELS = [
   // `inbound_payloads` is: a request whose key resolves to no workspace has no workspace to file it
   // under, so it is never written here at all rather than written with a null.
   'ApiLog',
+  // Phase 4, step 6 — the integration framework. All three are tenant-scoped: a connection is a
+  // workspace's credential, and a cursor or a health check belongs to the connection that made it.
+  'IntegrationConnection',
+  'SyncCursor',
+  'IntegrationHealthCheck',
 ] as const;
 
 export type TenantModel = (typeof TENANT_MODELS)[number];

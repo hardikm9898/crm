@@ -842,7 +842,7 @@ message search (`FR-VIEW-1`).
 | `provider_events`           | **Inbound idempotency ledger.** org, `provider`, `external_event_id`, `event_type`, `received_at`, `processed_at?`, `status`, `raw JSONB`. `UNIQUE (organization_id, provider, external_event_id)` (`FR-WA-6`)                                |
 | `integration_connections`   | org, `provider (whatsapp_cloud                                                                                                                                                                                                                | meta_ads  | google_ads                                                                                                                                                                            | google_analytics                                                                                                                         | search_console | razorpay | stripe                                                                                                                                                     | smtp      | telephony_x)`, `external_account_id`, `credentials_encrypted BYTEA`, `key_version`, `scopes`, `status (connected | degraded                                                                                                                                                       | error | revoked)`, `last_success_at`, `last_error_at`, `last_error`, `expires_at?`, `connected_by_id`, `settings JSONB` |
 | `sync_cursors`              | connection_id, `resource`, `cursor`, `last_synced_at`, `state JSONB`                                                                                                                                                                          |
-| `integration_health_checks` | connection_id, `checked_at`, `status`, `latency_ms`, `detail JSONB`                                                                                                                                                                           |
+| `integration_health_checks` | connection_id, `checked_at`, `outcome (ok \| degraded \| unauthorized \| unreachable)`, `latency_ms?`, `detail JSONB`                                                                                                                         |
 | `outbox_events`             | **Transactional outbox.** org?, `event_name`, `event_id UUID UQ`, `aggregate_type`, `aggregate_id`, `payload JSONB`, `occurred_at`, `published_at?`, `attempts`, `error?`. Index `(published_at NULLS FIRST, occurred_at)` for the dispatcher |
 | `idempotency_keys`          | org, `key`, `endpoint`, `request_hash`, `response_status`, `response_body JSONB`, `expires_at`. `UNIQUE (organization_id, endpoint, key)` (`FR-API-5`)                                                                                        |
 
@@ -1005,6 +1005,66 @@ message search (`FR-VIEW-1`).
 > this key may do across the product", because the permission catalogue already is that column's
 > vocabulary — and no column for whose authority it carries, because a key acts as
 > `created_by_id`'s member with that member's _current_ grants, resolved per request.
+
+> **Amendment, 2026-10-19 (implementation, Phase 4 step 6 — the integration framework).**
+> `integration_connections`, `sync_cursors` and `integration_health_checks` are built as specified
+> above, with six changes
+> ([ADR-0034](./decisions/ADR-0034-a-provider-is-a-registry-entry-and-an-adapter.md)):
+>
+> - **`provider` is `TEXT`, not an enum**, where §8 listed nine values. A provider arrives with an
+>   adapter, and a Postgres enum would make every new connector a migration — on a table whose whole
+>   purpose is to be extended. The vocabulary lives in `INTEGRATION_PROVIDERS` (`@leados/shared`),
+>   the service refuses anything not in it, and `integration_connections_provider_is_a_key` keeps
+>   the column to a registry key shape (`^[a-z][a-z0-9_]{1,40}$`) rather than prose. `status` **is**
+>   an enum, because its four values are what the screen and the transition table both branch on,
+>   and a fifth would be a row nothing could read.
+> - **`credentials_encrypted` is `TEXT`, not `BYTEA`.** It holds an `EncryptionService` envelope
+>   (`v1.<key version>.<iv>.<tag>.<ciphertext>`, dot-separated, base64url), the same format
+>   `api_keys.secret_encrypted` and `webhook_endpoints.secret_encrypted` hold, bound to the row's own
+>   id as AAD so a ciphertext moved to another connection does not decrypt.
+>   `integration_connections_credentials_encrypted` refuses a value that is not an envelope **and**
+>   refuses one that still begins `sk_` or `whsec_` — which is exactly what storing the credential as
+>   the provider gave it looks like. `key_version` is what makes a master-key rotation a
+>   re-encryption pass rather than a reconnection of every integration.
+> - **It gained `name`, `field_mappings` and `disconnected_at`.** `name` because a provider may be
+>   connected for a stated purpose ("Partner site") and that name appears on the leads it brings in.
+>   `field_mappings JSONB` is the "generic mapping templates" the phase scope names: an array of
+>   `{ source, target, transform? }`, guarded by `integration_connections_mappings_are_a_list`,
+>   because a mapping stored as `{}` would read as "no mapping" to code that iterates it and as "a
+>   mapping" to code that checks for the key. `disconnected_at` makes a disconnect **soft**:
+>   `inbound_payloads` references the connection that brought each lead in, so a hard delete would
+>   either orphan that history or refuse the delete and make a mistyped connection permanent.
+> - **One _live_ connection per provider per workspace**, through a hand-written partial unique
+>   index — `integration_connections_live_provider (organization_id, provider) WHERE
+>   disconnected_at IS NULL`. A plain unique would stop a workspace ever reconnecting a provider it
+>   had disconnected, which is the commonest thing anybody does to an integration. Prisma cannot
+>   express a partial unique, so this is one more object its next diff would drop.
+> - **Four more CHECKs, each written in the one direction that is a contradiction.**
+>   `integration_connections_disconnected_is_not_connected` is a `CASE`: a disconnected connection
+>   cannot still be `connected`. The mirror ("a live connection is never disconnected") is about a
+>   column that is already NULL, and a biconditional over two statuses is how the payments pair made
+>   a refund impossible. `integration_health_checks_ok_was_timed` says a successful probe carries a
+>   latency; its own mirror is **false**, because a provider that answered and refused is reached,
+>   timed and not working — which is why `degraded` carries a latency and only `unreachable` does
+>   not. `integration_connections_settings_are_an_object` and
+>   `sync_cursors_state_is_an_object` keep two JSONB columns to the shape their readers assume.
+> - **`inbound_payloads.integration_connection_id` is now written**, by the one door that has
+>   something to put in it: `POST /wh/{provider}/{connectionId}`. §8 has specified the column since
+>   Phase 0; step 6 is the step where "which integration sent this" became a question somebody could
+>   ask about a lead. It carries a composite FK —
+>   `inbound_payloads_connection_same_org_fk (organization_id, integration_connection_id)` with
+>   `ON DELETE RESTRICT` — which is the other reason the disconnect is soft.
+>
+> `provider_events` remains specified and unbuilt: it is the inbound idempotency ledger for a
+> provider that sends us its **own** event ids, which neither provider in this step does.
+> `integration_health_checks.status` is named `outcome` in the built table, because the four values
+> it holds (`ok`, `degraded`, `unauthorized`, `unreachable`) are what a probe **found**, and
+> `integration_connections.status` is what the connection now **is** — one column per fact, and two
+> columns called `status` meaning different things on tables joined in every query is the shape of
+> mistake `notification_preferences.quiet_hours` paid for.
+> All eleven CHECKs, the partial unique, the two further indexes and the three composite FKs are
+> listed in `packages/db/src/schema-objects.int-spec.ts`: Prisma's next diff would otherwise drop
+> every one of them.
 
 ---
 

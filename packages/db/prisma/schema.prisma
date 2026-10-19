@@ -790,10 +790,13 @@ model Organization {
   /// than `Restrict` because retiring a template from the catalogue must not be blocked by the
   /// workspaces that once used it; this is a simple FK, not one of the composite ones where
   /// `SetNull` would null a NOT NULL `organization_id`.
-  industryTemplate    IndustryTemplate? @relation(fields: [industryTemplateKey], references: [key], onDelete: SetNull)
-  industryTemplateKey String?           @map("industry_template_key")
+  industryTemplate    IndustryTemplate?        @relation(fields: [industryTemplateKey], references: [key], onDelete: SetNull)
+  industryTemplateKey String?                  @map("industry_template_key")
   apiKeys             ApiKey[]
   apiLogs             ApiLog[]
+  integrations        IntegrationConnection[]
+  syncCursors         SyncCursor[]
+  integrationChecks   IntegrationHealthCheck[]
   inboundPayloads     InboundPayload[]
   webhookEndpoints    WebhookEndpoint[]
   webhookDeliveries   WebhookDelivery[]
@@ -936,9 +939,12 @@ model Membership {
 
   slaClocks SlaClock[] @relation("sla_clock_assignee")
 
-  createdForms            Form[]            @relation("form_creator")
-  createdApiKeys          ApiKey[]          @relation("api_key_creator")
-  createdWebhookEndpoints WebhookEndpoint[] @relation("webhook_endpoint_creator")
+  createdForms            Form[]                  @relation("form_creator")
+  createdApiKeys          ApiKey[]                @relation("api_key_creator")
+  createdWebhookEndpoints WebhookEndpoint[]       @relation("webhook_endpoint_creator")
+  // Named, because `prisma format` writes this back-relation without the name and then refuses to
+  // validate the schema it just wrote — the trap `industryTemplateKey` paid for, one step along.
+  connectedIntegrations   IntegrationConnection[] @relation("integration_connector")
 
   @@unique([organizationId, id], name: "membership_tenant_key")
   @@unique([organizationId, userId])
@@ -3755,6 +3761,17 @@ model FormSubmission {
 // Phase 4, step 2 — the public lead API (docs/database-design.md §8)
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// A connected provider's standing. `degraded` is "the last check failed and we are still trying";
+/// `revoked` is the one a person must act on.
+enum IntegrationStatus {
+  connected
+  degraded
+  error
+  revoked
+
+  @@map("integration_status")
+}
+
 /// Which door a request came through. Two, because two exist.
 enum ApiSurface {
   rest
@@ -3854,8 +3871,13 @@ model InboundPayload {
   id             String @db.Uuid
   organizationId String @map("organization_id") @db.Uuid
 
-  channel  IngestChannel
-  apiKeyId String?       @map("api_key_id") @db.Uuid
+  channel                 IngestChannel
+  apiKeyId                String?       @map("api_key_id") @db.Uuid
+  /// Which connection brought it in, when a provider did rather than a key. §8 of
+  /// `database-design.md` has specified this since Phase 0; step 6 is the step that has something
+  /// to put in it, and "which integration sent this" is the first question about a lead that
+  /// arrived from somebody else's system.
+  integrationConnectionId String?       @map("integration_connection_id") @db.Uuid
 
   /// Exactly what arrived. Parsed JSON, because every channel this table serves is JSON; the
   /// signature was checked against the raw bytes before this row was written.
@@ -3883,8 +3905,9 @@ model InboundPayload {
   /// The partition key. When it arrived, which is the only instant this table can be pruned by.
   receivedAt DateTime @default(now()) @map("received_at") @db.Timestamptz(6)
 
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  apiKey       ApiKey?      @relation(fields: [organizationId, apiKeyId], references: [organizationId, id], onDelete: Restrict, map: "inbound_payloads_api_key_same_org_fk")
+  organization Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  apiKey       ApiKey?                @relation(fields: [organizationId, apiKeyId], references: [organizationId, id], onDelete: Restrict, map: "inbound_payloads_api_key_same_org_fk")
+  connection   IntegrationConnection? @relation(fields: [organizationId, integrationConnectionId], references: [organizationId, id], onDelete: Restrict, map: "inbound_payloads_connection_same_org_fk")
 
   errors IngestionError[]
 
@@ -3932,6 +3955,126 @@ model IngestionError {
   @@index([organizationId, payloadId])
   @@index([organizationId, stage, createdAt(sort: Desc)])
   @@map("ingestion_errors")
+}
+
+/// A provider this workspace has connected, and the credential it was given (Phase 4's
+/// "provider registry, credential vault, health checks").
+///
+/// The **vault** is `credentials_encrypted`: an `EncryptionService` envelope under the deployment's
+/// master key, bound to this row's own id as AAD so a ciphertext moved to another connection does
+/// not decrypt — the same construction `api_keys.secret_encrypted` and
+/// `webhook_endpoints.secret_encrypted` use, and for the same reason. `key_version` is what makes
+/// a master-key rotation a re-encryption pass rather than a reconnection of every integration.
+///
+/// `provider` is a **string**, not an enum, checked against `INTEGRATION_PROVIDERS` by the service:
+/// a provider is platform vocabulary that arrives with an adapter, and a Postgres enum would make
+/// every new connector a migration. `status` *is* an enum, because the four standings are what the
+/// screen and the probe both branch on.
+model IntegrationConnection {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  /// From `INTEGRATION_PROVIDERS`. One connection per provider per workspace, for now: a second
+  /// Postmark account is a thing nobody has asked for, and the unique is cheaper to drop than to add.
+  provider String
+  /// What a person calls it, when a provider allows more than one.
+  name     String
+
+  /// The provider's own id for the account — a Postmark server id, an ad account. Shown, not secret.
+  externalAccountId    String?  @map("external_account_id")
+  /// The AES-256-GCM envelope. Never answered by any endpoint, not even to the person who set it.
+  credentialsEncrypted String   @map("credentials_encrypted")
+  /// Which master key encrypted it, so a rotation can find the rows it still has to re-wrap.
+  keyVersion           Int      @default(1) @map("key_version")
+  /// What the credential is allowed to do at the provider, as the provider names them.
+  scopes               String[]
+  /// Non-secret configuration the registry's `settings` describe: a from-address, a stream id.
+  settings             Json     @default("{}") @db.JsonB
+  /// The provider's field names mapped onto ours (`applyFieldMapping`). Empty when not mappable.
+  fieldMappings        Json     @default("[]") @map("field_mappings") @db.JsonB
+
+  status        IntegrationStatus @default(connected)
+  /// The last time anything — a probe or real work — succeeded. Null means "never used yet".
+  lastSuccessAt DateTime?         @map("last_success_at") @db.Timestamptz(6)
+  lastErrorAt   DateTime?         @map("last_error_at") @db.Timestamptz(6)
+  /// The provider's own words, kept so a screen can show them rather than paraphrasing.
+  lastError     String?           @map("last_error")
+  /// When the credential itself expires, when the provider says.
+  expiresAt     DateTime?         @map("expires_at") @db.Timestamptz(6)
+
+  connectedById  String?   @map("connected_by_id") @db.Uuid
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  /// Soft, because `inbound_payloads` and `email_messages` reference what it brought in.
+  disconnectedAt DateTime? @map("disconnected_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connectedBy  Membership?  @relation("integration_connector", fields: [organizationId, connectedById], references: [organizationId, userId], onDelete: Restrict, map: "integration_connections_connector_same_org_fk")
+
+  cursors      SyncCursor[]
+  healthChecks IntegrationHealthCheck[]
+  payloads     InboundPayload[]
+
+  @@unique([organizationId, id], name: "integration_connection_tenant_key")
+  /// One live connection per provider per workspace. Partial, hand-written, because a disconnected
+  /// one is history somebody may need to read.
+  @@index([organizationId, provider])
+  @@index([organizationId, status])
+  @@map("integration_connections")
+}
+
+/// Where a resumable sync got to.
+///
+/// One row per connection per resource, because "campaigns" and "metrics" are fetched on different
+/// cadences and a single cursor would make a failure in one restart the other. `state` is the
+/// provider's own paging token or whatever else it needs to continue; `cursor` is the readable
+/// position a person can see on a screen.
+model SyncCursor {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  connectionId String @map("connection_id") @db.Uuid
+  /// `campaigns`, `metrics`, `leads` — the provider's resource, as the adapter names it.
+  resource     String
+
+  cursor       String?
+  state        Json      @default("{}") @db.JsonB
+  lastSyncedAt DateTime? @map("last_synced_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connection   IntegrationConnection @relation(fields: [organizationId, connectionId], references: [organizationId, id], onDelete: Cascade, map: "sync_cursors_connection_same_org_fk")
+
+  @@unique([organizationId, id], name: "sync_cursor_tenant_key")
+  @@unique([organizationId, connectionId, resource], name: "sync_cursor_resource_key")
+  @@map("sync_cursors")
+}
+
+/// One probe, recorded.
+///
+/// A history rather than a column, because "it has been failing since Tuesday" is the question an
+/// operator actually asks, and a single `last_checked_at` cannot answer it. Pruned with the
+/// retention sweep; the connection keeps its own current standing.
+model IntegrationHealthCheck {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  connectionId String   @map("connection_id") @db.Uuid
+  /// From `PROBE_OUTCOMES`: `ok`, `degraded`, `unauthorized`, `unreachable`.
+  outcome      String
+  /// How long the provider took. Null when nothing was reached at all.
+  latencyMs    Int?     @map("latency_ms")
+  /// The provider's message, and anything else worth keeping. Never a credential.
+  detail       Json     @default("{}") @db.JsonB
+  checkedAt    DateTime @default(now()) @map("checked_at") @db.Timestamptz(6)
+
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connection   IntegrationConnection @relation(fields: [organizationId, connectionId], references: [organizationId, id], onDelete: Cascade, map: "integration_health_checks_connection_same_org_fk")
+
+  @@unique([organizationId, id], name: "integration_health_check_tenant_key")
+  @@index([organizationId, connectionId, checkedAt(sort: Desc)])
+  @@map("integration_health_checks")
 }
 
 /// One row per request a **key** made to this workspace's API (`FR-API-1`, `FR-SA-4`).

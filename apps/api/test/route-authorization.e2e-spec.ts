@@ -87,6 +87,9 @@ interface Tenant {
   payloadId: string;
   webhookEndpointId: string;
   webhookDeliveryId: string;
+  // Phase 4, step 6 — the integration framework. A `generic_webhook` connection, deliberately:
+  // its provider has no probe, so building this fixture reaches nobody else's server.
+  integrationConnectionId: string;
 }
 
 let orgA: Tenant;
@@ -411,6 +414,21 @@ async function createTenant(label: string): Promise<Tenant> {
     },
   });
 
+  // An integration connection of org A's own. `generic_webhook` because its adapter has no probe:
+  // a Postmark connection would make this fixture attempt a real request to Postmark, and the
+  // sweep's `POST /integrations/:id/check` would too.
+  const integrationConnection = await call<EnvelopeBody<{ id: string }>>(ctx.app, {
+    method: 'POST',
+    url: '/api/v1/integrations',
+    payload: {
+      provider: 'generic_webhook',
+      name: `Sweep ${label}`,
+      settings: {},
+      fieldMappings: [{ source: 'full_name', target: 'name' }],
+    },
+    token,
+  });
+
   const slaClock = await ctx.db.slaClock.findFirstOrThrow({
     where: { organizationId, leadId: lead.body.data.id },
   });
@@ -483,6 +501,7 @@ async function createTenant(label: string): Promise<Tenant> {
     payloadId: payload.id,
     webhookEndpointId: webhookEndpoint.body.data.id,
     webhookDeliveryId,
+    integrationConnectionId: integrationConnection.body.data.id,
   };
 }
 
@@ -580,6 +599,21 @@ describe('every route declares its authorization', () => {
      * third is resolved by name against its own list.
      */
     'POST /public/leads/:organizationPublicKey',
+    /**
+     * An integration connection's inbound door (Phase 4 step 6). Authenticated by **two** things:
+     * the connection's id in the path, and an HMAC-SHA256 signature over the raw body in
+     * `X-Signature` whose timestamp must be within five minutes — the same construction and the
+     * same five-minute window as the public lead API, with the secret this workspace generated and
+     * showed once. There is no session, because the caller is somebody else's server.
+     *
+     * What keeps it from being a hole: the id alone is **not** a credential — an unsigned request
+     * is a 401 whatever id it carries; the id must match a **live** connection of the provider
+     * named in the path, and a disconnected one answers the same 404 as a made-up id; and nothing
+     * the caller sends chooses the pipeline, the owner or the source — the first two come from the
+     * workspace's rules and the third from the connection's own settings, resolved by name against
+     * the workspace's own list.
+     */
+    'POST /wh/:provider/:connectionId',
   ];
 
   it('gates every write outside /auth behind a permission', () => {
@@ -763,6 +797,12 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       '/webhooks/:id/test': `/webhooks/${orgA.webhookEndpointId}/test`,
       '/webhooks/:id/deliveries': `/webhooks/${orgA.webhookEndpointId}/deliveries`,
       '/webhooks/deliveries/:id/retry': `/webhooks/deliveries/${orgA.webhookDeliveryId}/retry`,
+      // Phase 4, step 6 — the integration framework
+      '/integrations/:id': `/integrations/${orgA.integrationConnectionId}`,
+      '/integrations/:id/check': `/integrations/${orgA.integrationConnectionId}/check`,
+      '/integrations/:id/preview': `/integrations/${orgA.integrationConnectionId}/preview`,
+      '/integrations/:id/rotate-secret': `/integrations/${orgA.integrationConnectionId}/rotate-secret`,
+      '/integrations/:id/disconnect': `/integrations/${orgA.integrationConnectionId}/disconnect`,
       // Phase 4, step 1 — capture forms
       '/forms/:id': `/forms/${orgA.formId}`,
       '/forms/:id/fields': `/forms/${orgA.formId}/fields`,
@@ -847,6 +887,9 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       ['customFieldSectionId', orgA.customFieldSectionId],
       ['importJobId', orgA.importJobId],
       ['exportJobId', orgA.exportJobId],
+      // A connection holds a credential, so "org B reached org A's connection" is the single worst
+      // outcome this sweep exists to rule out.
+      ['integrationConnectionId', orgA.integrationConnectionId],
     ];
 
     const problems: string[] = [];

@@ -144,6 +144,47 @@ adapter + decrypted credentials, and is the only component that can decrypt.
 > and a contract with somebody else's system, which makes it a product surface. It presents
 > `EMAIL_WEBHOOK_SECRET`, which the configuration schema requires the moment a real driver is set.
 
+> **Amendment, 2026-10-19 (implementation, Phase 4 step 6 — the integration framework).** The
+> **registry** and the **port** are built, and the port is two methods rather than the dozen §2
+> sketches ([ADR-0034](./decisions/ADR-0034-a-provider-is-a-registry-entry-and-an-adapter.md)):
+>
+> ```ts
+> interface IntegrationAdapter {
+>   readonly provider: string;
+>   validate(input: { credential: string; settings: Record<string, unknown> }): void | Promise<void>;
+>   probe?(context: AdapterContext): Promise<ProbeResult>;
+> }
+> ```
+>
+> - **`probe` is optional**, and that absence is the design. `generic_webhook` is authenticated by a
+>   secret *we* generated, so there is no endpoint of theirs to call — "is this healthy" means "has
+>   anything arrived". A `healthCheck` that returned `ok` without asking anything would be a green
+>   tick this product had not earned, and one that threw would be the lie in the contract the
+>   telephony amendment above already names. The catalogue's `probeEveryMinutes` and the presence of
+>   this method are **reconciled at boot**, so a provider that claims a cadence it cannot serve fails
+>   startup rather than producing a sweep that looks scheduled and does nothing.
+> - **`validate` runs before anything is stored**, with the credential in hand: a token that is not
+>   a token, or a from-address the provider will refuse, is a 400 at connect time rather than a
+>   connection whose first real send fails at 3am.
+> - **`capabilities` is on the provider, not the adapter.** The registry entry
+>   (`INTEGRATION_PROVIDERS` in `@leados/shared`) carries the label, the sentence somebody reads
+>   before connecting it, its capabilities, its auth kind, the settings its connect form asks for,
+>   whether it maps fields and its probe cadence — because the **screen** needs all of that and the
+>   web app may not import an adapter. A capability object on the adapter would be the same facts in
+>   a place the UI cannot reach.
+> - **`listTemplates`, `sendText`, `getDailyMetrics` and the rest are not on this port**, and will
+>   not be: those are *channel* and *ads* interfaces, which §2 is right to keep separate. This port
+>   is the framework's own — "is this credential still good" — and an adapter implements it beside
+>   whichever domain interface it also serves.
+> - **No adapter touches the database**, as §1 requires: `AdapterContext` hands it the decrypted
+>   credential, the settings and the ids, and the service persists.
+>
+> `ProviderRegistry` is built as `IntegrationRegistryService`, and `infra/providers/<key>/` is
+> `modules/integrations/adapters/<key>.adapter.ts`: an adapter here is a provider of the integrations
+> module rather than global infrastructure, because the vault it needs is deliberately reachable only
+> from inside that module.
+
+
 ---
 
 ## 3. Connection lifecycle
@@ -166,6 +207,37 @@ disconnect→ unregister webhooks, revoke tokens where supported, soft-delete th
 `integration_connections.status` drives a single UI component ("Integrations health") and the
 `FR-SA-4` platform view. A connection in `error` disables only the features that need it —
 `EntitlementGate`/`IntegrationGate` renders an explanation, the rest of the CRM keeps working.
+
+> **Amendment, 2026-10-19 (implementation, Phase 4 step 6).** The lifecycle is built as described
+> with three changes, each of which the sketch gets the wrong way round:
+>
+> - **The probe runs *after* the row is stored, not before it.** "`healthCheck()` must pass BEFORE
+>   we store (no broken connections saved)" cannot be implemented as written: the credential's
+>   ciphertext is bound to the connection's **own id** as AAD, so the row has to exist before a
+>   probe can decrypt what it is probing with. And it should not be implemented as written either —
+>   a provider having a bad minute would make connecting impossible, and the person pasting the
+>   token would read a 500 as "it did not save". So `connect` stores, probes immediately, swallows
+>   the probe's own failure, and answers the connection with the outcome already on it. A workspace
+>   therefore *can* hold a connection that has never worked, which is the honest state and the one
+>   the screen says out loud ("Never worked — last failed …").
+> - **A revoked credential is `revoked`, not `error`.** §3 maps "auth failure / revoked token" to
+>   `status=error`, which leaves the enum's fourth value unused and conflates "somebody must
+>   reconnect this" with "the provider is having a bad hour". Built: `unauthorized` ⇒ `revoked`
+>   immediately with no grace period, and `error` is what two consecutive transient failures
+>   produce. `needsReconnect(status)` is the single predicate the screen and the notification both
+>   read.
+> - **The notification fires on the transition, once.** "tenant admin notified with the exact
+>   reason and a reconnect CTA" is built as `integration.revoked` — not opt-out, with the provider's
+>   own words, a link to `/settings/integrations`, and the connection id in its data so the
+>   quiet-hours release sweep can drop it if somebody reconnected overnight. Notifying on **every**
+>   probe that finds a connection revoked would be six notices an hour, which is the shape of alert
+>   people mute. The platform-wide "many tenants at once" alert is not built: there is no alerting
+>   pipeline yet, and the sweep logs a count at `warn`.
+>
+> `refresh` is **not** built, because no provider here uses OAuth. `register webhooks where
+> applicable` is not built either: the one inbound provider's URL is handed to the person to paste
+> into the sending system, which is what "generic" means.
+
 
 ---
 
@@ -230,6 +302,42 @@ never logged (a pino redaction list plus a lint rule on logger calls); never inc
 `before/after` values; rotated via `key_version` with a background re-encrypt job; access to
 decryption is confined to `ProviderRegistry` and is audit-logged with the calling context.
 
+> **Amendment, 2026-10-19 (implementation, Phase 4 step 6).** The vault is built, with **one**
+> master key rather than per-organization data keys, and a different AAD
+> ([ADR-0034](./decisions/ADR-0034-a-provider-is-a-registry-entry-and-an-adapter.md)):
+>
+> ```
+> integration_connections.credentials_encrypted = 'v1.1.<iv>.<tag>.<ciphertext>'   -- dot-separated base64url TEXT
+> integration_connections.key_version           = 1
+> AAD                                           = 'integration:<connection id>'
+> ```
+>
+> - **The AAD is the row's own id**, not `organizationId|provider|keyVersion`. It is strictly
+>   narrower: the id implies the workspace and the provider, and it also stops a ciphertext being
+>   moved between **two connections of the same workspace to the same provider** — which the
+>   sketch's AAD would have allowed. It is the construction `api_keys.secret_encrypted`,
+>   `webhook_endpoints.secret_encrypted` and the MFA secret already use, which is the point: a
+>   fourth arrangement would be a fourth place to get the AAD wrong, and a wrong AAD still works on
+>   the happy path.
+> - **The envelope is `TEXT`, not `ciphertext || iv || tag` bytes**, and carries its own format and
+>   key version so a rotation can find the rows it has not re-wrapped.
+>   `integration_connections_credentials_encrypted` refuses a value that is not an envelope and
+>   refuses one that still begins `sk_` or `whsec_` — which is exactly what storing the token as the
+>   provider gave it looks like.
+> - **Per-organization data keys are deferred, not forgotten.** Envelope encryption with a data key
+>   per tenant is a KMS story and a key table; the format already carries the version field it
+>   needs, and nothing in the application changes when it arrives.
+> - **The read is confined to one service with one function.** `IntegrationVaultService.open(id, …)`
+>   takes the connection's id and nothing else, so a call site cannot pass the wrong AAD; it is not
+>   exported from the integrations module. Plaintext is never returned by any endpoint, never
+>   logged, and never in an audit `before/after` — and the presenter's `select` does not include the
+>   ciphertext either, so it cannot reach a response by somebody extending the presenter later.
+> - **What an endpoint answers is not `{ connected: true, … }`** but the connection's own standing,
+>   the provider's last words, its last success and its recent probes — the things somebody opening
+>   the screen is actually asking about. The decryption audit log is **not** built: every read is
+>   from the probe or the inbound door, both of which already record what they did.
+
+
 ---
 
 ## 6. Inbound integration catalogue
@@ -255,6 +363,42 @@ decryption is confined to `ProviderRegistry` and is audit-logged with the callin
 **The generic mapping template is the strategic piece**: `{"phone": "$.contact.mobile", "cf.budget": "$.answers[?(@.q=='budget')].value"}`.
 Most "integrate with lead platform X" requests become a saved mapping plus a webhook URL — no
 deploy, no code (Rule 1, Rule 4).
+
+> **Amendment, 2026-10-19 (implementation, Phase 4 step 6).** The **generic inbound webhook** row is
+> built, and the mapping template is dot paths with a declared transform rather than JSONPath:
+>
+> ```json
+> [
+>   { "source": "contact.full_name", "target": "name", "transform": "trim" },
+>   { "source": "contact.mobile", "target": "phone", "transform": "phone" },
+>   { "source": "answers.0.value", "target": "custom.budget" }
+> ]
+> ```
+>
+> - **An array of entries, not an object keyed by target.** `mappingProblems` can then say "two
+>   fields both write to `phone` — the one lower down would quietly win", which is the mistake an
+>   object literal makes unrepresentable by silently discarding one of them, and which a schema
+>   cannot see.
+> - **Dot paths, not JSONPath.** `$.answers[?(@.q=='budget')].value` is a filter expression, which
+>   is a query language in a JSONB column — a program nobody reviews, stored per tenant. Dot paths
+>   with numeric segments reach everything the providers this product sees actually send
+>   (`field_data.full_name`, `answers.0.value`), and what they cannot reach is a mapping somebody
+>   would have to debug anyway.
+> - **Six transforms, each earning its place from a real provider's habit**: `trim`, `lowercase`,
+>   `digits`, `phone`, `boolean`, and `none`. Ad platforms send `Full Name` as one field, phone
+>   numbers arrive with brackets, and a "yes"/"no" answer is a string that means a boolean.
+> - **`cf.budget` is spelled `custom.budget`**, the same prefix the public capture endpoint and the
+>   one-click custom field already use, and the key is checked against the workspace's own
+>   definitions by the mapper rather than by the schema.
+> - **The target list comes from the public capture schema, not the lead table.** A mapping may not
+>   write `score`, `assignedUserId` or `status`: those are the workspace's own rules, and an
+>   integration overruling them from somebody else's config file is the one thing this feature must
+>   not allow.
+> - **"No deploy, no code" is now true**, and the rest of the claim with it: a new lead vendor is a
+>   connection, a secret, a URL and a saved mapping. Meta Lead Ads and Google Ads lead forms remain
+>   Phase 4 and remain unbuilt — both need OAuth and Meta needs `provider_events`, which is the
+>   ledger for a provider that sends its own event ids.
+
 
 ---
 
@@ -288,3 +432,32 @@ Mandatory wrapper for all provider calls (`NFR-REL-3`):
 
 No changes to domain modules should be required. If a domain module must change to add a provider,
 the abstraction is wrong and the PR is rejected.
+
+
+> **Amendment, 2026-10-19 (implementation, Phase 4 step 6).** The checklist as it actually stands,
+> now that the framework exists:
+>
+> 1. **An entry in `INTEGRATION_PROVIDERS`** (`@leados/shared`): label, the sentence somebody reads
+>    before connecting it, capabilities, auth kind, the settings its connect form asks for, whether
+>    it maps fields, and its probe cadence.
+> 2. **An adapter** in `modules/integrations/adapters/`, registered in
+>    `IntegrationRegistryService`'s constructor. `validate` always; `probe` only if there is
+>    something to ask.
+> 3. **Nothing else** for the parts this step built: the screen renders the connect form from the
+>    entry, the vault seals whatever the adapter accepts, the sweep picks the provider up from its
+>    declared cadence, and the boot check fails the application if half of it is missing. A new
+>    provider needs **no migration** — `provider` is a string checked against the registry — and no
+>    new screen.
+> 4. Steps 5 and 6 of the list above stand: contract tests against the provider's own failures
+>    (auth failure, rate limit, malformed payload, duplicate delivery) and a place in the health
+>    view — which is now `/settings/integrations` and `GET /integrations/health` rather than
+>    something to add per provider.
+> 5. Step 7 stands, and is this file.
+>
+> Steps 1–4 of the original list describe a provider that also serves a **channel** or **ads**
+> interface; those interfaces are unbuilt, so "implement the interface in `infra/providers/<key>/`"
+> arrives with the first one that does. The resilience wrapper in §7 is **not** built as a shared
+> wrapper: each adapter sets its own timeout (`AbortSignal.timeout`), and the circuit breaker,
+> bulkhead and token buckets wait for a provider whose quota makes them necessary. What exists
+> instead is the thing a failed probe produces — a standing, a recorded reason, and one notification
+> — which is the degradation §7's last row asks for.

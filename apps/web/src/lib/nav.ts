@@ -131,6 +131,14 @@ export const NAV_SECTIONS: readonly NavSection[] = [
         href: '/settings/webhooks',
         permissions: ['webhook:manage'],
       },
+      // The providers this workspace holds a credential for. Beside the two surfaces it uses:
+      // somebody connecting Postmark and somebody wiring up a partner's webhook are the same
+      // person on the same afternoon.
+      {
+        label: 'Integrations',
+        href: '/settings/integrations',
+        permissions: ['integration:manage'],
+      },
       { label: 'Your security', href: '/settings/security', permissions: [] },
     ],
   },

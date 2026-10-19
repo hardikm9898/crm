@@ -220,7 +220,7 @@ can retune cadence.
 | every minute       | `notifications.release`                                               | Deliver the notifications quiet hours held, dropping the ones now out of date (`FR-NOT-3`). Built                                         |
 | every 5 min        | `sla.sweep`                                                           | At-risk → warn, breached → escalate (`FR-TSK-8`). Built; breaches handled before warnings in a tick                                       |
 | every 5 min        | `rollup.*-daily` (today's partial)                                    | Near-real-time dashboards                                                                                                                 |
-| every 10 min       | `integration.health-check`                                            | Per-connection probes → `integration_health_checks`                                                                                       |
+| every 10 min       | `integration.health-check`                                            | Per-connection probes → `integration_health_checks`. Built — on `maintenance`, see the amendment below                                     |
 | every 15 min       | `analytics.session-close`                                             | Close sessions idle > 30 min                                                                                                              |
 | hourly             | `ads.sync-metrics`                                                    | Spend/impressions/clicks                                                                                                                  |
 | hourly             | `webhook.reap-exhausted`                                              | Disable dead endpoints, alert admins                                                                                                      |
@@ -378,6 +378,33 @@ All schedules are working-hours/timezone aware where they touch humans — a fol
 > accept. Stranded rows in the default partition are reported, as the monthly job reports them.
 
 ---
+
+> **Amendment, 2026-10-19 (implementation, Phase 4 step 6).** `integration.health-check` is built,
+> on the **`maintenance`** queue rather than on `integrations`
+> ([ADR-0034](./decisions/ADR-0034-a-provider-is-a-registry-entry-and-an-adapter.md)). Four things
+> worth stating:
+>
+> - **The queue is `maintenance`, not `integrations`**, because this job is a platform-wide sweep
+>   over every tenant and shares nothing with the cursor-based sync jobs §3 groups it beside — those
+>   are per-connection, long, and resumable; this is one indexed read and a handful of short
+>   requests. The `integrations` queue arrives with the first job that actually syncs on a cursor.
+> - **The ten minutes here is "how often we look", and the catalogue decides who is asked.** Each
+>   provider declares its own `probeEveryMinutes` in `INTEGRATION_PROVIDERS`, and the sweep skips a
+>   connection whose last check is newer than that. A stored `next_probe_at` column would be a
+>   second copy of the cadence, wrong the day somebody changes the registry.
+> - **A provider with no probe is never swept.** `generic_webhook` has nothing to ask — it posts to
+>   us — so it is excluded by the query rather than probed and ignored. A provider that declares a
+>   cadence and whose adapter cannot be probed **fails at boot**, because a sweep that looks
+>   scheduled and does nothing is the silent failure this section exists to prevent.
+> - **It reads across tenants and writes inside each one.** `withPlatformScope` for the due set,
+>   then `tenantContext.run(systemPrincipal(organizationId, …), …)` for the health row, the status
+>   update and the notification — the quotation-expiry sweep's lesson, since `withPlatformScope`
+>   leaves `organizationId()` unset and `NotificationsService` takes the workspace from the context.
+>   One workspace's broken connection is caught and logged rather than ending the tick for everyone.
+>
+> The sweep notifies only on the **transition** into `revoked` (`integration.revoked`, not
+> opt-out), because a deleted credential probed every ten minutes would otherwise produce six
+> notifications an hour — the shape of alert people mute and then stop reading.
 
 ## 6. Retry, failure and DLQ
 

@@ -33,3 +33,4 @@ export * from './ingestion.js';
 export * from './webhooks.js';
 export * from './api-surface.js';
 export * from './error-catalogue.js';
+export * from './integrations.js';

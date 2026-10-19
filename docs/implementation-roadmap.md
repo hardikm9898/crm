@@ -2200,6 +2200,125 @@ endpoint needs and accepts, and the module READMEs say why it exists. And the do
 this application only — the platform admin surface (`/api/admin/v1`) is a Phase 10 application and
 is deliberately absent rather than listed as unimplemented.
 
+### Step 6 — the integration framework: a registry entry, an adapter, and a vault ✅ _(landed 2026-10-19)_
+
+Phase 4's scope line, in its own words: **provider registry, credential vault, health checks,
+generic mapping templates**. It is the layer the two ad connectors sit on, and it comes before them
+deliberately — both need a stored credential, a health check that surfaces a revoked token as a
+reconnect prompt rather than as silence, a cursor that resumes, and a mapping from somebody else's
+field names onto ours. Building the first connector without that framework is how the second one
+becomes a copy of the first.
+
+**A provider is a catalogue entry plus an adapter, and the two are reconciled at boot.**
+`INTEGRATION_PROVIDERS` carries the label, the sentence somebody reads before connecting it, the
+auth kind, the settings its form asks for and its probe cadence;
+`IntegrationRegistryService.onApplicationBootstrap` **throws** if an entry has no adapter, an adapter
+has no entry, or a provider declares a cadence its adapter cannot serve
+([ADR-0034](./decisions/ADR-0034-a-provider-is-a-registry-entry-and-an-adapter.md)). Same stance as
+"every route declares its authorization or the app does not start", and for the same reason: the
+alternative is a connect button that answers 500 the first time somebody presses it, or a sweep that
+looks scheduled and does nothing. §8 specified `provider` as a nine-value enum; it is `TEXT` checked
+against the registry, because a provider arrives with an adapter and an enum would make every
+connector a migration. **A new provider needs no migration and no new screen.**
+
+**`probe` is optional, and the provider that cannot be asked says so by not having it.**
+`generic_webhook`'s credential is a secret _we_ generated — the sender holds it and signs with it, so
+there is no endpoint of theirs to call, and "is this healthy" means "has anything arrived". A probe
+returning `ok` without asking anything would be a green tick this product had not earned; one that
+threw would be the lie in the contract `mailer.port.ts` warns about. `POST /integrations/:id/check`
+refuses for such a provider and names the mapping preview as the thing to use instead.
+
+**Four standings, one transition table, and `unauthorized` has no grace period.** `nextStatus` is
+the only thing that moves a connection, because three callers would otherwise each decide and the
+screen would disagree with itself. A refused credential is `revoked` immediately — no number of
+retries fixes a token somebody deleted — and notifies **on the transition only**, because a deleted
+credential probed every ten minutes would otherwise produce six notices an hour, which is the shape
+of alert people mute and then stop reading. `unreachable` ("nothing answered", no latency) and
+`degraded` ("answered and refused", timed) escalate identically: one is `degraded`, a second in a
+row is `error`. The notification type is not opt-out, like `webhook.disabled` and `trial.expired`,
+and it declares the new `connection_still_broken` staleness check so a notice held by quiet hours is
+dropped if somebody reconnected at 22:00.
+
+**The credential never leaves the vault.** `IntegrationVaultService` is one function that takes the
+connection's id, because the AAD is the thing worth protecting from a call site: `integration:<id>`,
+the same construction as `api_key:<id>` and `webhook:<id>`.
+`integration_connections_credentials_encrypted` refuses a value that is not an envelope **and**
+refuses one still beginning `sk_` or `whsec_` — which is exactly what storing the token as the
+provider gave it looks like. The presenter's `select` does not include the ciphertext at all, so it
+cannot reach a response by somebody extending the presenter later. The one secret answered is the
+one we mint, exactly once; a provider's own token is never echoed back, and a caller who supplies a
+secret for a `shared_secret` provider is **refused** rather than ignored.
+
+**The inbound door is the public lead API's authentication, minus the key.**
+`POST /wh/{provider}/{connectionId}` — the shape `api-architecture.md` §7 has specified since Phase
+0 and the webhooks module's note has promised since step 3. Same HMAC construction, same
+five-minute window, same refusal sentences, so an integrator who has wired one has wired the other.
+The id in the path is not a credential: an unsigned request is a 401 whatever id it carries, and a
+wrong id, a disconnected connection and a provider with no inbound door all answer the same 404.
+Because the route is `@Public()` the lookup is `withPlatformScope` — the first draft used the scoped
+client and made **every** inbound request a 500 before any signature was checked.
+
+**The mapping is applied inside the capture pipeline, not before it.** Two reasons, both
+load-bearing: the never-lose store must hold what arrived rather than our interpretation of it, and
+the mapped result then goes through the same `publicLeadSchema`, the same mapper, the same duplicate
+rules, the same SLA clock and the same timeline as every other capture. The keys no entry named are
+**kept** under the mapped values, so `FR-CAP-5`'s one-click custom field is still reachable for a
+mapped provider. And the preview runs the step it is previewing — the mapping _and_ the capture's own
+normalisation, answering the phone as it would be stored beside the phone as sent.
+
+**A disconnect is soft, and a reconnect is a new row**, because `inbound_payloads` references the
+connection that brought each lead in. The partial unique
+`integration_connections_live_provider (organization_id, provider) WHERE disconnected_at IS NULL` is
+what makes "one live connection per provider, and as many disconnected ones as a workspace has had"
+expressible at all — a plain unique would stop a workspace ever reconnecting something they had
+switched off, which is the commonest thing anybody does to an integration.
+
+**No permission backfill, for the first time in this phase.** `integration:manage` has been in the
+catalogue since Phase 1 with nothing reading it, so every existing workspace already holds it — the
+trap `payment:read`, `sla:read`, `call:read`, `call:log`, `form:read` and `form:manage` each paid for
+did not apply, and the migration written for it was deleted once that was checked rather than left
+as a no-op whose comment claimed otherwise.
+
+**Two defects found by running it rather than by reading it.** The inbound route answered 500 on
+every request, including unsigned ones, because its lookup used the tenant-scoped client on a
+`@Public()` route — found by the e2e suite's first run, and invisible to a unit test. And the
+mapping editor showed only "That field mapping cannot be used", discarding the API's own sentence
+about the row that was wrong — found in a browser, fixed by printing each refusal against its row
+and echoing the whole mapping back as JSON, because this form submits `mapSource` once per row and
+`submittedValues` keeps one value per name.
+
+**Verified.** **2 422 tests green** — 1 087 unit (597 shared, 318 web, 168 api, 4 db) and 1 335
+integration (759 api e2e, 576 across the schema-object and tenant-isolation suites) — with 61 of
+them new: **17 cases** over the shared vocabulary (the registry's own shape, the mapping engine's
+dot paths and six transforms, every transition in the status table including the one that escalates
+a provider which answers and refuses, and `custom.<key>` targets), **15 cases** over the web lib
+reconciling its hand-written copy against `@leados/shared` field for field and sentence for
+sentence, and a **29-case** e2e suite with a real in-process Postmark: a token refused with 401
+becoming `revoked` with a notification carrying the connection id, a 500 becoming `degraded` then
+`error`, a fresh token clearing it, the ciphertext never equal to the token, the secret answered
+once and never again, a signed payload becoming a lead with the connection on its stored payload
+and the sender's own field names still in it, a replay answered rather than duplicated, a mapped
+value the schema refuses recorded at the `validate` stage, the sweep skipping a connection checked a
+moment ago and probing one aged past its cadence, and the inbound door answering 404 for another
+workspace's id. The schema-object guard gained 15 constraints and 3 indexes, and the isolation suite
+a third layer for the three new tables. Then **50 HTTP checks** against a live API, worker and
+scheduler — the whole lifecycle over real sockets, because an injector cannot prove that the bytes a
+signature was computed over are the bytes Fastify received — and **38 browser checks** driving the
+screen from the navigation to a disconnect.
+
+**Carried forward, named rather than assumed:** `sync_cursors` is built and **unused** — neither
+provider here syncs on a cursor, and the table ships now because its composite FK and unique belong
+with this migration rather than a later one. There is **no OAuth**: nothing performs an
+authorization-code exchange, so `INTEGRATION_AUTH_KINDS` has two values and an `oauth` kind no
+adapter implements would be a promise the connect screen made on our behalf. `provider_events`
+stays specified and unbuilt — it is the ledger for a provider that sends its own event ids, which
+neither of these does and both ad connectors will. A connection's `scopes` column is written empty,
+because inventing values for a provider that does not report them is a column nobody could trust.
+And the health history is pruned by nothing yet: it grows with one row per connection per ten
+minutes, which is the retention sweep's job in Phase 9.
+
+---
+
 ---
 
 ## Phase 5 — WhatsApp
@@ -2377,36 +2496,50 @@ partially landed, with the specific gaps named.
 ## Immediate next step
 
 _This section names the next step only; what each landed step actually did is in the step entries
-above. Last reviewed 2026-10-19, after Phase 4 step 5._
+above. Last reviewed 2026-10-19, after Phase 4 step 6._
 
 **Phase 3 is finished, exit criteria included** — tasks, reminders, the overdue sweeps, SLA
 policies and working-hours-aware clocks, escalation, the manager board, the notification centre
 with quiet hours, the Today workspace, oversight, calls with click-to-call, and the email adapter
 with bounce → suppression.
 
-**Phase 4 is five steps in, and five of its six exit criteria are met and tested.** Capture forms;
+**Phase 4 is six steps in, and five of its six exit criteria are met and tested.** Capture forms;
 the public lead API with its never-lose payload store, replay, test tool and one-click custom
 field; outbound webhooks retried from their own row with SSRF refused twice; the key-authenticated
-REST surface where a key acts as the member who created it, with `api_logs` as the integration's
-own request log; and now the published contract — an OpenAPI 3.1 document generated from the
-routing table and the validators that run, a server-rendered reference and errors page, and a
-committed artifact whose diff is classified so an unintended breaking change fails the build.
+REST surface where a key acts as the member who created it, with `api_logs` as the integration's own
+request log; the published contract, generated from the validators that run and committed so an
+unintended breaking change fails the build; and now the integration framework — a provider registry
+reconciled against its adapters at boot, a credential vault sealed to each row, per-connection
+health checks that turn a refused token into one reconnect prompt, generic field mappings applied
+inside the one capture pipeline, and an inbound door at `POST /wh/{provider}/{connectionId}`
+authenticated by the same signature the public lead API verifies.
 
-**The next step is the integration framework** (`FR-INT-1`…`FR-INT-4`): the provider registry, the
-credential vault, per-connection health checks and the generic mapping templates, which is what
-`integration_connections`, `sync_cursors`, `integration_health_checks` and `provider_events` were
-designed for in Phase 0 and what the two ad-platform connectors then sit on. It comes before Meta
-Lead Ads and Google Ads deliberately: both need a stored credential that refreshes, a cursor that
-resumes, a health check that surfaces a revoked token as a reconnect prompt, and a mapping from
-somebody else's field names to ours — and building the first connector without that framework is
-how the second one becomes a copy of the first.
+**The next step is the phase's fifth exit criterion: Meta Lead Ads and Google Ads lead forms.** Both
+are now additions rather than new subsystems — a registry entry, an adapter, and a `fieldMappings`
+default each — and the framework decides what is left to build for them:
 
-Then the phase's **fifth exit criterion**: Meta Lead Ads and Google Ads lead forms, where a
-duplicate webhook delivery must produce one lead (the inbound idempotency ledger is already built)
-and a revoked token must surface as a reconnect prompt rather than as silence.
+- **Meta needs `provider_events`**, the inbound idempotency ledger §8 has specified since Phase 0
+  and which nothing has needed yet: Meta sends its own `leadgen_id` and retries deliveries, and
+  "Meta's duplicate/retried webhook deliveries produce exactly one lead" is the headline test. The
+  `X-Hub-Signature-256` scheme is a second verification shape beside the one `verifySignature`
+  already implements, and the lead itself is **fetched** by `leadgen_id` rather than arriving in the
+  payload — the first adapter that reads from a provider rather than being read by one.
+- **Both need OAuth**, which this step deliberately does not have: an authorization-code exchange, a
+  refresh token, and a sweep that renews before `expires_at`. That is a third `INTEGRATION_AUTH_KIND`
+  and a `refresh` method on the port — an addition to the framework, not a replacement, as
+  [ADR-0034](./decisions/ADR-0034-a-provider-is-a-registry-entry-and-an-adapter.md) says in its
+  consequences.
+- **Google Ads lead forms** verify a shared secret inside the payload plus an address allowlist,
+  which is a third shape again; and its campaign and metric syncs are the first users of
+  `sync_cursors`, which is why that table is already built.
+- **A revoked token must surface as a reconnect prompt rather than as silence** — the other half of
+  that exit criterion — and that half is **done**: `integration.revoked` is a notification with a
+  link, `nextStatus` makes `unauthorized` immediate, and the screen prints what the provider said.
 
-Carried forward from Phase 4 step 5: there is no "try it" sandbox and no generated client package
-(`packages/contracts`), both named in §11 of `api-architecture.md` and both deliberately absent —
-the web app calls the API through its own typed loaders, reconciled by a spec. There is no
-hand-written description per endpoint: the document says what each one needs and accepts, and the
-module READMEs say why it exists.
+Carried forward from Phase 4 step 6: `sync_cursors` is built and unused; there is no OAuth and no
+`provider_events`; a connection's `scopes` is written empty; and `integration_health_checks` is
+pruned by nothing until the retention sweep in Phase 9. Carried forward from step 5: there is no
+"try it" sandbox and no generated client package (`packages/contracts`), both named in §11 of
+`api-architecture.md` and both deliberately absent — the web app calls the API through its own typed
+loaders, reconciled by a spec. There is no hand-written description per endpoint: the document says
+what each one needs and accepts, and the module READMEs say why it exists.

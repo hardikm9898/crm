@@ -159,6 +159,14 @@ export const PERMISSION_CATALOGUE: readonly PermissionDefinition[] = [
     supportsScope: false,
   },
   {
+    /**
+     * In the catalogue since Phase 1, with nothing reading it until the integration framework
+     * arrived — which is why step 6 needed **no** permission backfill, unlike every step before it
+     * that added a key. Connecting a provider is holding its credential, and a connection's field
+     * mapping decides where every lead it brings in lands. There is no `integration:read` beside
+     * it on purpose: the only things to read are a credential's health and a mapping, and somebody
+     * who may read those may change them.
+     */
     key: P.INTEGRATION_MANAGE,
     module: 'integrations',
     description: 'Connect and disconnect integrations',

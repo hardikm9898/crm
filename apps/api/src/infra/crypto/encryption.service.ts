@@ -62,6 +62,17 @@ export class EncryptionService {
     ].join('.');
   }
 
+  /**
+   * Which master key an envelope written now is under.
+   *
+   * Exposed because a row that stores a ciphertext also stores the version that produced it
+   * (`integration_connections.key_version`), and a caller writing that column from a literal `1`
+   * is a second answer to one question — the one that would be wrong on the day the key rotates.
+   */
+  get currentKeyVersion(): number {
+    return this.keyVersion;
+  }
+
   decrypt(payload: string, aad: string): string {
     const parts = payload.split('.');
     if (parts.length !== 5) throw new DecryptionError('malformed payload');

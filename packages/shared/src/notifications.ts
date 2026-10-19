@@ -47,6 +47,14 @@ export const STALENESS_CHECKS = [
   'task_still_open',
   'clock_still_running',
   'call_still_open',
+  /**
+   * Whether the connection this notice is about is still in a state a person has to fix.
+   *
+   * A credential refused at 21:40 and reconnected at 22:10 must not produce a 09:00 notice saying
+   * it was refused — that reads as the product being a day behind, which is worse than never
+   * having held the message.
+   */
+  'connection_still_broken',
 ] as const;
 export type StalenessCheck = (typeof STALENESS_CHECKS)[number];
 
@@ -185,6 +193,26 @@ export const NOTIFICATION_TYPES: readonly NotificationTypeSpec[] = [
     respectsQuietHours: true,
     // A fact about the past: the endpoint was disabled, and it is still disabled in the morning.
     staleness: 'never',
+  },
+  {
+    type: 'integration.revoked',
+    label: 'A connected provider that refused us',
+    hint: 'When a provider rejects the credential you connected — the email or the leads it carries have stopped. These cannot be turned off.',
+    group: 'workspace',
+    defaultChannels: ['in_app'],
+    /**
+     * Not opt-out, for the same reason as the disabled endpoint above: a refused credential means
+     * something the workspace depends on has stopped, silently, and the one message that explains
+     * it must not be suppressible by the person who would have to reconnect it.
+     */
+    optOut: false,
+    respectsQuietHours: true,
+    /**
+     * Unlike the disabled endpoint, this one **can** stop mattering while it is held: somebody
+     * pastes a fresh token at 22:00 and the probe goes green. A warning delivered at 09:00 about a
+     * credential that already works is exactly the staleness the release sweep exists to catch.
+     */
+    staleness: 'connection_still_broken',
   },
   {
     type: 'trial.expired',

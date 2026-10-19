@@ -79,6 +79,16 @@ export const SCHEDULES: readonly ScheduleDefinition[] = [
     description: 'Forget the idempotency keys whose replay window has closed',
   },
   {
+    queue: QUEUES.MAINTENANCE,
+    jobName: JOBS.INTEGRATION_HEALTH_CHECK,
+    // Every ten minutes, which is the cadence the one probeable provider declares. The sweep
+    // decides per connection whether its own interval has elapsed, so this is "how often we look"
+    // and the catalogue is "how often each is asked" — one definition of the cadence, in the place
+    // a provider is described.
+    cron: '*/10 * * * *',
+    description: 'Probe the connected providers whose credential can be checked',
+  },
+  {
     queue: QUEUES.WEBHOOKS,
     jobName: JOBS.WEBHOOK_RETRY_SWEEP,
     // Every minute, because the first retry is ten seconds out and a schedule whose first step is

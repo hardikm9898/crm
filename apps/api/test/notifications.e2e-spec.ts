@@ -231,6 +231,9 @@ describe('what a new member starts with', () => {
     expect(settings.types.map((entry) => entry.type).sort()).toEqual([
       // Phase 3 step 6: the nudge that asks what happened on a call nobody recorded.
       'call.outcome_missing',
+      // Phase 4 step 6: a connected provider that refused our credential. Also not opt-out, and
+      // for the same reason: the email or the leads it carries have stopped, silently.
+      'integration.revoked',
       'lead.unassigned_pool',
       'member.joined',
       'sla.at_risk',
@@ -241,7 +244,7 @@ describe('what a new member starts with', () => {
       // Phase 4 step 3: an endpoint the product stopped posting to. Like `trial.expired`, it
       // cannot be switched off — an integration disabled silently is one nobody can diagnose.
       'webhook.disabled',
-    ]);
+    ].sort());
     for (const entry of settings.types) {
       // A switch with no sentence under it is a switch somebody turns off to find out what it does.
       expect(entry.label, entry.type).toBeTruthy();

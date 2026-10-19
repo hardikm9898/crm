@@ -83,6 +83,13 @@ export const JOBS = {
    */
   API_LOG_PARTITIONS: 'maintenance.api-log-partitions',
   /**
+   * Every connected provider's credential, asked whether it still works
+   * (`docs/queue-event-architecture.md` §5). On `maintenance` because it is a platform-wide sweep,
+   * and a sweep rather than a job per connection because the thing it reads is a row: a tick
+   * missed while a worker restarts costs ten minutes, not a probe.
+   */
+  INTEGRATION_HEALTH_CHECK: 'integration.health-check',
+  /**
    * One event, fanned out to the endpoints that asked for it (`FR-API-4`). Reads the subscribed
    * endpoints and writes a `webhook_deliveries` row per endpoint — the store that makes a delivery
    * survive a worker restart, exactly as `inbound_payloads` does inbound.

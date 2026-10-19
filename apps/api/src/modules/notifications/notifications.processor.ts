@@ -320,6 +320,25 @@ export class NotificationReleaseProcessor implements JobProcessor<JobPayload> {
       return call.deletedAt !== null || call.status !== 'dialing';
     }
 
+    if (spec.staleness === 'connection_still_broken') {
+      const connectionId =
+        typeof payload['connectionId'] === 'string' ? payload['connectionId'] : null;
+      if (!connectionId) return false;
+      const connection = await withPlatformScope(
+        'notifications: re-check integration connection',
+        async () =>
+          this.db.client.integrationConnection.findFirst({
+            where: { id: connectionId },
+            select: { status: true, disconnectedAt: true },
+          }),
+      );
+      // A connection somebody reconnected while the notice was held has nothing left to ask for.
+      // One that was disconnected outright is also nothing to act on: the person did the other
+      // thing the message offered.
+      if (!connection) return true;
+      return connection.disconnectedAt !== null || connection.status === 'connected';
+    }
+
     const clockId = typeof payload['clockId'] === 'string' ? payload['clockId'] : null;
     if (!clockId) return false;
     const clock = await withPlatformScope('notifications: re-check clock', async () =>

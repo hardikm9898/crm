@@ -673,6 +673,61 @@ prisma migrate deploy` after generating a migration.
   saved" — the import's lie in a new place. It now normalises through `normalizeContactNumbers` and
   refuses through `buildDisplayName`, the same two functions the write path uses, and answers
   `wouldCreate` honestly with the phone as stored beside the phone as sent.
+- **A `@Public()` route may not read a tenant table with the scoped client.** The integration
+  framework's inbound door (`POST /wh/:provider/:connectionId`) looked its connection up with
+  `db.client`, which throws `TenantContextMissingError` when no principal has been set — so **every**
+  inbound request answered 500, including the unsigned ones, before any signature was checked, and
+  the generic `INTERNAL_ERROR` body said nothing about why. The URL is the only thing that says which
+  workspace such a request belongs to, exactly as the public lead API's path key is, so the read is
+  `withPlatformScope('why', …)` and the write that follows enters
+  `tenantContext.run(systemPrincipal(organizationId, newId()), …)`.
+- **`prisma format` writes a back-relation without its `@relation` name, and then refuses to
+  validate the schema it just wrote.** Declaring `connectedIntegrations` on `Membership` for a named
+  relation produced an unnamed `integrationConnections IntegrationConnection[]`, and the next
+  `validate` failed on the relation it had added itself. Read what `format` added — it has done this
+  twice now, the other time omitting an `@map` and an `onDelete`.
+- **A partial unique is what lets something be reconnected.** `integration_connections_live_provider`
+  is `(organization_id, provider) WHERE disconnected_at IS NULL`. A plain unique on
+  `(organization_id, provider)` reads identically in a schema review and stops a workspace **ever**
+  reconnecting a provider they disconnected, which is the commonest thing anybody does to an
+  integration. Prisma cannot express it, so it is hand-written and therefore in
+  `schema-objects.int-spec.ts`.
+- **A permission in the catalogue since Phase 1 needs no backfill, and a migration that says it does
+  is worse than none.** `integration:manage` was already granted in every workspace, because owner
+  and admin templates grant the whole catalogue at creation — so the grant migration written out of
+  habit inserted nothing and its comment claimed otherwise. Check
+  `SELECT count(*) FROM role_permissions WHERE permission_key = '…'` before writing one; a verified
+  no-op migration is removed (directory **and** its `_prisma_migrations` row in every database),
+  not left in place.
+- **A form whose fields repeat cannot echo its submission through `submittedValues`.** It keeps one
+  value per name, so a mapping editor submitting `mapSource` once per row came back from a refusal
+  with the last row and silently dropped the others — the same trap the webhook event picker paid
+  for with checkboxes. Echo the whole collection explicitly (`values: { mapping: JSON.stringify(…) }`)
+  and rebuild the rows from it.
+- **A screen that shows only the API's summary message discards the sentence somebody can act on.**
+  The mapping editor rendered "That field mapping cannot be used" and dropped the per-entry details —
+  including "two fields both write to phone, the one lower down would quietly win", which is the
+  problem a schema cannot see. Field errors arrive as `[{ field, code, message }]`; print each one
+  against the row it names. Same lesson as `ERROR_COPY`, one layer in.
+- **A CHECK that pairs an outcome with a measurement must be written in the one direction that is a
+  contradiction.** `integration_health_checks_ok_was_timed` says a successful probe carries a
+  latency. Its mirror ("a failed probe carries none") reads just as sensibly and is **false**: a
+  provider that answered and refused is reached, timed and not working. That is why the outcome
+  vocabulary has both `degraded` (answered, timed) and `unreachable` (nothing answered, no latency),
+  and why the two escalate identically — the difference between them is diagnostic, not a severity.
+- **An e2e assertion straight after a request can race a buffered writer.** `api_logs` is flushed
+  after a second or a hundred rows, so a check reading it immediately passed or failed on how long
+  the assertions above it happened to take. Call `ApiLogService.flush()` first; a buffer is a design
+  decision, not something to sleep around.
+- **A test that reaches for a fixture another test created depends on the order the file runs in.**
+  The inbound-door tests used the connection a different `describe` had connected, so they passed in
+  a full run and failed under `-t`. Three of them also read the "already connected" 422 instead of
+  the refusal they were testing, because the workspace they used already had that provider. Give
+  such a group its own workspace and its own subject.
+- **The envelope lifts `items` into `data`, so a list's `data` is the array.** A test reading
+  `data.items` from `GET /integrations` read `undefined` and failed with "cannot read properties of
+  undefined" rather than with anything about the endpoint. `{ items, pagination }` becomes
+  `data: [...]` with `meta.pagination` beside it.
 
 ## Reporting work
 

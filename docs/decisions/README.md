@@ -38,3 +38,4 @@ A decision is changed by writing a **new** ADR that supersedes the old one, neve
 | [0031](./ADR-0031-an-outbound-webhook-is-retried-from-its-own-row-and-never-follows-a-redirect.md) | An outbound webhook is retried from its own row, and never follows a redirect   | Accepted |
 | [0032](./ADR-0032-a-key-acts-as-the-member-who-created-it.md)                                      | A key acts as the member who created it, and its requests are logged by the day | Accepted |
 | [0033](./ADR-0033-the-published-contract-is-generated-from-the-validators-that-run.md)             | The published contract is generated from the validators that run                | Accepted |
+| [0034](./ADR-0034-a-provider-is-a-registry-entry-and-an-adapter.md)                                | A provider is a registry entry and an adapter, and its credential never leaves the vault | Accepted |

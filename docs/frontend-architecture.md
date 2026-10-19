@@ -799,3 +799,56 @@ chips and no query string, a wrong secret appearing among the refusals with its 
 sentence agreeing with what was sent, the "refused only" filter narrowing the list **and** the
 figure above it to the same number, and the picker offering none of the twenty-three scopes that
 administer access or money.
+
+### 10.11 As built — Phase 4, step 6 (the providers this workspace is connected to)
+
+One new screen, `/settings/integrations`, behind `integration:manage`, in Workspace beside the two
+API surfaces it sits between: somebody connecting Postmark and somebody wiring up a partner's
+website are the same person on the same afternoon.
+
+- **The connect form is rendered from the registry, so a new provider needs no new UI.** The
+  provider picker, its one-sentence summary, whether it asks for a token or generates one, and the
+  settings it needs all come from `GET /integrations/providers`. A screen with a hand-written form
+  per provider is the second description of a catalogue, and the one that is wrong is always the one
+  nothing runs.
+- **The provider select is `key={...}` + `defaultValue`, not a controlled `value`.** A refused
+  submission otherwise loses the chosen provider: a controlled `value` did not fix it either,
+  because React re-creates the options in the same commit and the DOM keeps `selectedIndex: 0`.
+  Remounting exactly when the echo changes, and leaving it alone while somebody is choosing, is the
+  arrangement the payment-method select paid for.
+- **The secret and the inbound address are shown together, once.** They are useless apart — a
+  sender needs the address and the secret in one copy-and-paste — and both come from
+  `ActionState.data` rather than the server tree, because no endpoint will answer the secret again.
+  A refresh loses it, which is the behaviour and not a defect; the address stays on the row.
+- **The signing a sender has to write is on the screen**, in a disclosure, with the address already
+  in it. The commonest reason a sender's requests are all refused is not knowing exactly which
+  bytes to hash — the outbound snippet's argument, in reverse.
+- **The mapping editor prints the refusal against the row it belongs to.** The API answers one
+  sentence per bad entry, and the one that matters most ("two fields both write to phone — the one
+  lower down would quietly win") is the problem a schema cannot see. A screen showing only the
+  summary would discard exactly the sentence somebody can act on, which is the `ERROR_COPY` lesson
+  one layer in.
+- **The mapping is echoed back as JSON on a refusal.** This form submits `mapSource` once per row,
+  so `submittedValues` — which keeps one value per name — would return the last row and silently
+  drop the others. The editor rebuilds its rows from the echo, so correcting the one row the API
+  named saves the lot.
+- **The target box is a free input with a `datalist`, not a `<select>`.** `custom.<key>` is a
+  target the registry cannot enumerate, and it is the commonest reason somebody opens this editor.
+- **"Check it now" appears only where there is something to ask.** For an inbound connection the
+  API refuses it with the mapping preview as the alternative, and the button is not rendered at all:
+  a button that is certain to fail is worse than its absence.
+- **Every figure totals the filter, not the page**, and the headline sentence carries a plural per
+  clause and omits what is zero — including the nought in "0 need your attention", which becomes
+  "all working".
+
+**One suite, 38 checks**, all green: finding the screen in the navigation, connecting a provider
+from the registry-rendered form, reading the secret and the address out of the card and finding them
+gone after a refresh, the row's name and standing as **text**, the signing snippet with the real
+address in it and no pasted secret, two mapping rows added and saved and read back out of their
+`value` attributes, a mapping that would write `score` refused against its own row with every typed
+row surviving the refusal, correcting that row saving the lot, a partner posting a signed lead to
+the address the screen gave and the row then reading "Last worked just now" with the figure above it
+agreeing, the lead itself appearing with the phone the mapping tidied, the secret rotated and the
+old one refused at once, the connection disconnected and off the screen, a Postmark connection
+refused for an unverified sender address with the name and the provider still in the form, and the
+whole screen at 375 px with **0 px** of sideways scroll.

@@ -167,6 +167,16 @@ const REQUIRED_INDEXES = [
   // The retry sweep's index, keyed on `next_attempt_at` alone for the same reason: it runs across
   // every workspace, and an `IN` over two statuses cannot be the leading column of a range scan.
   'webhook_deliveries_due',
+  // The integration framework. `integration_connections_live_provider` is partial so a workspace
+  // that disconnected a provider can connect it again — a plain unique would make the second
+  // attempt impossible — and `integration_connections_live` is keyed without `organization_id`
+  // because the probe sweep runs across every tenant.
+  'integration_connections_live_provider',
+  'integration_connections_live',
+  // The referencing side of the payload's new FK. Postgres indexes the referenced side only, and
+  // `RESTRICT` on a partitioned table means disconnecting a provider would scan every partition —
+  // the lesson `leads_duplicate_of` paid for.
+  'inbound_payloads_connection',
 ];
 
 /**
@@ -553,6 +563,23 @@ const REQUIRED_CONSTRAINTS = [
   'api_logs_measurements_sane',
   'api_logs_success_has_no_error_code',
   'api_logs_api_key_same_org_fk',
+  // The integration framework (Phase 4 step 6). The vault's CHECK is the one that matters: it
+  // refuses a credential stored as the provider gave it, which is the mistake ADR-0030 found late.
+  'integration_connections_credentials_encrypted',
+  'integration_connections_key_version_positive',
+  'integration_connections_provider_is_a_key',
+  'integration_connections_disconnected_is_not_connected',
+  'integration_connections_mappings_are_a_list',
+  'integration_connections_settings_are_an_object',
+  'integration_health_checks_outcome_is_known',
+  'integration_health_checks_latency_sane',
+  'integration_health_checks_ok_was_timed',
+  'sync_cursors_resource_is_a_key',
+  'sync_cursors_state_is_an_object',
+  'integration_connections_connector_same_org_fk',
+  'sync_cursors_connection_same_org_fk',
+  'integration_health_checks_connection_same_org_fk',
+  'inbound_payloads_connection_same_org_fk',
 ];
 
 describe('hand-written indexes survive every generated migration', () => {

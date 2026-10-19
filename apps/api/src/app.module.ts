@@ -41,6 +41,7 @@ import { FormsModule } from './modules/forms/forms.module.js';
 import { OpenApiModule } from './infra/openapi/openapi.module.js';
 import { ApiKeysModule } from './modules/api-keys/api-keys.module.js';
 import { IngestionModule } from './modules/ingestion/ingestion.module.js';
+import { IntegrationsModule } from './modules/integrations/integrations.module.js';
 import { WebhooksModule } from './modules/webhooks/webhooks.module.js';
 import { SlaModule } from './modules/sla/sla.module.js';
 import { TodayModule } from './modules/today/today.module.js';
@@ -95,6 +96,7 @@ import { HealthModule } from './modules/health/health.module.js';
     FormsModule,
     IngestionModule,
     ApiKeysModule,
+    IntegrationsModule,
     WebhooksModule,
     SlaModule,
     TodayModule,

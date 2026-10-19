@@ -68,6 +68,12 @@
       "name": "Ingestion"
     },
     {
+      "name": "Integration Inbound"
+    },
+    {
+      "name": "Integrations"
+    },
+    {
       "name": "Leads"
     },
     {
@@ -12925,6 +12931,874 @@
           }
         },
         "x-leados-permission": "api_key:manage",
+        "security": [
+          {
+            "sessionToken": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      }
+    },
+    "/api/v1/integrations": {
+      "get": {
+        "operationId": "Integrations_list",
+        "tags": [
+          "Integrations"
+        ],
+        "summary": "List",
+        "description": "Needs the `integration:manage` permission.\n\n```bash\ncurl -X GET \"http://localhost:4000/api/v1/integrations\" \\\n  -H \"Authorization: Bearer $LEADOS_KEY_ID.$LEADOS_SECRET\"\n```",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 60
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "connected",
+                "degraded",
+                "error",
+                "revoked"
+              ]
+            }
+          },
+          {
+            "name": "disconnected",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The envelope, with this endpoint’s payload in `data`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          }
+        },
+        "x-leados-permission": "integration:manage",
+        "security": [
+          {
+            "sessionToken": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      },
+      "post": {
+        "operationId": "Integrations_connect",
+        "tags": [
+          "Integrations"
+        ],
+        "summary": "Connect",
+        "description": "Needs the `integration:manage` permission.\n\n```bash\ncurl -X POST \"http://localhost:4000/api/v1/integrations\" \\\n  -H \"Authorization: Bearer $LEADOS_KEY_ID.$LEADOS_SECRET\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"provider\":\"…\",\"name\":\"…\"}'\n```",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "provider": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 60
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  },
+                  "credential": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4000
+                  },
+                  "externalAccountId": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "settings": {
+                    "default": {},
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "maxLength": 60
+                    },
+                    "additionalProperties": {}
+                  },
+                  "fieldMappings": {
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "source": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "target": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 140
+                        },
+                        "transform": {
+                          "type": "string",
+                          "enum": [
+                            "none",
+                            "trim",
+                            "lowercase",
+                            "digits",
+                            "phone",
+                            "boolean"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "source",
+                        "target"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "provider",
+                  "name"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The envelope, with this endpoint’s payload in `data`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          }
+        },
+        "x-leados-permission": "integration:manage",
+        "security": [
+          {
+            "sessionToken": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      }
+    },
+    "/api/v1/integrations/{id}": {
+      "get": {
+        "operationId": "Integrations_findOne",
+        "tags": [
+          "Integrations"
+        ],
+        "summary": "Find one",
+        "description": "Needs the `integration:manage` permission.\n\n```bash\ncurl -X GET \"http://localhost:4000/api/v1/integrations/{id}\" \\\n  -H \"Authorization: Bearer $LEADOS_KEY_ID.$LEADOS_SECRET\"\n```",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The resource’s id. A malformed id answers 404, exactly as another workspace’s id does."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The envelope, with this endpoint’s payload in `data`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          }
+        },
+        "x-leados-permission": "integration:manage",
+        "security": [
+          {
+            "sessionToken": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      },
+      "patch": {
+        "operationId": "Integrations_update",
+        "tags": [
+          "Integrations"
+        ],
+        "summary": "Update",
+        "description": "Needs the `integration:manage` permission.\n\n```bash\ncurl -X PATCH \"http://localhost:4000/api/v1/integrations/{id}\" \\\n  -H \"Authorization: Bearer $LEADOS_KEY_ID.$LEADOS_SECRET\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"name\":\"…\"}'\n```",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The resource’s id. A malformed id answers 404, exactly as another workspace’s id does."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  },
+                  "credential": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4000
+                  },
+                  "externalAccountId": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 200
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "settings": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "maxLength": 60
+                    },
+                    "additionalProperties": {}
+                  },
+                  "fieldMappings": {
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "source": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "target": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 140
+                        },
+                        "transform": {
+                          "type": "string",
+                          "enum": [
+                            "none",
+                            "trim",
+                            "lowercase",
+                            "digits",
+                            "phone",
+                            "boolean"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "source",
+                        "target"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The envelope, with this endpoint’s payload in `data`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          }
+        },
+        "x-leados-permission": "integration:manage",
+        "security": [
+          {
+            "sessionToken": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      }
+    },
+    "/api/v1/integrations/{id}/check": {
+      "post": {
+        "operationId": "Integrations_check",
+        "tags": [
+          "Integrations"
+        ],
+        "summary": "Check",
+        "description": "Needs the `integration:manage` permission.\n\n```bash\ncurl -X POST \"http://localhost:4000/api/v1/integrations/{id}/check\" \\\n  -H \"Authorization: Bearer $LEADOS_KEY_ID.$LEADOS_SECRET\"\n```",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The resource’s id. A malformed id answers 404, exactly as another workspace’s id does."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The envelope, with this endpoint’s payload in `data`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          }
+        },
+        "x-leados-permission": "integration:manage",
+        "security": [
+          {
+            "sessionToken": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      }
+    },
+    "/api/v1/integrations/{id}/disconnect": {
+      "post": {
+        "operationId": "Integrations_disconnect",
+        "tags": [
+          "Integrations"
+        ],
+        "summary": "Disconnect",
+        "description": "Needs the `integration:manage` permission.\n\n```bash\ncurl -X POST \"http://localhost:4000/api/v1/integrations/{id}/disconnect\" \\\n  -H \"Authorization: Bearer $LEADOS_KEY_ID.$LEADOS_SECRET\"\n```",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The resource’s id. A malformed id answers 404, exactly as another workspace’s id does."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The envelope, with this endpoint’s payload in `data`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          }
+        },
+        "x-leados-permission": "integration:manage",
+        "security": [
+          {
+            "sessionToken": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      }
+    },
+    "/api/v1/integrations/{id}/preview": {
+      "post": {
+        "operationId": "Integrations_preview",
+        "tags": [
+          "Integrations"
+        ],
+        "summary": "Preview",
+        "description": "Needs the `integration:manage` permission.\n\n```bash\ncurl -X POST \"http://localhost:4000/api/v1/integrations/{id}/preview\" \\\n  -H \"Authorization: Bearer $LEADOS_KEY_ID.$LEADOS_SECRET\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"payload\":{}}'\n```",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The resource’s id. A malformed id answers 404, exactly as another workspace’s id does."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "payload": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "maxLength": 200
+                    },
+                    "additionalProperties": {}
+                  },
+                  "fieldMappings": {
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "source": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "target": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 140
+                        },
+                        "transform": {
+                          "type": "string",
+                          "enum": [
+                            "none",
+                            "trim",
+                            "lowercase",
+                            "digits",
+                            "phone",
+                            "boolean"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "source",
+                        "target"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "payload"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The envelope, with this endpoint’s payload in `data`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          }
+        },
+        "x-leados-permission": "integration:manage",
+        "security": [
+          {
+            "sessionToken": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      }
+    },
+    "/api/v1/integrations/{id}/rotate-secret": {
+      "post": {
+        "operationId": "Integrations_rotateSecret",
+        "tags": [
+          "Integrations"
+        ],
+        "summary": "Rotate secret",
+        "description": "Needs the `integration:manage` permission.\n\n```bash\ncurl -X POST \"http://localhost:4000/api/v1/integrations/{id}/rotate-secret\" \\\n  -H \"Authorization: Bearer $LEADOS_KEY_ID.$LEADOS_SECRET\"\n```",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The resource’s id. A malformed id answers 404, exactly as another workspace’s id does."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The envelope, with this endpoint’s payload in `data`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          }
+        },
+        "x-leados-permission": "integration:manage",
+        "security": [
+          {
+            "sessionToken": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      }
+    },
+    "/api/v1/integrations/health": {
+      "get": {
+        "operationId": "Integrations_health",
+        "tags": [
+          "Integrations"
+        ],
+        "summary": "Health",
+        "description": "Needs the `integration:manage` permission.\n\n```bash\ncurl -X GET \"http://localhost:4000/api/v1/integrations/health\" \\\n  -H \"Authorization: Bearer $LEADOS_KEY_ID.$LEADOS_SECRET\"\n```",
+        "parameters": [
+          {
+            "name": "connectionId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "degraded",
+                "unauthorized",
+                "unreachable"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The envelope, with this endpoint’s payload in `data`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          }
+        },
+        "x-leados-permission": "integration:manage",
+        "security": [
+          {
+            "sessionToken": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      }
+    },
+    "/api/v1/integrations/providers": {
+      "get": {
+        "operationId": "Integrations_providers",
+        "tags": [
+          "Integrations"
+        ],
+        "summary": "Providers",
+        "description": "Needs the `integration:manage` permission.\n\n```bash\ncurl -X GET \"http://localhost:4000/api/v1/integrations/providers\" \\\n  -H \"Authorization: Bearer $LEADOS_KEY_ID.$LEADOS_SECRET\"\n```",
+        "responses": {
+          "200": {
+            "description": "The envelope, with this endpoint’s payload in `data`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          }
+        },
+        "x-leados-permission": "integration:manage",
         "security": [
           {
             "sessionToken": []
@@ -26254,6 +27128,63 @@
           },
           "400": {
             "$ref": "#/components/responses/Error400"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/v1/wh/{provider}/{connectionId}": {
+      "post": {
+        "operationId": "IntegrationInbound_receive",
+        "tags": [
+          "Integration Inbound"
+        ],
+        "summary": "Receive",
+        "description": "**Public** — no credential needed.\n\n```bash\ncurl -X POST \"http://localhost:4000/api/v1/wh/{provider}/{connectionId}\"\n```",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "connectionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The envelope, with this endpoint’s payload in `data`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
           },
           "422": {
             "$ref": "#/components/responses/Error422"

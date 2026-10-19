@@ -442,6 +442,41 @@ CRUD /imports (upload → map → validate → run)  GET /imports/{id} | /import
 POST /exports                       GET /exports/{id}
 ```
 
+> **Amendment, 2026-10-19 (implementation, Phase 4 step 6).** The integration surface as built:
+>
+> ```
+> GET  /integrations/providers        the catalogue, with each provider's own connect form
+> GET  /integrations                  the live connections (?disconnected=true for the history)
+> GET  /integrations/{id}             one, with its last ten health checks
+> POST /integrations                  connect: { provider, name, credential?, settings, fieldMappings? }
+> PATCH /integrations/{id}            rename, re-settle, paste a new credential
+> POST /integrations/{id}/check       probe it now (422 for a provider there is nothing to ask)
+> POST /integrations/{id}/preview     what a payload would become, through the mapping and the
+>                                     capture's own normalisation; persists nothing
+> POST /integrations/{id}/rotate-secret   a new inbound secret (shared-secret providers only)
+> POST /integrations/{id}/disconnect  soft, and keeps everything it brought in
+> GET  /integrations/health           every probe, newest first
+> ```
+>
+> Four deviations from the sketch above, each deliberate:
+>
+> - **`POST /integrations` rather than `POST /integrations/{provider}/connect`.** The provider is a
+>   field of the thing being created, not a path segment: `CRUD /integrations` and a connect route
+>   under a provider prefix are two spellings of one create, and the second would make
+>   `/integrations/{id}` and `/integrations/{provider}/…` ambiguous to the global UUID pipe.
+> - **There is no `DELETE`.** A disconnect is soft, because `inbound_payloads` references the
+>   connection that brought each lead in; a hard delete would orphan that history or make a mistyped
+>   connection permanent.
+> - **`/test` is two endpoints, because it was two questions.** `/check` probes the credential;
+>   `/preview` runs a payload through the field mapping. Naming both "test" would mean one endpoint
+>   that did different things per provider, and for `generic_webhook` — which has nothing to probe —
+>   the honest answer to "test this" is the preview.
+> - **All of it behind `integration:manage`, with no read-only view.** A connection holds a
+>   credential and its mapping decides where every lead it brings in lands; somebody who may read
+>   those may change them. It is not in `API_GRANTABLE_PERMISSIONS`, so **a key cannot manage
+>   integrations** — a credential that can mint credentials is a privilege escalation left in
+>   somebody else's config file.
+
 > **Amendment, 2026-10-05 (implementation).** The import and export surface as built:
 >
 > ```
@@ -941,6 +976,39 @@ return `401` and are counted per connection with alerting on spikes.
 >   carries a partial unique index on `(provider, provider_message_id)` that does it; a second
 >   store before a second provider exists would be two records of one fact. It arrives with the
 >   integration framework in Phase 4, which is where connection ids come from.
+
+> **Amendment, 2026-10-19 (implementation, Phase 4 step 6 — the integration framework).** The
+> `/wh/{provider}/{connectionId}` shape above is now built, with one route and one provider
+> ([ADR-0034](./decisions/ADR-0034-a-provider-is-a-registry-entry-and-an-adapter.md)):
+>
+> | Route                                          | Provider          | Verification                                              |
+> | ---------------------------------------------- | ----------------- | --------------------------------------------------------- |
+> | `POST /api/v1/wh/generic_webhook/{connectionId}` | Any sender      | `X-Signature: t=…,v1=…` HMAC over the **raw** body, ±5 min |
+>
+> - **The signature is the whole authentication**, with the secret this workspace generated and was
+>   shown once. It is the same construction, the same five-minute window, the same
+>   `verifySignature`, and the same refusal sentences as the public lead API (ADR-0030), so an
+>   integrator who has wired one has wired the other and reads the same explanation when it is
+>   wrong. The connection id in the path is **not** a credential: an unsigned request is a 401
+>   whatever id it carries.
+> - **The tenant is resolved from the path's connection id**, as the paragraph above requires, and
+>   the "cross-check the payload's account id" half does not apply to a provider that sends no
+>   account id. The provider segment is part of the lookup rather than decoration: a request posted
+>   to the right id under the wrong provider's path answers 404.
+> - **A wrong id, a disconnected connection and a provider with no inbound door all answer the same
+>   404.** The shape of an id must not become an oracle, which is the rule `UuidParamPipe` exists
+>   for.
+> - **`201` for a new lead, `200` for a duplicate or a replay**, as §6 promises for the public
+>   endpoint, with `Idempotency-Key` honoured in **its own** key space: the same key sent to both
+>   doors is two requests, not a replay of one.
+> - **Still no `provider_events`.** The idempotency here is `inbound_payloads` and
+>   `idempotency_keys`, which `FR-API-5` already specifies and which this door reuses by going
+>   through `IngestionService.capture`. `provider_events` is the ledger for a provider that sends
+>   its **own** event ids; this one does not, and the two ad connectors will.
+> - **The body has no schema**, deliberately: the mapping is what turns `Full Name` into
+>   `firstName`, so a schema here would be the feature's opposite. The mapped result is then parsed
+>   by `publicLeadSchema` inside the capture pipeline, and a value it refuses is a `400` naming the
+>   field with an `ingestion_errors` row at the `validate` stage.
 
 ---
 

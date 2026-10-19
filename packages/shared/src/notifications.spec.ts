@@ -51,11 +51,16 @@ describe('the type registry', () => {
   });
 
   it('exempts only the notices whose suppression would hide a broken product (FR-NOT-3)', () => {
-    // Two, and both for the same reason: every write is refused once a trial expires, and an
-    // auto-disabled webhook endpoint has silently stopped receiving everything. Somebody who had
-    // switched either off would experience the consequence with no explanation.
+    // Three, and all for the same reason: every write is refused once a trial expires, an
+    // auto-disabled webhook endpoint has silently stopped receiving everything, and a refused
+    // credential has silently stopped sending it. Somebody who had switched any of them off would
+    // experience the consequence with no explanation.
     const required = NOTIFICATION_TYPES.filter((spec) => !spec.optOut).map((spec) => spec.type);
-    expect([...required].sort()).toEqual(['trial.expired', 'webhook.disabled']);
+    expect([...required].sort()).toEqual([
+      'integration.revoked',
+      'trial.expired',
+      'webhook.disabled',
+    ]);
   });
 
   it('declares every channel the design names, and says which can be sent today', () => {

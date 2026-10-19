@@ -3447,3 +3447,155 @@ describe('layer 3 — the request log (FR-API-1, FR-SA-4)', () => {
     expect(theirs.all.every((entry) => entry.organizationId === h.orgB.organizationId)).toBe(true);
   });
 });
+
+describe('layer 3 — the integration framework (Phase 4 step 6)', () => {
+  /** A connection in whichever workspace is asked for, with a plausible envelope. */
+  async function connection(organizationId: string, over: Record<string, unknown> = {}) {
+    const id = newId();
+    await h.unscoped.integrationConnection.create({
+      data: {
+        id,
+        organizationId,
+        provider: 'generic_webhook',
+        name: `Partner ${id.slice(-8)}`,
+        credentialsEncrypted: `v1.1.${id.slice(-8)}.${id.slice(-8)}.${id.slice(-8)}`,
+        scopes: [],
+        ...over,
+      } as never,
+    });
+    return id;
+  }
+
+  it('refuses a credential stored as the provider gave it', async () => {
+    // The mistake ADR-0030 found late, in a new table: a token kept as plaintext because it
+    // "needs to be sent as-is".
+    await expect(
+      connection(h.orgA.organizationId, { credentialsEncrypted: 'sk_postmark_server_token' }),
+    ).rejects.toThrow(/integration_connections_credentials_encrypted/i);
+    await expect(
+      connection(h.orgA.organizationId, { credentialsEncrypted: 'whsec_not_this_either' }),
+    ).rejects.toThrow(/integration_connections_credentials_encrypted/i);
+  });
+
+  it('refuses a provider key that is prose, and a key version below one', async () => {
+    await expect(connection(h.orgA.organizationId, { provider: 'Meta Ads' })).rejects.toThrow(
+      /integration_connections_provider_is_a_key/i,
+    );
+    await expect(connection(h.orgA.organizationId, { keyVersion: 0 })).rejects.toThrow(
+      /integration_connections_key_version_positive/i,
+    );
+  });
+
+  it('allows one live connection per provider, and a second after the first is disconnected', async () => {
+    await connection(h.orgA.organizationId, { provider: 'postmark' });
+    await expect(
+      connection(h.orgA.organizationId, { provider: 'postmark' }),
+    ).rejects.toThrow(/integration_connections_live_provider|unique/i);
+
+    // Disconnecting has to free the provider, or a workspace that switched Postmark off could
+    // never switch it back on — which is what a plain `@@unique` would have done.
+    await h.unscoped.integrationConnection.updateMany({
+      where: { organizationId: h.orgA.organizationId, provider: 'postmark' },
+      data: { disconnectedAt: new Date(), status: 'revoked' },
+    });
+    await expect(
+      connection(h.orgA.organizationId, { provider: 'postmark' }),
+    ).resolves.toBeTruthy();
+
+    // And another workspace was never blocked by ours.
+    await expect(connection(h.orgB.organizationId, { provider: 'postmark' })).resolves.toBeTruthy();
+  });
+
+  it('refuses a disconnected connection that still claims to be connected', async () => {
+    await expect(
+      connection(h.orgA.organizationId, { provider: 'disconnected_test', disconnectedAt: new Date() }),
+    ).rejects.toThrow(/integration_connections_disconnected_is_not_connected/i);
+  });
+
+  it('refuses a mapping stored as an object and settings stored as a list', async () => {
+    // A mapping as `{}` reads as "no mapping" to code that iterates and as "a mapping" to code
+    // that checks for the key.
+    await expect(
+      connection(h.orgA.organizationId, { provider: 'mapping_test', fieldMappings: {} }),
+    ).rejects.toThrow(/integration_connections_mappings_are_a_list/i);
+    await expect(
+      connection(h.orgA.organizationId, { provider: 'settings_test', settings: [] }),
+    ).rejects.toThrow(/integration_connections_settings_are_an_object/i);
+  });
+
+  it('refuses a cursor or a health check pointed at another workspace’s connection', async () => {
+    const theirs = await connection(h.orgB.organizationId, { provider: 'cross_tenant_test' });
+    await expect(
+      h.unscoped.syncCursor.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          connectionId: theirs,
+          resource: 'leads',
+        } as never,
+      }),
+    ).rejects.toThrow(/sync_cursors_connection_same_org_fk|foreign key/i);
+
+    await expect(
+      h.unscoped.integrationHealthCheck.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          connectionId: theirs,
+          outcome: 'ok',
+          latencyMs: 12,
+        } as never,
+      }),
+    ).rejects.toThrow(/integration_health_checks_connection_same_org_fk|foreign key/i);
+  });
+
+  it('insists a probe that succeeded was timed, and refuses an outcome nothing can read', async () => {
+    const mine = await connection(h.orgA.organizationId, { provider: 'probe_test' });
+    const check = (over: Record<string, unknown>) =>
+      h.unscoped.integrationHealthCheck.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          connectionId: mine,
+          outcome: 'ok',
+          latencyMs: 20,
+          ...over,
+        } as never,
+      });
+    await expect(check({ outcome: 'flaky' })).rejects.toThrow(
+      /integration_health_checks_outcome_is_known/i,
+    );
+    await expect(check({ latencyMs: -1 })).rejects.toThrow(
+      /integration_health_checks_latency_sane/i,
+    );
+    await expect(check({ outcome: 'ok', latencyMs: null })).rejects.toThrow(
+      /integration_health_checks_ok_was_timed/i,
+    );
+    // The honest state the mirror would have forbidden: nothing reached, so nothing timed.
+    await expect(check({ outcome: 'unreachable', latencyMs: null })).resolves.toBeTruthy();
+  });
+
+  it('allows one cursor per resource per connection, and scopes the lot', async () => {
+    const mine = await connection(h.orgA.organizationId, { provider: 'cursor_test' });
+    const cursor = () =>
+      h.unscoped.syncCursor.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          connectionId: mine,
+          resource: 'leads',
+        } as never,
+      });
+    await expect(cursor()).resolves.toBeTruthy();
+    await expect(cursor()).rejects.toThrow(/sync_cursor_resource_key|unique/i);
+
+    const theirs = await tenantContext.run(h.orgB.principal, async () => ({
+      connection: await h.db.integrationConnection.findFirst({ where: { id: mine } }),
+      cursors: await h.db.syncCursor.findMany({}),
+      checks: await h.db.integrationHealthCheck.findMany({}),
+    }));
+    expect(theirs.connection).toBeNull();
+    expect(theirs.cursors.every((row) => row.organizationId === h.orgB.organizationId)).toBe(true);
+    expect(theirs.checks.every((row) => row.organizationId === h.orgB.organizationId)).toBe(true);
+  });
+});
