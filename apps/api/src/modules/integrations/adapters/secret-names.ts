@@ -23,6 +23,16 @@ export const META_APP_SECRET = 'appSecret';
 export const META_PAGE_TOKEN = 'pageAccessToken';
 
 /**
+ * `whatsapp_cloud` — the app secret that signs a delivery, and the token that reaches the Graph API.
+ *
+ * The app secret shares Meta Lead Ads' name deliberately: it is the same field of the same app, and
+ * a workspace connecting both pastes the same value twice. Two names for one secret would read as
+ * two secrets.
+ */
+export const WHATSAPP_APP_SECRET = META_APP_SECRET;
+export const WHATSAPP_ACCESS_TOKEN = 'accessToken';
+
+/**
  * The name a `shared_secret` provider's own generated secret is filed under.
  *
  * One function, because the service mints it and the adapter reads it. A provider that generates

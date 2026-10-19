@@ -795,6 +795,10 @@ model Organization {
   apiKeys             ApiKey[]
   apiLogs             ApiLog[]
   integrations        IntegrationConnection[]
+  whatsappAccounts    WhatsAppAccount[]
+  whatsappNumbers     WhatsAppNumber[]
+  conversations       Conversation[]
+  messages            Message[]
   syncCursors         SyncCursor[]
   integrationChecks   IntegrationHealthCheck[]
   providerEvents      ProviderEvent[]
@@ -946,6 +950,12 @@ model Membership {
   // Named, because `prisma format` writes this back-relation without the name and then refuses to
   // validate the schema it just wrote — the trap `industryTemplateKey` paid for, one step along.
   connectedIntegrations   IntegrationConnection[] @relation("integration_connector")
+  // Named by hand, every one of them: `prisma format` writes a back-relation without its
+  // `@relation` name and then refuses to validate the schema it just wrote.
+  whatsappDefaultFor      WhatsAppNumber[]        @relation("whatsapp_default_agent")
+  assignedConversations   Conversation[]          @relation("conversation_assignee")
+  closedConversations     Conversation[]          @relation("conversation_closer")
+  sentMessages            Message[]               @relation("message_sender")
 
   @@unique([organizationId, id], name: "membership_tenant_key")
   @@unique([organizationId, userId])
@@ -1718,6 +1728,7 @@ model Lead {
   slaClocks       SlaClock[]
   calls           Call[]
   formSubmissions FormSubmission[]
+  conversations   Conversation[]
   /// `Restrict` rather than `SetNull`: this is a composite FK, and `SetNull` would null the NOT
   /// NULL `organization_id` with it. The pointer is cleared by the recompute before a task is ever
   /// hard-deleted.
@@ -2522,8 +2533,9 @@ model Customer {
   /// Through Membership, not User, so "owned by somebody in another tenant" is unrepresentable.
   owner        Membership?  @relation("customer_owner", fields: [organizationId, ownerUserId], references: [organizationId, userId], onDelete: Restrict, map: "customers_owner_same_org_fk")
 
-  mergedInto     Customer?  @relation("customer_merge_pointer", fields: [organizationId, mergedIntoId], references: [organizationId, id], onDelete: Restrict, map: "customers_merged_into_same_org_fk")
-  mergedFromThis Customer[] @relation("customer_merge_pointer")
+  mergedInto     Customer?      @relation("customer_merge_pointer", fields: [organizationId, mergedIntoId], references: [organizationId, id], onDelete: Restrict, map: "customers_merged_into_same_org_fk")
+  mergedFromThis Customer[]     @relation("customer_merge_pointer")
+  conversations  Conversation[]
   deals          Deal[]
 
   quotations Quotation[]
@@ -4012,10 +4024,11 @@ model IntegrationConnection {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   connectedBy  Membership?  @relation("integration_connector", fields: [organizationId, connectedById], references: [organizationId, userId], onDelete: Restrict, map: "integration_connections_connector_same_org_fk")
 
-  cursors        SyncCursor[]
-  healthChecks   IntegrationHealthCheck[]
-  payloads       InboundPayload[]
-  providerEvents ProviderEvent[]
+  cursors          SyncCursor[]
+  whatsappAccounts WhatsAppAccount[]
+  healthChecks     IntegrationHealthCheck[]
+  payloads         InboundPayload[]
+  providerEvents   ProviderEvent[]
 
   @@unique([organizationId, id], name: "integration_connection_tenant_key")
   /// One live connection per provider per workspace. Partial, hand-written, because a disconnected
@@ -4077,6 +4090,277 @@ model IntegrationHealthCheck {
   @@unique([organizationId, id], name: "integration_health_check_tenant_key")
   @@index([organizationId, connectionId, checkedAt(sort: Desc)])
   @@map("integration_health_checks")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Phase 5, step 1 — WhatsApp: a connected number, and the messages it receives
+// (docs/database-design.md §7)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// A WhatsApp Business Account, as Meta knows it.
+///
+/// One per `integration_connection`: the connection holds the credential and the health, and this
+/// holds what Meta calls the business. Separate because a WABA has **numbers**, and a number is
+/// what a conversation belongs to — a shape no amount of JSONB on the connection would make
+/// joinable.
+model WhatsAppAccount {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  /// Which connection's credential reaches it. `Restrict`, because a connection with an account is
+  /// disconnected (soft) rather than deleted.
+  integrationConnectionId String @map("integration_connection_id") @db.Uuid
+
+  /// Meta's own id for the business account. One live account per WABA per workspace.
+  wabaId       String  @map("waba_id")
+  businessName String? @map("business_name")
+
+  status     WhatsAppAccountStatus @default(pending)
+  verifiedAt DateTime?             @map("verified_at") @db.Timestamptz(6)
+  /// Meta's own words when something is wrong, kept rather than paraphrased.
+  lastError  String?               @map("last_error")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connection   IntegrationConnection @relation(fields: [organizationId, integrationConnectionId], references: [organizationId, id], onDelete: Restrict, map: "whatsapp_accounts_connection_same_org_fk")
+
+  numbers WhatsAppNumber[]
+
+  @@unique([organizationId, id], name: "whatsapp_account_tenant_key")
+  @@unique([organizationId, wabaId], name: "whatsapp_account_waba_key")
+  @@map("whatsapp_accounts")
+}
+
+/// One business number on a WABA.
+///
+/// `phone_number_id` is **globally** unique, not per workspace, and that is load-bearing: an
+/// inbound webhook carries only that id, so it is the one thing that resolves which workspace a
+/// message belongs to. Two workspaces claiming the same number would make that resolution a guess,
+/// and a guess here delivers somebody's customer's message to the wrong business.
+model WhatsAppNumber {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  accountId String @map("account_id") @db.Uuid
+
+  /// Meta's id for the number, which is what a delivery's `metadata.phone_number_id` carries.
+  phoneNumberId      String  @unique @map("phone_number_id")
+  displayPhoneE164   String  @map("display_phone_e164")
+  verifiedName       String? @map("verified_name")
+  /// Meta's own quality grading and send tier, refreshed by the health probe. Shown, never acted on.
+  qualityRating      String? @map("quality_rating")
+  messagingLimitTier String? @map("messaging_limit_tier")
+
+  isActive           Boolean @default(true) @map("is_active")
+  /// Who picks up a conversation on this number when nothing else decides. Via `Membership`.
+  defaultAgentUserId String? @map("default_agent_user_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  account      WhatsAppAccount @relation(fields: [organizationId, accountId], references: [organizationId, id], onDelete: Cascade, map: "whatsapp_numbers_account_same_org_fk")
+  defaultAgent Membership?     @relation("whatsapp_default_agent", fields: [organizationId, defaultAgentUserId], references: [organizationId, userId], onDelete: Restrict, map: "whatsapp_numbers_default_agent_same_org_fk")
+
+  conversations Conversation[]
+
+  @@unique([organizationId, id], name: "whatsapp_number_tenant_key")
+  @@index([organizationId, accountId])
+  @@map("whatsapp_numbers")
+}
+
+/// One thread with one person on one channel (`FR-WA-7`).
+///
+/// `channel` and `channel_account_id` rather than a WhatsApp-shaped table, because §7 specifies
+/// email, SMS and webchat arriving later and a shared inbox that shows all of them in one list: a
+/// `whatsapp_conversations` table would have to be unioned with three others the day the second
+/// channel lands.
+///
+/// `window_expires_at` is the 24-hour service window (`FR-WA-1`), written from the customer's last
+/// message. It is a **column** rather than a computation over `last_inbound_at` because the inbox
+/// list sorts and filters on it, and because the arithmetic belongs where one function owns it.
+model Conversation {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  channel          ConversationChannel @default(whatsapp)
+  /// Which account on that channel — a `whatsapp_numbers.id` today.
+  channelAccountId String              @map("channel_account_id") @db.Uuid
+
+  /// The person, as a number. Nullable for a channel that has none (email, webchat).
+  contactE164 String? @map("contact_e164")
+  /// The lead or the customer they are. Both nullable: a message can arrive before either exists,
+  /// and the pipeline creates the lead rather than refusing the message.
+  leadId      String? @map("lead_id") @db.Uuid
+  customerId  String? @map("customer_id") @db.Uuid
+
+  assignedUserId String? @map("assigned_user_id") @db.Uuid
+  assignedTeamId String? @map("assigned_team_id") @db.Uuid
+
+  status   ConversationStatus @default(open)
+  priority Int                @default(0)
+
+  lastMessageAt   DateTime  @default(now()) @map("last_message_at") @db.Timestamptz(6)
+  lastInboundAt   DateTime? @map("last_inbound_at") @db.Timestamptz(6)
+  lastOutboundAt  DateTime? @map("last_outbound_at") @db.Timestamptz(6)
+  unreadCount     Int       @default(0) @map("unread_count")
+  /// When somebody here first answered. The inbox's own first-response figure, and distinct from
+  /// the lead's SLA clock: a conversation can start long after the lead did.
+  firstResponseAt DateTime? @map("first_response_at") @db.Timestamptz(6)
+  windowExpiresAt DateTime? @map("window_expires_at") @db.Timestamptz(6)
+
+  closedAt   DateTime? @map("closed_at") @db.Timestamptz(6)
+  closedById String?   @map("closed_by_id") @db.Uuid
+  tags       String[]  @default([])
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  number       WhatsAppNumber? @relation(fields: [organizationId, channelAccountId], references: [organizationId, id], onDelete: Restrict, map: "conversations_number_same_org_fk")
+  lead         Lead?           @relation(fields: [organizationId, leadId], references: [organizationId, id], onDelete: Restrict, map: "conversations_lead_same_org_fk")
+  customer     Customer?       @relation(fields: [organizationId, customerId], references: [organizationId, id], onDelete: Restrict, map: "conversations_customer_same_org_fk")
+  assignedTo   Membership?     @relation("conversation_assignee", fields: [organizationId, assignedUserId], references: [organizationId, userId], onDelete: Restrict, map: "conversations_assignee_same_org_fk")
+  closedBy     Membership?     @relation("conversation_closer", fields: [organizationId, closedById], references: [organizationId, userId], onDelete: Restrict, map: "conversations_closer_same_org_fk")
+
+  messages Message[]
+
+  @@unique([organizationId, id], name: "conversation_tenant_key")
+  /// The inbox list, and "my conversations" (§7's own two indexes).
+  @@index([organizationId, channelAccountId, status, lastMessageAt(sort: Desc)])
+  @@index([organizationId, assignedUserId, status, lastMessageAt(sort: Desc)])
+  @@index([organizationId, leadId])
+  @@map("conversations")
+}
+
+/// One message, inbound or outbound (`FR-WA-3`, `FR-WA-4`, `FR-WA-6`).
+///
+/// **Partitioned monthly by `created_at`**, which makes the primary key `(id, created_at)` and the
+/// per-workspace unique `(organization_id, id, created_at)` — the `activities` arrangement, for the
+/// same reason: this is the fastest-growing table a WhatsApp workspace has, and §15 retains it for
+/// 24 months, which a partition drop satisfies without deleting a row.
+///
+/// §7 specifies `UNIQUE (provider, provider_message_id)` **globally** as the idempotency gate. A
+/// unique on a partitioned table must contain the partition key, so the one built here is
+/// `(provider, provider_message_id, created_at)` — which makes it a race guard within the month
+/// rather than the point read `FR-WA-6` needs. The point read is `provider_events`, which is not
+/// partitioned: the same division `inbound_payloads` and `idempotency_keys` already have, and the
+/// reason that ledger was built a step early.
+model Message {
+  id             String @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  conversationId String @map("conversation_id") @db.Uuid
+
+  direction MessageDirection
+  type      MessageType
+  /// The readable content: the text, or a caption. Null for media with none — never a placeholder,
+  /// which would be indistinguishable from somebody typing it and would be indexed as if they had.
+  body      String?
+  /// Everything the provider sent for this message, kept whole.
+  payload   Json             @default("{}") @db.JsonB
+
+  provider          String  @default("whatsapp_cloud")
+  /// Meta's `wamid.…`. Null for an outbound message not yet accepted.
+  providerMessageId String? @map("provider_message_id")
+
+  /// The message this one answers or reacts to, by the provider's id rather than ours: the subject
+  /// may not have arrived yet, and a composite FK into a partitioned table would need its instant.
+  replyToProviderId String? @map("reply_to_provider_id")
+  /// Who sent it, for an outbound message a person wrote. Null for inbound and for automation.
+  senderUserId      String? @map("sender_user_id") @db.Uuid
+
+  status       MessageStatus @default(delivered)
+  errorCode    String?       @map("error_code")
+  errorMessage String?       @map("error_message")
+
+  sentAt      DateTime? @map("sent_at") @db.Timestamptz(6)
+  deliveredAt DateTime? @map("delivered_at") @db.Timestamptz(6)
+  readAt      DateTime? @map("read_at") @db.Timestamptz(6)
+  failedAt    DateTime? @map("failed_at") @db.Timestamptz(6)
+
+  /// Whether Meta bills for it, and under which category. Written when Meta says; not inferred.
+  billable             Boolean @default(false)
+  conversationCategory String? @map("conversation_category")
+
+  /// The partition key. When it arrived or was queued — the only instant this table is pruned by.
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [organizationId, conversationId], references: [organizationId, id], onDelete: Cascade, map: "messages_conversation_same_org_fk")
+  sender       Membership?  @relation("message_sender", fields: [organizationId, senderUserId], references: [organizationId, userId], onDelete: Restrict, map: "messages_sender_same_org_fk")
+
+  @@id([id, createdAt])
+  @@unique([organizationId, id, createdAt], name: "message_tenant_key")
+  /// Message paging, §7's own index.
+  @@index([organizationId, conversationId, createdAt(sort: Desc)])
+  @@map("messages")
+}
+
+/// A WABA's standing with Meta.
+enum WhatsAppAccountStatus {
+  /// Connected, not yet verified by a probe.
+  pending
+  connected
+  /// Meta refused the credential or the account: a person has to act.
+  revoked
+
+  @@map("whatsapp_account_status")
+}
+
+enum ConversationChannel {
+  whatsapp
+  email
+  sms
+  webchat
+
+  @@map("conversation_channel")
+}
+
+enum ConversationStatus {
+  open
+  pending
+  snoozed
+  closed
+
+  @@map("conversation_status")
+}
+
+enum MessageDirection {
+  inbound
+  outbound
+
+  @@map("message_direction")
+}
+
+enum MessageType {
+  text
+  image
+  video
+  audio
+  document
+  location
+  contacts
+  sticker
+  template
+  interactive
+  reaction
+  system
+
+  @@map("message_type")
+}
+
+enum MessageStatus {
+  queued
+  accepted
+  sent
+  delivered
+  read
+  failed
+
+  @@map("message_status")
 }
 
 /// What became of one of a provider's events.

@@ -90,6 +90,10 @@ interface Tenant {
   // Phase 4, step 6 — the integration framework. A `generic_webhook` connection, deliberately:
   // its provider has no probe, so building this fixture reaches nobody else's server.
   integrationConnectionId: string;
+  // Phase 5, step 1 — WhatsApp. Created rather than found: a test that finds its fixture passes
+  // for the wrong reason, and on a freshly migrated database there is no conversation to find.
+  whatsappNumberId: string;
+  conversationId: string;
 }
 
 let orgA: Tenant;
@@ -429,6 +433,90 @@ async function createTenant(label: string): Promise<Tenant> {
     token,
   });
 
+  // A WhatsApp number and a conversation of org A's own. The connection is real (its `validate`
+  // is offline, so this reaches nobody) and the rows below are written directly, because the only
+  // other way to get a conversation is a signed Meta delivery and a fake Graph API — which
+  // `whatsapp.e2e-spec.ts` does, and which this suite does not need in order to aim at the route.
+  const whatsappConnection = await call<EnvelopeBody<{ id: string }>>(ctx.app, {
+    method: 'POST',
+    url: '/api/v1/integrations',
+    payload: {
+      provider: 'whatsapp_cloud',
+      name: `Sweep WhatsApp ${label}`,
+      credentials: {
+        appSecret: 'd41d8cd98f00b204e9800998ecf8427e',
+        accessToken: 'EAAG-a-permanent-system-user-token-value-0001',
+      },
+      // Digits only: the adapter refuses anything else, because a WABA id is Meta's numeric id.
+      settings: { wabaId: label === 'a' ? '102938475610291' : '102938475610292', verifyToken: `verify-${SUFFIX}` },
+    },
+    token,
+  });
+  // A setup call whose status nobody asserts fails silently and takes the assertion with it.
+  if (whatsappConnection.statusCode >= 300) {
+    throw new Error(
+      `the sweep fixture could not connect WhatsApp: ${whatsappConnection.statusCode} ${JSON.stringify(whatsappConnection.body)}`,
+    );
+  }
+  const whatsappAccountId = newId();
+  await ctx.db.whatsAppAccount.create({
+    data: {
+      id: whatsappAccountId,
+      organizationId,
+      integrationConnectionId: whatsappConnection.body.data.id,
+      wabaId: label === 'a' ? '102938475610291' : '102938475610292',
+      businessName: `Routes ${label}`,
+      status: 'connected',
+      verifiedAt: new Date(),
+    },
+  });
+  const whatsappNumberId = newId();
+  await ctx.db.whatsAppNumber.create({
+    data: {
+      id: whatsappNumberId,
+      organizationId,
+      accountId: whatsappAccountId,
+      // Globally unique by design — it is the only thing an inbound delivery carries — so the two
+      // tenants in this suite must not share one.
+      phoneNumberId: `${Date.now()}${label === 'a' ? '1' : '2'}`,
+      displayPhoneE164: `+9198450${label === 'a' ? '11111' : '22222'}`,
+      verifiedName: `Routes ${label}`,
+      isActive: true,
+    },
+  });
+  const conversationId = newId();
+  await ctx.db.conversation.create({
+    data: {
+      id: conversationId,
+      organizationId,
+      channel: 'whatsapp',
+      channelAccountId: whatsappNumberId,
+      contactE164: `+9198765${label === 'a' ? '11111' : '22222'}`,
+      leadId: lead.body.data.id,
+      status: 'open',
+      unreadCount: 1,
+      lastMessageAt: new Date(),
+      lastInboundAt: new Date(),
+    },
+  });
+  await ctx.db.message.create({
+    data: {
+      id: newId(),
+      organizationId,
+      conversationId,
+      direction: 'inbound',
+      type: 'text',
+      body: `Swept ${label}`,
+      payload: {},
+      provider: 'whatsapp_cloud',
+      providerMessageId: `wamid.sweep.${SUFFIX}.${label}`,
+      status: 'delivered',
+      sentAt: new Date(),
+      deliveredAt: new Date(),
+      createdAt: new Date(),
+    },
+  });
+
   const slaClock = await ctx.db.slaClock.findFirstOrThrow({
     where: { organizationId, leadId: lead.body.data.id },
   });
@@ -502,6 +590,8 @@ async function createTenant(label: string): Promise<Tenant> {
     webhookEndpointId: webhookEndpoint.body.data.id,
     webhookDeliveryId,
     integrationConnectionId: integrationConnection.body.data.id,
+    whatsappNumberId,
+    conversationId,
   };
 }
 
@@ -807,6 +897,11 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       '/forms/:id': `/forms/${orgA.formId}`,
       '/forms/:id/fields': `/forms/${orgA.formId}/fields`,
       '/forms/:id/rotate-key': `/forms/${orgA.formId}/rotate-key`,
+      // Phase 5, step 1 — WhatsApp
+      '/conversations/:id': `/conversations/${orgA.conversationId}`,
+      '/conversations/:id/messages': `/conversations/${orgA.conversationId}/messages`,
+      '/conversations/:id/read': `/conversations/${orgA.conversationId}/read`,
+      '/whatsapp/numbers/:id': `/whatsapp/numbers/${orgA.whatsappNumberId}`,
     };
 
     // An unmapped parameter would test nothing meaningful, so it is reported instead.
@@ -890,6 +985,10 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       // A connection holds a credential, so "org B reached org A's connection" is the single worst
       // outcome this sweep exists to rule out.
       ['integrationConnectionId', orgA.integrationConnectionId],
+      // A conversation is somebody's customer saying something to somebody's business, which is
+      // the second-worst thing on this list to get wrong.
+      ['conversationId', orgA.conversationId],
+      ['whatsappNumberId', orgA.whatsappNumberId],
     ];
 
     const problems: string[] = [];
@@ -1189,6 +1288,15 @@ function bodyFor(
     case '/auth/logout-all':
     case '/auth/mfa/setup':
       return {};
+    // Phase 5, step 1 — WhatsApp
+    case '/conversations/:id/read':
+      return {};
+    case '/whatsapp/accounts':
+      return { connectionId: target.integrationConnectionId };
+    case '/whatsapp/numbers/:id':
+      // Org A's own member, so this request names something of theirs in the body as well as in
+      // the path — which is what makes a 200 here a finding rather than a pass.
+      return { userId: target.userId };
     default:
       return undefined;
   }

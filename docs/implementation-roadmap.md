@@ -2446,6 +2446,112 @@ usage metering; conversation events on the lead timeline.
 - Opt-out keyword suppresses marketing sends immediately, verified end to end.
 - Inbox p95 < 500 ms with 100 k messages in the tenant fixture.
 
+### Step 1 — a connected number, and the messages it receives ✅ _(landed 2026-10-19)_
+
+Phase 5's **headline exit criterion**, in its own words: "Meta's duplicate/retried webhook
+deliveries produce exactly one message, one activity, one automation trigger (`FR-WA-6`)." The first
+two are now tested end to end; the third has nothing to trigger until Phase 6, and is named here
+rather than claimed.
+
+**The framework held again.** WhatsApp Cloud is a registry entry and an adapter — `verifyInbound`,
+`challenge`, `parseDelivery`, `probe`, `listNumbers` — on the door step 6 built and the ledger step 7
+built. No existing module changed except to route by capability: `IntegrationInboundService.jobFor`
+reads `capabilities.includes('messaging')` and queues `whatsapp.ingest-message` instead of
+`integration.ingest-event`, so the third messaging provider needs no change to the code that routes
+it.
+
+**What the provider broke, twice, was a capability derived from a near-synonym.** WhatsApp holds a
+token we send **and** posts to us, so `authKind === 'shared_secret'` was the wrong test for "has an
+inbound door" — found in step 7 and fixed there. It also sends the message in full **and** names its
+own events, so `deliveryIsAReference` was the wrong test for which pipeline a delivery goes down:
+a status receipt about a message we sent fell through to the single-lead path and answered **400**,
+which is precisely how Meta learns to disable an endpoint and stop delivering the messages a
+business is paying for. `deliveryShape` (`events | single_lead | none`) is now declared per provider
+and reconciled against the adapter at boot, beside `inboundVerification`.
+
+**Four tables, and one of them is partitioned.** `whatsapp_accounts`, `whatsapp_numbers`,
+`conversations` and `messages` — the last partitioned monthly by `created_at`, which makes its
+primary key `(id, created_at)`, its paging cursor both halves of that key, and its
+`provider_message_id` unique a **partial** index containing the partition key. That makes the unique
+a race guard rather than the idempotency gate, exactly as `inbound_payloads` is: the replay
+guarantee stays in `provider_events`, which is not partitioned. Nine CHECK constraints, each written
+so no sub-expression can be NULL while the row is accepted, and `messages_inbound_has_no_sender` is
+the one that makes a colleague's name on a customer's words unrepresentable.
+
+**`phone_number_id` is unique _globally_**, with no `organization_id` — one of a handful of such
+columns in this schema, because an inbound delivery names a number and nothing else, so it is the
+only thing that can resolve which workspace a message belongs to. Two consequences, both real: the
+lookup is explicitly `withPlatformScope`, and a second workspace connecting the same number is a
+**422 with a sentence** — which it was not at first, because the collision check read through the
+tenant-scoped client, could not see the row that would collide, and let the insert come back as a
+raw unique violation.
+
+**A message becomes a lead through the capture path**
+([ADR-0036](./decisions/ADR-0036-an-inbound-message-becomes-a-lead-through-the-capture-path.md)):
+`LeadsService.create` with `createdVia: 'whatsapp'`, so the workspace's own duplicate rules, the
+assignment engine, the SLA clock and the outbox events apply to a WhatsApp enquiry exactly as they
+do to a form submission. A refusal is **not** fatal to the message — the conversation is stored with
+no lead and a warning logged, because losing a customer's words because our own rules refused to
+make a record is the worse outcome by a long way. A conversation is keyed on
+`(channel_account_id, contact_e164)`: one person messaging two of a business's numbers is two
+conversations, and a lead with two numbers is still one lead.
+
+**Two instants, and the difference is a bug that was in the code.** `created_at` is ours — when the
+delivery arrived — because it is the partition key and the inbox's sort order; `sent_at` is Meta's.
+Meta's timestamp is in **whole seconds**, so writing it into `created_at` made two messages in one
+second tie and "the latest message" became whichever row the planner returned, which a test caught
+by sending two messages inside one second. The 24-hour window is measured from `sent_at`, because
+Meta's clock is the one that closes it and a window computed from a later instant would let an agent
+write a free-form reply Meta then refuses.
+
+**Two screens** (`frontend-architecture.md` §10.13): `/inbox` — list, thread, lead context, window
+sentence, search, mark-read, all URL state — and `/settings/whatsapp` — the WABA, its numbers with
+their quality rating and send tier, and who answers each by default. The credential stays on
+`/settings/integrations`, which already stores, rotates, probes and prints the callback URL for it.
+The open conversation is **fetched by id**, never found in the loaded list, because `/inbox?c=<id>`
+is the link a notification sends and the filter it lands on may exclude that row.
+
+**Verified.** **2 540 tests green** — 1 119 unit (617 shared, 330 web, 168 api, 4 db) and 1 421 integration
+(801 api e2e, 620 across the schema-object and tenant-isolation suites) — with **77 new**:
+
+- **14 in `@leados/shared`**, over the delivery parser against Meta's real envelope shapes, the
+  window arithmetic, `wa_id` → E.164, and the sentence that stands in for a body a media message
+  does not have. One of them found a real bug while being written: a reaction lost its
+  `replyToProviderId`, because the context reader returned early instead of falling through.
+- **10 on the web side** — 8 reconciling the hand-written vocabulary against the API's and covering
+  the three-way filters, the row's title and an outbound message's standing, plus 2 on the
+  `whatsapp.received` describer, which is what keeps the entry from rendering as a bare row.
+- **22 api e2e**, against a real in-process Graph API, including the exit criterion itself: three
+  deliveries of one message — two byte-identical, one reshaped — producing one message and one
+  activity. The suite also found the bug that mattered most, the inbox previewing the **previous**
+  message, which is what sent the two instants back to the schema.
+- **31 schema-object and tenant-isolation cases** over the four new tables: the partition key on
+  `messages`, the partial unique that is a race guard rather than a point read, the four
+  hand-written indexes, the nine CHECKs, and six composite FKs refusing a conversation pointed at
+  another workspace's number, lead or member.
+
+Then **37 HTTP checks** against a live API, **worker** and scheduler with a fake Graph API on
+another port — the whole path through a real queue hop, with nothing driving a processor by hand,
+including the retry that produces nothing and the status receipt that is acknowledged and dropped —
+and **28 browser checks** in Chromium across both screens and a phone-width viewport.
+
+The route-authorization sweep grew the four new parameterised routes, with a conversation and a
+number of org A's own built by its fixture; and `test/setup.ts` now points `META_GRAPH_URL` at a
+closed loopback port, because connecting a provider probes it and that fixture was calling Meta's
+real API from the test run.
+
+**Carried forward, named rather than assumed:** nothing **sends** yet — no
+`POST /conversations/{id}/messages`, no templates, no media download, no opt-out keyword, no usage
+metering — and `conversations.lock_user_id`, `lock_expires_at`, `priority`, `snoozed_until`,
+`first_response_at` and `customer_id` are columns with no writer, which is said plainly because a
+column with no writer is otherwise indistinguishable from a feature somebody forgot. There is still
+**no OAuth**: a WABA is connected with a pasted app secret and access token, so Meta's Embedded
+Signup — a third `INTEGRATION_AUTH_KIND` and a `refresh` on the port — remains unbuilt. The inbox
+has **no realtime**: it is server-rendered and re-read after a mutation, and the conversation list
+does not update until somebody reloads it. And the p95 exit criterion is unmeasured: there is no
+100 k-message fixture yet, so the inbox's performance is untested at scale and the index set behind
+it is a prediction rather than a measurement.
+
 ---
 
 ## Phase 6 — Automation
@@ -2601,54 +2707,48 @@ partially landed, with the specific gaps named.
 ## Immediate next step
 
 _This section names the next step only; what each landed step actually did is in the step entries
-above. Last reviewed 2026-10-19, after Phase 4 step 7._
+above. Last reviewed 2026-10-19, after Phase 5 step 1._
 
-**Phase 4 is finished, and all six of its exit criteria are met and tested** — each in the step that
-built it, and each named in that step's entry rather than asserted here:
+**Phase 4 is finished and all six of its exit criteria are met** — the table that recorded where
+each one is tested is in its own section above, step by step. Phase 5 has begun: step 1 built the
+inbound half of WhatsApp, and of the phase's seven exit criteria **one and a half** are now met:
 
-| Exit criterion                                                                 | Step | Where it is tested                                             |
-| ------------------------------------------------------------------------------ | ---- | --------------------------------------------------------------- |
-| Unknown extra fields accepted, raw payload stored, one-click custom field       | 2    | `ingestion.e2e-spec.ts`, and the `/ingestion` browser checks     |
-| A duplicate `Idempotency-Key` returns the first response and creates nothing    | 2    | `ingestion.e2e-spec.ts`                                          |
-| Killing the worker mid-ingestion loses no lead; the payload replays             | 2    | `ingestion.e2e-spec.ts`'s replay cases over `inbound_payloads`   |
-| Outbound webhook retried, logged per attempt, auto-disabled, SSRF refused       | 3    | `webhooks.e2e-spec.ts`, against a real in-process receiver       |
-| **Meta Lead Ads: a duplicate delivery ⇒ one lead; a revoked token ⇒ a prompt**  | 7    | `lead-ads.e2e-spec.ts`, against a real in-process Graph API      |
-| OpenAPI diff check active; published docs with working copy-paste examples      | 5    | `openapi.e2e-spec.ts` and the committed `docs/openapi.json`      |
+| Exit criterion                                                               | Status                                                            |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| A retried delivery ⇒ one message, one activity, one automation trigger        | **Message and activity: done** (`whatsapp.e2e-spec.ts`). No automation exists to trigger until Phase 6. |
+| Conversation events on the lead timeline                                      | **Done** — `whatsapp.received`, with a describer, asserted as a sentence rather than a type. |
+| Out-of-window free-form send blocked; template send succeeds                  | Not started — nothing sends.                                       |
+| Two agents see the ownership lock; transfer is audited                        | Not started — the columns exist with no writer.                    |
+| A failed send shows the provider's reason and reaches the timeline            | Not started.                                                       |
+| Media round-trip with type/size validation and signed-URL delivery            | Not started — an inbound image keeps its payload and nothing else. |
+| Opt-out keyword suppresses marketing sends immediately                        | Not started.                                                       |
+| Inbox p95 < 500 ms with 100 k messages                                       | **Unmeasured** — there is no message fixture at that size yet.      |
 
-The phase's scope line is complete with it: dynamic forms and the page a stranger fills in; the
-public lead API with its never-lose payload store, replay, test tool and one-click custom field;
-API keys with scopes, rotation and an IP allowlist, and `api_logs` as the integration's own request
-log; outbound webhooks signed, retried from their own row and never following a redirect; the
-OpenAPI document generated from the validators that run, with a server-rendered reference and a
-committed artifact whose diff is classified; the integration framework — a provider registry
-reconciled against its adapters at boot, a credential vault, per-connection health checks and
-generic field mappings; and both ad connectors, on the inbound idempotency ledger that makes a
-retried delivery harmless.
+**The next step is Phase 5 step 2 — sending**: `POST /conversations/{id}/messages`, the per-number
+outbound queue, the 24-hour window enforced on the write path, the status webhook advancing
+`sent → delivered → read`, and a failure that reaches the agent and the timeline with Meta's own
+reason. Four things from step 1 decide how it starts:
 
-**The next step is Phase 5 — WhatsApp**, whose scope and exit criteria are in its own section
-above. Three things from this phase decide how it starts:
+- **The window's arithmetic already exists and is already enforced on reads.**
+  `windowIsOpen`/`describeWindow` in `@leados/shared` and `conversations.window_expires_at` are
+  written from the customer's own `sent_at`, deliberately conservative, so the send path has one
+  definition to call rather than one to write.
+- **A status receipt is already acknowledged and dropped.** `parseDelivery` returns no events for a
+  `statuses` delivery and the door answers 200, which is right while nothing sends — and step 2 has
+  to turn exactly that payload into `message_status_events` and the `sent → delivered → read`
+  transitions. The `deliveryShape` branch is where that becomes visible.
+- **`messages` is partitioned and its unique is partial on `provider_message_id`**, so an outbound
+  row exists before Meta gives it an id and gains one when Meta accepts it. That is what the partial
+  index is for, and the one thing a send path must not do is invent an id to fill it.
+- **Media is the first thing in this product that needs a file from somebody else.** The storage
+  port takes a `Buffer`, which is why exports are capped at 100 k rows; an inbound image is the
+  point at which streaming into storage stops being a Phase 12 nicety — named here because it is a
+  port change, not a feature.
 
-- **`provider_events` already exists**, which is what `FR-WA-6` — "Meta's duplicate/retried
-  webhook deliveries produce exactly one message, one activity, one automation trigger" — is
-  measured against. It is the same table, the same unique and the same insert-before-work order
-  that step 7 proved on `leadgen_id`; WhatsApp's message id takes `external_event_id`.
-- **The integration framework takes `whatsapp_cloud` as a registry entry and an adapter**, with
-  `verifyInbound` already the right shape for `X-Hub-Signature-256` and `challenge` already the
-  right shape for Meta's handshake. What it does **not** yet have is the `MessagingProvider`
-  interface §2 of `integration-architecture.md` sketches — sends, templates, media — which is a
-  second interface beside this framework's own, not a change to it.
-- **OAuth is still absent**, and WhatsApp is where it starts to cost: a WABA is connected through
-  Meta's embedded signup, which is an authorization-code exchange and a refresh. That is a third
-  `INTEGRATION_AUTH_KIND` and a `refresh` method on the port — an addition the framework was
-  designed for, as [ADR-0034](./decisions/ADR-0034-a-provider-is-a-registry-entry-and-an-adapter.md)
-  says in its consequences.
-
-Carried forward from Phase 4, named rather than assumed: `sync_cursors` is built and has **no
-user** — the ads insight pulls it exists for are Phase 9; `integration_health_checks` and
-`provider_events` are pruned by nothing until Phase 9's retention sweep; a connection's `scopes`
-column is written empty, because inventing values for a provider that does not report them is a
-column nobody could trust; Google Ads deliveries are replayable by anybody who has seen one, which
-is Google's design and the reason the ledger is the only guard; and there is no "try it" sandbox and
-no generated client package (`packages/contracts`), both named in §11 of `api-architecture.md` and
-both deliberately absent — the web app calls the API through its own typed loaders, reconciled by a
-spec.
+Carried forward from Phase 4, still true: `sync_cursors` is built and has **no user** (the ads
+insight pulls are Phase 9); `integration_health_checks` and `provider_events` are pruned by nothing
+until Phase 9's retention sweep; a connection's `scopes` column is written empty; Google Ads
+deliveries are replayable by anybody who has seen one, which is Google's design and the reason the
+ledger is the only guard; and there is no "try it" sandbox and no generated client package
+(`packages/contracts`), both named in §11 of `api-architecture.md` and both deliberately absent —
+the web app calls the API through its own typed loaders, reconciled by a spec.

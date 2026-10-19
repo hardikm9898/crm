@@ -2,11 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { AppError, verifySignature } from '@leados/shared';
 import { IngestAuthService } from '../../ingestion/ingest-auth.service.js';
 import { SHARED_SECRET_KEY } from './secret-names.js';
-import type {
-  IntegrationAdapter,
-  ProviderDelivery,
-  VerificationResult,
-} from '../integration.port.js';
+import type { IntegrationAdapter, VerificationResult } from '../integration.port.js';
 
 
 /**
@@ -66,15 +62,13 @@ export class GenericWebhookAdapter implements IntegrationAdapter {
   }
 
   /**
-   * One request, one event.
+   * No `parseDelivery`, deliberately — and `deliveryShape: 'single_lead'` in the catalogue is what
+   * says so.
    *
-   * The external id is **ours**, derived from the body, because a generic sender has no event id of
-   * its own to give us — which is exactly what `Idempotency-Key` is for on this door, and why this
-   * provider's deduplication stays in `idempotency_keys` rather than in the ledger. Returning no
-   * events here says "there is nothing for the ledger to deduplicate", and the service reads that
-   * rather than inventing a key that would make every distinct lead look like a replay.
+   * A generic sender has no event id of its own to give us, which is exactly what `Idempotency-Key`
+   * is for on this door: this provider's deduplication lives in `idempotency_keys` rather than in
+   * the ledger. The parser this class used to have returned `[]` to mean "there is nothing for the
+   * ledger to deduplicate" — and a stub whose only job is to satisfy a check is how a provider that
+   * genuinely sends nothing we recognise ended up taking the single-lead path and answering 400.
    */
-  parseDelivery(): readonly ProviderDelivery[] {
-    return [];
-  }
 }

@@ -117,6 +117,12 @@ export const TENANT_MODELS = [
   // Phase 4, step 7 — the inbound idempotency ledger. Tenant-scoped: an event is a fact about one
   // workspace's advertising, and the unique that makes it a ledger is per workspace too.
   'ProviderEvent',
+  // Phase 5, step 1 — WhatsApp. A WABA and its numbers belong to the workspace that connected
+  // them; a conversation and its messages belong to the workspace whose number they arrived at.
+  'WhatsAppAccount',
+  'WhatsAppNumber',
+  'Conversation',
+  'Message',
 ] as const;
 
 export type TenantModel = (typeof TENANT_MODELS)[number];

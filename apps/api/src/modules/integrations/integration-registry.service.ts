@@ -6,6 +6,7 @@ import { GenericWebhookAdapter } from './adapters/generic-webhook.adapter.js';
 import { GoogleAdsLeadsAdapter } from './adapters/google-ads-leads.adapter.js';
 import { MetaLeadAdsAdapter } from './adapters/meta-lead-ads.adapter.js';
 import { PostmarkAdapter } from './adapters/postmark.adapter.js';
+import { WhatsAppCloudAdapter } from './adapters/whatsapp-cloud.adapter.js';
 import type { IntegrationAdapter, RegisteredProvider } from './integration.port.js';
 
 /**
@@ -35,9 +36,10 @@ export class IntegrationRegistryService implements OnApplicationBootstrap {
     genericWebhook: GenericWebhookAdapter,
     metaLeadAds: MetaLeadAdsAdapter,
     googleAdsLeads: GoogleAdsLeadsAdapter,
+    whatsappCloud: WhatsAppCloudAdapter,
     @Inject(LOGGER) private readonly logger: Logger,
   ) {
-    for (const adapter of [postmark, genericWebhook, metaLeadAds, googleAdsLeads]) {
+    for (const adapter of [postmark, genericWebhook, metaLeadAds, googleAdsLeads, whatsappCloud]) {
       this.adapters.set(adapter.provider, adapter);
     }
   }
@@ -48,6 +50,7 @@ export class IntegrationRegistryService implements OnApplicationBootstrap {
     const unverifiable: string[] = [];
     const unreadable: string[] = [];
     const unfetchable: string[] = [];
+    const incoherent: string[] = [];
     for (const provider of INTEGRATION_PROVIDERS) {
       const adapter = this.adapters.get(provider.key);
       if (!adapter) {
@@ -63,8 +66,18 @@ export class IntegrationRegistryService implements OnApplicationBootstrap {
       if (provider.inboundVerification !== 'none' && adapter.verifyInbound === undefined) {
         unverifiable.push(provider.key);
       }
-      if (provider.inboundVerification !== 'none' && adapter.parseDelivery === undefined) {
+      // Keyed on what the provider **declares** its deliveries are, not on a near-synonym: a
+      // provider whose body names its own events needs the parser that reads them, and one whose
+      // body is a single lead must not have one — the stub returning `[]` that satisfied an
+      // `inboundVerification`-based check is exactly how the status-receipt 400 hid.
+      if (provider.deliveryShape === 'events' && adapter.parseDelivery === undefined) {
         unreadable.push(provider.key);
+      }
+      if (provider.deliveryShape === 'none' && provider.inboundVerification !== 'none') {
+        incoherent.push(provider.key);
+      }
+      if (provider.deliveryShape !== 'none' && provider.inboundVerification === 'none') {
+        incoherent.push(provider.key);
       }
       if (provider.deliveryIsAReference && adapter.fetchLead === undefined) {
         unfetchable.push(provider.key);
@@ -80,6 +93,9 @@ export class IntegrationRegistryService implements OnApplicationBootstrap {
       ...unverifiable.map((key) => `${key} declares an inbound verification its adapter cannot do`),
       ...unreadable.map((key) => `${key} accepts deliveries its adapter cannot read`),
       ...unfetchable.map((key) => `${key} says its delivery is a reference and cannot fetch a lead`),
+      ...incoherent.map(
+        (key) => `${key}'s delivery shape and its inbound verification disagree about whether it posts to us`,
+      ),
       ...orphans.map((key) => `${key} has an adapter and is not in the catalogue`),
     ];
     if (faults.length > 0) {

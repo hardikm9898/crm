@@ -3723,3 +3723,287 @@ describe('layer 4 — the inbound idempotency ledger (Phase 4 step 7)', () => {
     expect(theirs.all.every((row) => row.organizationId === h.orgB.organizationId)).toBe(true);
   });
 });
+
+describe('layer 5 — WhatsApp conversations and messages (Phase 5 step 1)', () => {
+  /**
+   * One connection per workspace, memoised.
+   *
+   * `integration_connections_live_provider` allows one live connection per provider, which is the
+   * point of that partial unique — so a helper that minted a fresh one per call failed on the
+   * constraint it was not testing, the same lesson the SLA fixture learnt one layer up.
+   */
+  const connections = new Map<string, string>();
+  async function connectionFor(organizationId: string): Promise<string> {
+    const existing = connections.get(organizationId);
+    if (existing !== undefined) return existing;
+    const connectionId = newId();
+    await h.unscoped.integrationConnection.create({
+      data: {
+        id: connectionId,
+        organizationId,
+        provider: 'whatsapp_cloud',
+        name: `WABA ${connectionId.slice(-8)}`,
+        credentialsEncrypted: `v1.1.${connectionId.slice(-8)}.${connectionId.slice(-8)}.${connectionId.slice(-8)}`,
+        scopes: [],
+      } as never,
+    });
+    connections.set(organizationId, connectionId);
+    return connectionId;
+  }
+
+  /** An account and a number in whichever workspace is asked for. */
+  async function number(organizationId: string, over: Record<string, unknown> = {}) {
+    const connectionId = await connectionFor(organizationId);
+    const accountId = newId();
+    await h.unscoped.whatsAppAccount.create({
+      data: {
+        id: accountId,
+        organizationId,
+        integrationConnectionId: connectionId,
+        wabaId: `waba_${accountId.slice(-10)}`,
+      } as never,
+    });
+    const numberId = newId();
+    await h.unscoped.whatsAppNumber.create({
+      data: {
+        id: numberId,
+        organizationId,
+        accountId,
+        phoneNumberId: `pn_${numberId.slice(-10)}`,
+        displayPhoneE164: '+919845000000',
+        ...over,
+      } as never,
+    });
+    return { numberId, accountId, connectionId };
+  }
+
+  async function conversation(
+    organizationId: string,
+    channelAccountId: string,
+    over: Record<string, unknown> = {},
+  ) {
+    const id = newId();
+    await h.unscoped.conversation.create({
+      data: {
+        id,
+        organizationId,
+        channel: 'whatsapp',
+        channelAccountId,
+        contactE164: '+919845012345',
+        ...over,
+      } as never,
+    });
+    return id;
+  }
+
+  it('refuses a number that is not E.164, and an unread count below nothing', async () => {
+    const own = await number(h.orgA.organizationId);
+    await expect(
+      number(h.orgA.organizationId, { displayPhoneE164: '9845000000' }),
+    ).rejects.toThrow(/whatsapp_numbers_display_phone_e164/i);
+    await expect(
+      conversation(h.orgA.organizationId, own.numberId, { contactE164: 'ring me' }),
+    ).rejects.toThrow(/conversations_contact_e164/i);
+    await expect(
+      conversation(h.orgA.organizationId, own.numberId, { unreadCount: -1 }),
+    ).rejects.toThrow(/conversations_unread_count_sane/i);
+  });
+
+  it('makes one business number unclaimable by a second workspace', async () => {
+    // Globally unique, not per workspace: an inbound delivery carries only this id, so two
+    // workspaces claiming it would make resolving the tenant a guess — and a guess here delivers
+    // somebody's customer's message to the wrong business.
+    const mine = await number(h.orgA.organizationId);
+    const taken = await h.unscoped.whatsAppNumber.findFirstOrThrow({
+      where: { id: mine.numberId },
+      select: { phoneNumberId: true },
+    });
+    await expect(
+      number(h.orgB.organizationId, { phoneNumberId: taken.phoneNumberId }),
+    ).rejects.toThrow(/phone_number_id|unique/i);
+  });
+
+  it('refuses a conversation on another workspace’s number, and a message on another’s conversation', async () => {
+    const theirs = await number(h.orgB.organizationId);
+    await expect(conversation(h.orgA.organizationId, theirs.numberId)).rejects.toThrow(
+      /conversations_number_same_org_fk|foreign key/i,
+    );
+
+    const mine = await number(h.orgA.organizationId);
+    const theirConversation = await conversation(h.orgB.organizationId, theirs.numberId);
+    await expect(
+      h.unscoped.message.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          conversationId: theirConversation,
+          direction: 'inbound',
+          type: 'text',
+          body: 'hello',
+        } as never,
+      }),
+    ).rejects.toThrow(/messages_conversation_same_org_fk|foreign key/i);
+
+    // And our own is accepted, so the refusals above are about the tenant and not the column.
+    const ours = await conversation(h.orgA.organizationId, mine.numberId);
+    await expect(
+      h.unscoped.message.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          conversationId: ours,
+          direction: 'inbound',
+          type: 'text',
+          body: 'hello',
+        } as never,
+      }),
+    ).resolves.toBeTruthy();
+  });
+
+  it('refuses an inbound message that claims one of our people sent it', async () => {
+    // A row claiming a sender would put a colleague's name on a customer's words.
+    const mine = await number(h.orgA.organizationId);
+    const ours = await conversation(h.orgA.organizationId, mine.numberId);
+    await expect(
+      h.unscoped.message.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          conversationId: ours,
+          direction: 'inbound',
+          type: 'text',
+          body: 'hello',
+          senderUserId: h.orgA.userId,
+        } as never,
+      }),
+    ).rejects.toThrow(/messages_inbound_has_no_sender/i);
+  });
+
+  it('insists a failed message says why, and a closed conversation says when', async () => {
+    const mine = await number(h.orgA.organizationId);
+    const ours = await conversation(h.orgA.organizationId, mine.numberId);
+    const message = (over: Record<string, unknown>) =>
+      h.unscoped.message.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          conversationId: ours,
+          direction: 'outbound',
+          type: 'text',
+          body: 'hello',
+          ...over,
+        } as never,
+      });
+    await expect(message({ status: 'failed' })).rejects.toThrow(/messages_failed_says_why/i);
+    await expect(
+      message({ status: 'failed', failedAt: new Date(), errorCode: '131047' }),
+    ).resolves.toBeTruthy();
+    // The honest state the mirror would have forbidden: it failed once and the resend worked.
+    await expect(message({ status: 'sent', failedAt: new Date() })).resolves.toBeTruthy();
+
+    await expect(
+      conversation(h.orgA.organizationId, mine.numberId, { status: 'closed' }),
+    ).rejects.toThrow(/conversations_closed_says_when/i);
+    await expect(
+      conversation(h.orgA.organizationId, mine.numberId, {
+        status: 'closed',
+        closedAt: new Date(),
+      }),
+    ).resolves.toBeTruthy();
+  });
+
+  it('insists a 24-hour window has a message to count from', async () => {
+    const mine = await number(h.orgA.organizationId);
+    await expect(
+      conversation(h.orgA.organizationId, mine.numberId, { windowExpiresAt: new Date() }),
+    ).rejects.toThrow(/conversations_window_needs_inbound/i);
+    const inbound = new Date();
+    await expect(
+      conversation(h.orgA.organizationId, mine.numberId, {
+        lastInboundAt: inbound,
+        windowExpiresAt: new Date(inbound.getTime() + 86_400_000),
+      }),
+    ).resolves.toBeTruthy();
+    // The honest state the mirror would have forbidden: the window was cleared and the message
+    // somebody sent is still the last thing they said.
+    await expect(
+      conversation(h.orgA.organizationId, mine.numberId, { lastInboundAt: inbound }),
+    ).resolves.toBeTruthy();
+  });
+
+  it('makes a redelivered provider message id impossible within the month', async () => {
+    const mine = await number(h.orgA.organizationId);
+    const ours = await conversation(h.orgA.organizationId, mine.numberId);
+    const wamid = `wamid.${newId().slice(-12)}`;
+    const createdAt = new Date();
+    const message = (organizationId: string, conversationId: string) =>
+      h.unscoped.message.create({
+        data: {
+          id: newId(),
+          organizationId,
+          conversationId,
+          direction: 'inbound',
+          type: 'text',
+          body: 'hello',
+          providerMessageId: wamid,
+          createdAt,
+        } as never,
+      });
+    await expect(message(h.orgA.organizationId, ours)).resolves.toBeTruthy();
+    // The race guard, and it is **global**: the same `wamid` in another workspace is still the
+    // same message, and Meta's ids are unique across every business.
+    await expect(message(h.orgA.organizationId, ours)).rejects.toThrow(
+      /messages_provider_message_unique|unique/i,
+    );
+    const theirs = await number(h.orgB.organizationId);
+    const theirConversation = await conversation(h.orgB.organizationId, theirs.numberId);
+    await expect(message(h.orgB.organizationId, theirConversation)).rejects.toThrow(
+      /messages_provider_message_unique|unique/i,
+    );
+  });
+
+  it('allows as many unsent outbound messages as somebody writes', async () => {
+    // A complete unique on `(provider, provider_message_id)` would allow exactly one message with
+    // no provider id per month, which is every message before Meta accepts it.
+    const mine = await number(h.orgA.organizationId);
+    const ours = await conversation(h.orgA.organizationId, mine.numberId);
+    const queued = () =>
+      h.unscoped.message.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          conversationId: ours,
+          direction: 'outbound',
+          type: 'text',
+          body: 'hello',
+          status: 'queued',
+        } as never,
+      });
+    await expect(queued()).resolves.toBeTruthy();
+    await expect(queued()).resolves.toBeTruthy();
+  });
+
+  it('keeps one workspace’s conversations and messages invisible to another', async () => {
+    const mine = await number(h.orgA.organizationId);
+    const ours = await conversation(h.orgA.organizationId, mine.numberId);
+    const theirs = await tenantContext.run(h.orgB.principal, async () => ({
+      one: await h.db.conversation.findFirst({ where: { id: ours } }),
+      conversations: await h.db.conversation.findMany({}),
+      messages: await h.db.message.findMany({}),
+      numbers: await h.db.whatsAppNumber.findMany({}),
+      accounts: await h.db.whatsAppAccount.findMany({}),
+    }));
+    expect(theirs.one).toBeNull();
+    for (const [label, rows] of Object.entries({
+      conversations: theirs.conversations,
+      messages: theirs.messages,
+      numbers: theirs.numbers,
+      accounts: theirs.accounts,
+    })) {
+      expect(
+        rows.every((row) => row.organizationId === h.orgB.organizationId),
+        label,
+      ).toBe(true);
+    }
+  });
+});

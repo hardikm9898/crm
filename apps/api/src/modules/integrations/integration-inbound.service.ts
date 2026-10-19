@@ -11,7 +11,7 @@ import {
 import type { Logger } from 'pino';
 import { DbService } from '../../infra/db/db.service.js';
 import { LOGGER } from '../../infra/observability/logger.module.js';
-import { JOBS, QUEUES } from '../../infra/queue/queue.constants.js';
+import { JOBS, QUEUES, type JobName } from '../../infra/queue/queue.constants.js';
 import { QueueService } from '../../infra/queue/queue.service.js';
 import { IngestionService } from '../ingestion/ingestion.service.js';
 import { IntegrationRegistryService } from './integration-registry.service.js';
@@ -175,7 +175,7 @@ export class IntegrationInboundService {
       accepted += 1;
       await this.queues.enqueue(
         QUEUES.MAINTENANCE,
-        JOBS.INTEGRATION_INGEST_EVENT,
+        this.jobFor(connection.provider),
         { organizationId: connection.organizationId, aggregateId: id },
         // The ledger row's id, so the same event cannot be queued twice while a different event
         // still can. BullMQ rejects ':' in a custom id.
@@ -309,13 +309,13 @@ export class IntegrationInboundService {
           },
           orderBy: { receivedAt: 'asc' },
           take: limit,
-          select: { id: true, organizationId: true },
+          select: { id: true, organizationId: true, provider: true },
         }),
     );
     for (const row of rows) {
       await this.queues.enqueue(
         QUEUES.MAINTENANCE,
-        JOBS.INTEGRATION_INGEST_EVENT,
+        this.jobFor(row.provider),
         { organizationId: row.organizationId, aggregateId: row.id },
         { jobId: `integration-event-retry-${row.id}-${Date.now()}` },
       );
@@ -353,6 +353,21 @@ export class IntegrationInboundService {
       connection.connectionId,
     );
     return result;
+  }
+
+  /**
+   * Which pipeline a provider's events go through.
+   *
+   * Read from the provider's **capabilities** rather than from its name: a `messaging` delivery
+   * becomes a conversation and a message, and a `lead_ingest` one becomes a lead through the
+   * capture path. The second messaging provider therefore needs no change here — it declares
+   * `messaging` in the registry and is routed, which is the whole argument for a registry.
+   */
+  private jobFor(provider: string): JobName {
+    const entry = findProvider(provider);
+    return entry?.capabilities.includes('messaging') === true
+      ? JOBS.WHATSAPP_INGEST_MESSAGE
+      : JOBS.INTEGRATION_INGEST_EVENT;
   }
 
   /** The adapter's own reading of a delivery: zero or more events with the provider's own ids. */

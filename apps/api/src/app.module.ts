@@ -43,6 +43,7 @@ import { ApiKeysModule } from './modules/api-keys/api-keys.module.js';
 import { IngestionModule } from './modules/ingestion/ingestion.module.js';
 import { IntegrationsModule } from './modules/integrations/integrations.module.js';
 import { WebhooksModule } from './modules/webhooks/webhooks.module.js';
+import { WhatsAppModule } from './modules/whatsapp/whatsapp.module.js';
 import { SlaModule } from './modules/sla/sla.module.js';
 import { TodayModule } from './modules/today/today.module.js';
 import { OversightModule } from './modules/oversight/oversight.module.js';
@@ -98,6 +99,7 @@ import { HealthModule } from './modules/health/health.module.js';
     ApiKeysModule,
     IntegrationsModule,
     WebhooksModule,
+    WhatsAppModule,
     SlaModule,
     TodayModule,
     OversightModule,

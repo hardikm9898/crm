@@ -5,6 +5,7 @@ import { GenericWebhookAdapter } from './adapters/generic-webhook.adapter.js';
 import { GoogleAdsLeadsAdapter } from './adapters/google-ads-leads.adapter.js';
 import { MetaLeadAdsAdapter } from './adapters/meta-lead-ads.adapter.js';
 import { PostmarkAdapter } from './adapters/postmark.adapter.js';
+import { WhatsAppCloudAdapter } from './adapters/whatsapp-cloud.adapter.js';
 import { IntegrationHealthService } from './integration-health.service.js';
 import { IntegrationInboundController } from './integration-inbound.controller.js';
 import { IntegrationInboundService } from './integration-inbound.service.js';
@@ -42,6 +43,7 @@ import { IntegrationsService } from './integrations.service.js';
     GenericWebhookAdapter,
     MetaLeadAdsAdapter,
     GoogleAdsLeadsAdapter,
+    WhatsAppCloudAdapter,
     IntegrationRegistryService,
     IntegrationVaultService,
     IntegrationHealthService,
@@ -54,6 +56,9 @@ import { IntegrationsService } from './integrations.service.js';
   exports: [
     IntegrationsService,
     IntegrationInboundService,
+    // Exported because `WhatsAppAccountsService` discovers a WABA's numbers through it. An adapter
+    // speaks HTTP and returns domain-shaped results; the module that owns the tables persists.
+    WhatsAppCloudAdapter,
     IntegrationHealthCheckProcessor,
     IntegrationIngestEventProcessor,
     IntegrationRetrySweepProcessor,

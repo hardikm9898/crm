@@ -782,6 +782,41 @@ prisma migrate deploy` after generating a migration.
   a connection work the moment it is made. A question answered twice keeps **both** answers — taking
   the first discards something a person said — and a Google column is keyed by `column_id` rather
   than `column_name`, because the name is the wording and changes when the form is edited.
+- **A provider's timestamp is not a column we can sort by.** Meta's `timestamp` is in **whole
+  seconds**, and the first version of the WhatsApp ingestion wrote it into `messages.created_at` —
+  which is the partition key *and* the inbox's sort order. Two messages in one second then tie, and
+  "the latest message" became whichever row the planner happened to return: the conversation list
+  showed the previous message as its preview, found by a test that sent two messages in the same
+  second. `created_at` is **ours** (when the delivery arrived), `sent_at` is **theirs**, and the
+  24-hour window is measured from `sent_at` because Meta's clock is the one that closes it. A
+  provider-supplied instant in a partition key is also a provider's clock deciding which partition a
+  row lands in.
+- **A delivery that contains nothing for us must be acknowledged, and which door decides that cannot
+  be a near-synonym.** The branch between "ledger the events and queue them" and "the body is one
+  lead, capture it in the request" was read off `deliveryIsAReference` — true for Meta Lead Ads and
+  false for everything else, which happened to agree until WhatsApp, whose payload carries the
+  message in full *and* names its own events. A status receipt about a message we sent therefore
+  fell through to the single-lead path and answered **400**, which is how Meta learns to disable an
+  endpoint and stop delivering the messages a business is paying for. `deliveryShape`
+  (`events | single_lead | none`) is declared per provider and reconciled against the adapter at
+  boot — the second time this registry has paid for a derived capability, after
+  `authKind === 'shared_secret'` standing in for "has an inbound door".
+- **A globally unique column cannot be checked for a collision with the scoped client.**
+  `whatsapp_numbers.phone_number_id` has no `organization_id` on purpose: it is the only thing an
+  inbound delivery carries, so it must resolve a workspace. The connect path's "is this number
+  already somebody else's" check read it through the tenant-scoped client, which cannot see the row
+  that would collide — so the branch was dead and the real answer was a raw unique violation, a 500
+  on a mistake with a sentence somebody can act on. The read has to be `withPlatformScope`, and the
+  refusal a 422.
+- **A test fixture that connects a provider makes a real request to that provider.** Connecting
+  probes immediately (`probeQuietly`), so the route-authorization sweep's new `whatsapp_cloud`
+  connection called **graph.facebook.com** from the test run — with a token that is not a token.
+  `test/setup.ts` now defaults `META_GRAPH_URL` to a closed loopback port, which fails locally in
+  milliseconds; the two suites that need a Graph API run one in-process and override it.
+- **A `<select>` in a client component needs `key` + `defaultValue`, not `value`.** Third time: the
+  WhatsApp default-agent picker is the payment-method lesson again. `key={`agent-${echoed}`}` with
+  `defaultValue={echoed}` remounts the select exactly when the echoed value changes and leaves it
+  alone while somebody is choosing.
 - **A `message` key returned inside a handler's payload is not the envelope's `message`.** Three
   assertions read `body.message` and got `undefined`, because the envelope only lifts what
   `withMessage()` sets. The public lead API's family of endpoints deliberately carries its sentence

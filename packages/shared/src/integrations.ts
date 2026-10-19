@@ -12,7 +12,14 @@ import { isValidCustomFieldKey } from './custom-fields.js';
  */
 
 /** What a connection can do for the workspace. Used by a screen to group, and by a guard to refuse. */
-export const INTEGRATION_CAPABILITIES = ['lead_ingest', 'email_send'] as const;
+/**
+ * What a connection can do for the workspace. Used by a screen to group, and by the inbound
+ * pipeline to decide **which** pipeline: a `lead_ingest` delivery becomes a lead through the
+ * capture path, and a `messaging` one becomes a conversation and a message. That branch is read
+ * from here rather than from the provider's name, so the third messaging provider needs no change
+ * to the code that routes it.
+ */
+export const INTEGRATION_CAPABILITIES = ['lead_ingest', 'email_send', 'messaging'] as const;
 export type IntegrationCapability = (typeof INTEGRATION_CAPABILITIES)[number];
 
 /**
@@ -48,6 +55,27 @@ export type InboundVerification = (typeof INBOUND_VERIFICATIONS)[number];
  * broken, and treating it as broken would make every provider blip a reconnect prompt. `revoked` is
  * the one state a person must act on: the credential is gone and no retry will fix it.
  */
+/**
+ * What a delivery from this provider **is**, which decides which door it goes through.
+ *
+ * `events` — the body names its own events, each with the provider's own id. The inbound door
+ *   writes a ledger row per event, queues one job each and answers 200 before the work. A delivery
+ *   that names **none** (Meta's `page` changes, a WhatsApp status receipt about a message we sent)
+ *   is acknowledged and dropped: a 4xx teaches a provider to disable the endpoint, which stops the
+ *   deliveries we do want.
+ * `single_lead` — the body **is** one lead, with no id of its own, so it is captured inside the
+ *   request and deduplicated on `Idempotency-Key`.
+ * `none` — the provider does not post to us at all.
+ *
+ * Declared rather than derived. It was `deliveryIsAReference` that stood in for this question, and
+ * the two are different facts that happened to agree: WhatsApp sends the message in full
+ * (`deliveryIsAReference: false`) **and** names its own events, so a status-only delivery fell
+ * through to the single-lead path and answered 400 at Meta — the near-synonym trap this registry
+ * has now paid for twice.
+ */
+export const INTEGRATION_DELIVERY_SHAPES = ['events', 'single_lead', 'none'] as const;
+export type IntegrationDeliveryShape = (typeof INTEGRATION_DELIVERY_SHAPES)[number];
+
 export const INTEGRATION_STATUSES = ['connected', 'degraded', 'error', 'revoked'] as const;
 export type IntegrationStatus = (typeof INTEGRATION_STATUSES)[number];
 
@@ -109,6 +137,8 @@ export interface IntegrationProvider {
    * providers.
    */
   readonly deliveryIsAReference: boolean;
+  /** What a delivery from this provider is, and therefore which inbound door it goes through. */
+  readonly deliveryShape: IntegrationDeliveryShape;
 }
 
 /**
@@ -191,6 +221,7 @@ export const INTEGRATION_PROVIDERS: readonly IntegrationProvider[] = [
     probeEveryMinutes: null,
     inboundVerification: 'hmac_header',
     deliveryIsAReference: false,
+    deliveryShape: 'single_lead',
   },
   {
     key: 'postmark',
@@ -229,6 +260,7 @@ export const INTEGRATION_PROVIDERS: readonly IntegrationProvider[] = [
     probeEveryMinutes: 10,
     inboundVerification: 'none',
     deliveryIsAReference: false,
+    deliveryShape: 'none',
   },
   {
     key: 'meta_lead_ads',
@@ -294,6 +326,55 @@ export const INTEGRATION_PROVIDERS: readonly IntegrationProvider[] = [
     inboundVerification: 'hmac_header',
     // Meta sends a `leadgen_id`. The lead itself is a second request, with the page token.
     deliveryIsAReference: true,
+    deliveryShape: 'events',
+  },
+  {
+    key: 'whatsapp_cloud',
+    label: 'WhatsApp',
+    summary:
+      'Your WhatsApp Business number, so a customer’s message arrives here as a conversation beside everything else you know about them.',
+    capabilities: ['messaging'],
+    // Two secrets again, and for the same two jobs as Meta Lead Ads: the app secret proves a
+    // delivery is Meta's, and the access token reaches the Graph API to read the business and
+    // (from the next step) to send.
+    authKind: 'api_key',
+    credentialFields: [
+      {
+        key: 'appSecret',
+        label: 'App secret',
+        hint: 'Meta for Developers → your app → Settings → Basic → App Secret. We check every delivery’s signature against it.',
+        required: true,
+      },
+      {
+        key: 'accessToken',
+        label: 'System user access token',
+        hint: 'A permanent token for the WhatsApp Business Account, with whatsapp_business_messaging and whatsapp_business_management.',
+        required: true,
+      },
+    ],
+    settings: [
+      {
+        key: 'wabaId',
+        label: 'WhatsApp Business Account id',
+        hint: 'Meta Business Suite → WhatsApp Accounts. The numbers on it are discovered for you.',
+        required: true,
+      },
+      {
+        key: 'verifyToken',
+        label: 'Verify token',
+        hint: 'Any phrase you choose. Meta echoes it once when you add the callback URL, and we answer only if it matches.',
+        required: false,
+      },
+    ],
+    // A WhatsApp message is a **conversation**, not a lead capture: the pipeline creates the lead
+    // itself when nobody recognises the number, so there is no field mapping to write and offering
+    // one would be a screen promising something nothing reads.
+    mappable: false,
+    defaultMapping: [],
+    probeEveryMinutes: 10,
+    inboundVerification: 'hmac_header',
+    deliveryIsAReference: false,
+    deliveryShape: 'events',
   },
   {
     key: 'google_ads_leads',
@@ -333,6 +414,7 @@ export const INTEGRATION_PROVIDERS: readonly IntegrationProvider[] = [
     probeEveryMinutes: null,
     inboundVerification: 'payload_key',
     deliveryIsAReference: false,
+    deliveryShape: 'events',
   },
 ];
 

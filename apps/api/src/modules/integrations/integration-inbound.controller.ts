@@ -129,14 +129,22 @@ export class IntegrationInboundController {
       };
     }
 
-    // ── No event id of its own: capture in the request ──────────────────────
-    if (registered?.deliveryIsAReference === true) {
-      // A delivery this provider says is a reference, carrying nothing we recognise, is
-      // acknowledged rather than refused: Meta sends `page` changes nobody subscribed to, and a
-      // 4xx would teach it to stop delivering the ones we do want.
+    // ── A provider whose deliveries name their own events, and this one names none ──
+    if (registered?.deliveryShape === 'events') {
+      // Acknowledged rather than refused: Meta sends `page` changes nobody subscribed to, and
+      // WhatsApp sends status receipts about messages we sent. A 4xx teaches a provider to disable
+      // the endpoint, which stops the deliveries we do want — so the one honest answer to "nothing
+      // here concerns us" is 200 and a sentence saying so.
       reply.status(200);
-      return { accepted: 0, duplicates: 0, ignored: 1, message: 'Nothing in that delivery was a lead' };
+      return {
+        accepted: 0,
+        duplicates: 0,
+        ignored: 1,
+        message: 'Received. Nothing in that delivery was for us.',
+      };
     }
+
+    // ── No event id of its own: the body is one lead, captured in the request ──
 
     const result = await this.inbound.captureInline(connection, payload, {
       rawBody,

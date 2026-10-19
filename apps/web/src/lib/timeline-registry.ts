@@ -98,11 +98,12 @@ function answerLines(payload: Record<string, unknown>): string[] {
 }
 
 /**
- * Only the types Phase 2 can actually produce are described here.
+ * Only the types the product can actually produce are described here.
  *
  * Adding a describer for `whatsapp.sent` today would be writing copy for a screen nobody can reach,
- * and it would rot before it was read. The fallback covers them until their phase lands, which is
- * exactly what the fallback is for.
+ * and it would rot before it was read — `whatsapp.received` is described because Phase 5 step 1
+ * writes it, and its three outbound siblings are not. The fallback covers them until their step
+ * lands, which is exactly what the fallback is for.
  */
 const DESCRIBERS: Readonly<Record<string, Describer>> = {
   'lead.created': (payload) => ({
@@ -528,6 +529,20 @@ const DESCRIBERS: Readonly<Record<string, Describer>> = {
         : ''
     }.`,
     tone: 'danger',
+  }),
+
+  // ── WhatsApp (`FR-WA-3`, `FR-WA-6`) ───────────────────────────────────────
+  //
+  // Inbound only, because inbound is all Phase 5 step 1 writes. The sentence carries the message
+  // itself: an entry reading "Whatsapp received" would make a business owner open the inbox to find
+  // out what was said, which is the whole thing they came to this screen to read.
+  'whatsapp.received': (payload) => ({
+    label: 'WhatsApp',
+    description: `${text(payload, 'profileName') ?? text(payload, 'from') ?? 'They'} messaged on WhatsApp${
+      text(payload, 'preview') ? `: “${text(payload, 'preview')}”` : ''
+    }.`,
+    // Amber for the same reason a dialled call is: somebody is waiting for an answer.
+    tone: 'warning',
   }),
 };
 

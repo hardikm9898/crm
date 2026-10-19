@@ -1,4 +1,3 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import { AppError, flattenMetaFieldData } from '@leados/shared';
 import { APP_CONFIG } from '../../../infra/config/config.module.js';
@@ -11,6 +10,13 @@ import type {
   VerificationResult,
 } from '../integration.port.js';
 import { META_APP_SECRET, META_PAGE_TOKEN } from './secret-names.js';
+import {
+  answerHubChallenge,
+  isCredentialFailure,
+  metaErrorCode,
+  metaMessage,
+  verifyHubSignature,
+} from './meta-signature.js';
 
 
 /** How long a probe or a lead fetch waits before giving up. */
@@ -98,15 +104,7 @@ export class MetaLeadAdsAdapter implements IntegrationAdapter {
     query: Readonly<Record<string, string | undefined>>;
     settings: Record<string, unknown>;
   }): string | null {
-    if (input.query['hub.mode'] !== 'subscribe') return null;
-    const expected = input.settings['verifyToken'];
-    const presented = input.query['hub.verify_token'];
-    if (typeof expected !== 'string' || expected === '' || typeof presented !== 'string') {
-      return null;
-    }
-    if (!safeEqual(presented, expected)) return null;
-    const challenge = input.query['hub.challenge'];
-    return typeof challenge === 'string' && challenge !== '' ? challenge : null;
+    return answerHubChallenge(input);
   }
 
   verifyInbound(input: {
@@ -114,33 +112,12 @@ export class MetaLeadAdsAdapter implements IntegrationAdapter {
     headers: Readonly<Record<string, string | undefined>>;
     secrets: Readonly<Record<string, string>>;
   }): VerificationResult {
-    const header = input.headers['x-hub-signature-256'];
-    if (typeof header !== 'string' || header.trim() === '') {
-      return {
-        ok: false,
-        message:
-          'This endpoint requires Meta’s signature. Deliveries must carry X-Hub-Signature-256; check the app this Page is subscribed through.',
-      };
-    }
-    if (!header.startsWith('sha256=')) {
-      return {
-        ok: false,
-        message: 'The X-Hub-Signature-256 header is not in Meta’s form: sha256=<hex digest>.',
-      };
-    }
-    const expected = createHmac('sha256', input.secrets[META_APP_SECRET] ?? '')
-      .update(input.rawBody)
-      .digest('hex');
-    if (!safeEqual(header.slice('sha256='.length), expected)) {
-      return {
-        ok: false,
-        // The likeliest cause, named: an app secret from a different app signs perfectly and
-        // matches nothing, and "signature mismatch" alone sends somebody hunting the wrong thing.
-        message:
-          'That signature does not match the body. The app secret on this connection must belong to the app the Page is subscribed through.',
-      };
-    }
-    return { ok: true };
+    return verifyHubSignature({
+      rawBody: input.rawBody,
+      headers: input.headers,
+      appSecret: input.secrets[META_APP_SECRET] ?? '',
+      productHint: 'the Page',
+    });
   }
 
   /**
@@ -253,14 +230,7 @@ export class MetaLeadAdsAdapter implements IntegrationAdapter {
       if (response.ok && code === null) {
         return { outcome: 'ok', latencyMs, detail: { status: response.status, page: metaName(body) } };
       }
-      // 190 is a token that has been revoked, expired or invalidated; 102 is a session error; 10
-      // and 200-series are missing permissions, which a person also has to fix.
-      const unauthorized =
-        response.status === 401 ||
-        response.status === 403 ||
-        code === 190 ||
-        code === 102 ||
-        code === 10;
+      const unauthorized = isCredentialFailure(response.status, code);
       return {
         outcome: unauthorized ? 'unauthorized' : 'degraded',
         latencyMs,
@@ -276,22 +246,6 @@ export class MetaLeadAdsAdapter implements IntegrationAdapter {
   }
 }
 
-function safeEqual(a: string, b: string): boolean {
-  const left = Buffer.from(a, 'utf8');
-  const right = Buffer.from(b, 'utf8');
-  if (left.length !== right.length) return false;
-  return timingSafeEqual(left, right);
-}
-
-function metaErrorCode(body: string): number | null {
-  try {
-    const parsed = JSON.parse(body) as { error?: { code?: unknown } };
-    return typeof parsed.error?.code === 'number' ? parsed.error.code : null;
-  } catch {
-    return null;
-  }
-}
-
 function metaName(body: string): string | null {
   try {
     const parsed = JSON.parse(body) as { name?: unknown };
@@ -299,14 +253,4 @@ function metaName(body: string): string | null {
   } catch {
     return null;
   }
-}
-
-function metaMessage(body: string): string {
-  try {
-    const parsed = JSON.parse(body) as { error?: { message?: unknown } };
-    if (typeof parsed.error?.message === 'string') return parsed.error.message.slice(0, 300);
-  } catch {
-    /* not JSON; the raw text is the best answer we have */
-  }
-  return body.slice(0, 300);
 }

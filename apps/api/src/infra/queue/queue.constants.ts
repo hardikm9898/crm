@@ -107,6 +107,15 @@ export const JOBS = {
    */
   INTEGRATION_RETRY_SWEEP: 'maintenance.integration-retry',
   /**
+   * One inbound WhatsApp message, turned into a conversation and a message (`FR-WA-6`).
+   *
+   * A separate job from `integration.ingest-event` because it is a different pipeline, not a
+   * different provider: a lead-ingest delivery becomes a lead through the capture path, and a
+   * messaging one becomes a conversation. Which job a delivery gets is read from the provider's
+   * **capabilities**, so the second messaging provider needs no change to the code that routes it.
+   */
+  WHATSAPP_INGEST_MESSAGE: 'whatsapp.ingest-message',
+  /**
    * One event, fanned out to the endpoints that asked for it (`FR-API-4`). Reads the subscribed
    * endpoints and writes a `webhook_deliveries` row per endpoint — the store that makes a delivery
    * survive a worker restart, exactly as `inbound_payloads` does inbound.

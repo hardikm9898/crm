@@ -305,6 +305,8 @@ export function inboundInstruction(provider: string): string {
   switch (provider) {
     case 'meta_lead_ads':
       return 'In Meta for Developers, add this as the app’s Webhooks callback URL for the Page, with the verify token you set above, and subscribe it to leadgen.';
+    case 'whatsapp_cloud':
+      return 'In Meta for Developers, add this as the app’s Webhooks callback URL for WhatsApp, with the verify phrase you set above, and subscribe it to the messages field.';
     case 'google_ads_leads':
       return 'In Google Ads, open the lead form extension → Webhook integration, and paste this URL with the key below.';
     default:

@@ -180,6 +180,14 @@ const REQUIRED_INDEXES = [
   // The retry queue for provider deliveries that have not become leads. Partial, so it stays small
   // however many succeed.
   'provider_events_unresolved',
+  // Phase 5, step 1 — WhatsApp. `messages_provider_message_unique` is `FR-WA-6`'s race guard and
+  // is partial, because an outbound message has no provider id until Meta accepts it;
+  // `conversations_window_closing` has no `organization_id` prefix because the sweep that reads it
+  // runs across every tenant.
+  'messages_provider_message_unique',
+  'messages_body_search',
+  'conversations_unread',
+  'conversations_window_closing',
 ];
 
 /**
@@ -591,6 +599,23 @@ const REQUIRED_CONSTRAINTS = [
   'provider_events_received_is_untried',
   'provider_events_raw_is_an_object',
   'provider_events_connection_same_org_fk',
+  // Phase 5, step 1 — WhatsApp: nine CHECKs and six composite FKs.
+  'whatsapp_numbers_display_phone_e164',
+  'conversations_contact_e164',
+  'conversations_unread_count_sane',
+  'conversations_closed_says_when',
+  'conversations_window_needs_inbound',
+  'messages_inbound_has_no_sender',
+  'messages_failed_says_why',
+  'messages_provider_id_shape',
+  'messages_payload_is_an_object',
+  'whatsapp_accounts_connection_same_org_fk',
+  'whatsapp_numbers_account_same_org_fk',
+  'whatsapp_numbers_default_agent_same_org_fk',
+  'conversations_number_same_org_fk',
+  'conversations_lead_same_org_fk',
+  'conversations_assignee_same_org_fk',
+  'messages_conversation_same_org_fk',
 ];
 
 describe('hand-written indexes survive every generated migration', () => {
@@ -679,6 +704,27 @@ describe('the objects Prisma cannot describe at all', () => {
     const rows = await h.unscoped.$queryRaw<
       { count: bigint }[]
     >`SELECT count(*) AS count FROM pg_proc WHERE proname = 'ensure_webhook_delivery_partition'`;
+    expect(Number(rows[0]?.count ?? 0)).toBe(1);
+  });
+
+  it('keeps messages partitioned by range, by the month', async () => {
+    const rows = await h.unscoped.$queryRaw<
+      { partition_strategy: string | null; partitions: bigint }[]
+    >`
+      SELECT (SELECT partstrat::text FROM pg_partitioned_table WHERE partrelid = 'messages'::regclass)
+               AS partition_strategy,
+             (SELECT count(*) FROM pg_inherits WHERE inhparent = 'messages'::regclass)
+               AS partitions
+    `;
+    expect(rows[0]?.partition_strategy).toBe('r');
+    expect(Number(rows[0]?.partitions ?? 0)).toBeGreaterThan(1);
+    expect(await indexExists('messages_default_pkey')).toBe(true);
+  });
+
+  it('keeps the message partition function the maintenance job calls', async () => {
+    const rows = await h.unscoped.$queryRaw<
+      { count: bigint }[]
+    >`SELECT count(*) AS count FROM pg_proc WHERE proname = 'ensure_message_partition'`;
     expect(Number(rows[0]?.count ?? 0)).toBe(1);
   });
 

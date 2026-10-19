@@ -425,6 +425,34 @@ GET  /whatsapp/usage                         messages by category/period
 POST /whatsapp/campaigns                     consent-checked bulk (FR-WA-10)
 ```
 
+> **Amendment, 2026-10-19 (implementation, Phase 5 step 1 — WhatsApp inbound).** Five of these are
+> built; the rest wait for the steps that can honestly answer them, because a route that accepted a
+> message nothing could deliver would be worse than its absence.
+>
+> ```
+> GET  /conversations            ?status=&assigned=me|unassigned&unread=true|false&numberId=&leadId=&q=
+> GET  /conversations/{id}       + the lead context block (FR-WA-8)
+> GET  /conversations/{id}/messages   cursor, newest first, `?before=<messageId>`
+> POST /conversations/{id}/read       marks it read; nothing is sent
+> GET  /whatsapp/accounts             the WABAs and their numbers
+> POST /whatsapp/accounts             { connectionId } — discovers the numbers, idempotent
+> PATCH /whatsapp/numbers/{id}        { userId | null } — who answers it by default
+> ```
+>
+> - **Search is a query parameter, not `/conversations/search`.** `?q=` matches a message body
+>   (through the GIN index) or the contact's number, and it composes with the other filters — a
+>   separate endpoint would be a second list with its own scoping to get wrong.
+> - **`?channel=` and `?tag=` are absent** because `whatsapp` is the only channel and nothing writes
+>   a tag yet. `?numberId=` and `?leadId=` are here instead, which are the two filters an inbox
+>   needs on day one.
+> - **`meta.unread` and `meta.open` are aggregates over the whole filter**, not the page. A badge
+>   that counted the rows it loaded would tell an agent their inbox is a fraction of its real size.
+> - **`POST /conversations/{id}/read` takes `conversation:read`**, not a write permission: reading is
+>   what it records, and an agent who may open a conversation may say they have read it.
+> - **`/whatsapp/numbers` is a PATCH on one number, not a collection.** Numbers are discovered from
+>   Meta rather than created by hand — a number somebody mistyped would silently receive nothing —
+>   so the only thing a person does to one is say who answers it.
+
 ### Capture, integrations, developer platform
 
 ```
@@ -998,6 +1026,29 @@ return `401` and are counted per connection with alerting on spikes.
 >   carries a partial unique index on `(provider, provider_message_id)` that does it; a second
 >   store before a second provider exists would be two records of one fact. It arrives with the
 >   integration framework in Phase 4, which is where connection ids come from.
+
+> **Amendment, 2026-10-19 (implementation, Phase 5 step 1).** WhatsApp Cloud's two routes are built,
+> and they are the integration framework's own door rather than a pair of their own:
+>
+> | Route                                     | Provider | Verification                                        |
+> | ----------------------------------------- | -------- | --------------------------------------------------- |
+> | `GET /api/v1/wh/whatsapp_cloud/{id}`      | Meta     | `hub.verify_token`, answered as **plain text**      |
+> | `POST /api/v1/wh/whatsapp_cloud/{id}`     | Meta     | `X-Hub-Signature-256` over the raw body (`FR-WA-6`) |
+>
+> - **`whatsapp_cloud`, not `whatsapp`**: the path segment is the registry's provider key, so the
+>   door is the one every provider uses and a new provider needs no route.
+> - **The challenge is answered outside the envelope.** Meta compares the response body to the
+>   challenge it sent, so `{"success":true,"data":"1158…"}` would never confirm the subscription.
+>   A mismatched verify token answers **403** rather than 404: the connection exists, and a 404
+>   sends somebody checking a URL they pasted correctly.
+> - **A delivery that names no event of ours is acknowledged**, not refused. WhatsApp posts status
+>   receipts about messages we sent and `page` changes nobody subscribed to; a 4xx teaches Meta to
+>   disable the endpoint, which stops the deliveries we do want. Which answer a provider gets is
+>   decided by its declared `deliveryShape` (`events` | `single_lead` | `none`) rather than by a
+>   near-synonym — see the amendment in §4 of `integration-architecture.md`.
+> - **The ledger row is written before the work, and `200` is answered before it is done.** A
+>   provider that waits for us is a provider that retries. `provider_events` holds the whole
+>   delivery; one job is queued per message, keyed on the ledger row's id.
 
 > **Amendment, 2026-10-19 (implementation, Phase 4 step 6 — the integration framework).** The
 > `/wh/{provider}/{connectionId}` shape above is now built, with one route and one provider

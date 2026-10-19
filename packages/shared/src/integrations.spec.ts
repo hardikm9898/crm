@@ -12,6 +12,7 @@ import {
   mappingProblems,
   needsReconnect,
   nextStatus,
+  INTEGRATION_DELIVERY_SHAPES,
   type FieldMapping,
 } from './index.js';
 
@@ -39,6 +40,17 @@ describe('the provider registry', () => {
       // A provider whose delivery is only a reference must be one that posts to us at all.
       if (provider.deliveryIsAReference) {
         expect(provider.inboundVerification, provider.key).not.toBe('none');
+      }
+      // The shape the inbound door branches on, and the one thing it must agree with: whether this
+      // provider posts to us at all. Everything else about the two is deliberately independent —
+      // WhatsApp sends the message in full and still names its own events.
+      expect(INTEGRATION_DELIVERY_SHAPES, provider.key).toContain(provider.deliveryShape);
+      expect(provider.deliveryShape === 'none', provider.key).toBe(
+        provider.inboundVerification === 'none',
+      );
+      // A reference is a thing the ledger names, so it is always an `events` delivery.
+      if (provider.deliveryIsAReference) {
+        expect(provider.deliveryShape, provider.key).toBe('events');
       }
       for (const setting of provider.settings) {
         expect(setting.key, provider.key).toMatch(/^[a-zA-Z][a-zA-Z0-9]*$/);
@@ -305,5 +317,8 @@ describe('the providers that bring leads in', () => {
     // Meta is the one whose delivery is a reference: it sends an id, not the answers.
     expect(metaEntry.deliveryIsAReference).toBe(true);
     expect(googleEntry.deliveryIsAReference).toBe(false);
+    // Both name their own events, which is a different fact from the one above.
+    expect(metaEntry.deliveryShape).toBe('events');
+    expect(googleEntry.deliveryShape).toBe('events');
   });
 });

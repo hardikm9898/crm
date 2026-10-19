@@ -326,6 +326,44 @@ and revoke consent immediately; per-number throughput respects the messaging tie
 bulk sends; every bulk recipient is audited. We do not build, document or support any unofficial
 WhatsApp automation path.
 
+> **Amendment, 2026-10-19 (implementation, Phase 5 step 1 — WhatsApp inbound).** The inbound half is
+> built, as the reference implementation of the framework Phase 4 step 6 shipped. What the adapter
+> actually is: `verifyInbound` (`X-Hub-Signature-256` over the raw body, constant-time), `challenge`
+> (the `hub.challenge` echo, answered as plain text outside the response envelope), `parseDelivery`
+> (one event per message, typed `message.<type>`), `probe` (`GET /{wabaId}?fields=id,name`) and
+> `listNumbers`. Five things differ from, or add to, the sketch above:
+>
+> - **The connection holds a set of secrets, not one**: an app secret we verify deliveries with and
+>   an access token we send with. They are sealed as one JSON envelope under the connection's own id,
+>   because one envelope rather than one column per secret keeps "the app secret was rotated and the
+>   page token was not" out of the schema.
+> - **The numbers are discovered, never typed.** `POST /whatsapp/accounts` probes the WABA and then
+>   reads `/{wabaId}/phone_numbers`; `phone_number_id` is what resolves an inbound delivery to a
+>   workspace, so a number somebody mistyped would silently receive nothing. The call is idempotent,
+>   which is how a workspace refreshes the list, and a number Meta stops listing is marked
+>   **inactive** rather than deleted — a conversation references it, and what arrived at a number the
+>   business no longer has is still the history.
+> - **"Does this provider have an inbound door" is `inboundVerification`, and "what is in a
+>   delivery" is `deliveryShape`.** Both are declared on the registry entry and reconciled against
+>   the adapter at boot. WhatsApp is what broke the near-synonyms twice: it holds a token we send
+>   **and** posts to us (so `authKind === 'shared_secret'` was the wrong test for having a door),
+>   and it sends the message in full **and** names its own events (so `deliveryIsAReference` was the
+>   wrong test for which pipeline a delivery goes down — a status-only delivery took the single-lead
+>   path and answered 400, which is how Meta learns to disable an endpoint).
+> - **Tenant resolution is from `metadata.phone_number_id` only**, not cross-checked against the
+>   path's connection id as the paragraph above says. The signature already proves the app, and the
+>   number is globally unique by design; what **is** cross-checked is that the number's workspace and
+>   the ledger row's workspace agree, which is the check that matters — delivering one business's
+>   customer's message to another is the one outcome worth a 404.
+> - **Media is not downloaded yet.** An inbound image is stored with its payload, `body` is null and
+>   the preview is a sentence ("Sent a photo") rather than a placeholder like `[image]`, which would
+>   be indistinguishable from somebody typing it. `message_media` and the download job arrive with
+>   sending.
+>
+> Outbound, templates, media and the opt-out keyword are unbuilt, and so is Embedded Signup: OAuth
+> is still absent from `INTEGRATION_AUTH_KINDS`, and a WABA is connected here with a manual token —
+> the fallback the paragraph above calls a fallback is, for now, the only path.
+
 ---
 
 ## 5. Credential vault (`NFR-SEC-3`)
@@ -545,6 +583,16 @@ the abstraction is wrong and the PR is rejected.
 > bulkhead and token buckets wait for a provider whose quota makes them necessary. What exists
 > instead is the thing a failed probe produces — a standing, a recorded reason, and one notification
 > — which is the degradation §7's last row asks for.
+
+> **Amendment, 2026-10-19 (implementation, Phase 5 step 1).** Step 1 of the list above is now four
+> declarations wide, and every one of them is reconciled against the adapter at boot: a provider
+> that declares a probe cadence must be probeable; one that declares an `inboundVerification` other
+> than `none` must be able to verify; one whose `deliveryShape` is `events` must have a
+> `parseDelivery`, and one whose shape is `none` must not have a door at all. Each of those pairs
+> exists because a wrong value in it is a 500 — or worse, a 4xx at the provider — on the first real
+> delivery, and a boot failure is the trade this registry makes. **Declare a capability; never
+> derive it from another one that happens to agree.** WhatsApp has now broken two such derivations,
+> and neither was visible until a real payload arrived.
 
 > **Amendment, 2026-10-19 (implementation, Phase 4 step 7).** The checklist held: both connectors
 > were a registry entry and an adapter, and **no domain module changed** — which is the test §8 ends

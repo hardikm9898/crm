@@ -817,6 +817,57 @@ RESTRICT`, like every other cross-table reference here: `SetNull` and `SetDefaul
 > idempotent. Said plainly here because a column with no writer is otherwise indistinguishable from
 > a feature somebody forgot — the trap the money columns paid for.
 
+> **Amendment, 2026-10-19 (implementation, Phase 5 step 1 — WhatsApp inbound).**
+> `whatsapp_accounts`, `whatsapp_numbers`, `conversations` and `messages` are built; the five other
+> tables in this section (`whatsapp_templates`, `conversation_participants`, `message_media`,
+> `message_status_events`, `canned_replies`) wait for the steps that write them — templates and
+> media with sending, participants and canned replies with the shared inbox. Seven differences
+> from the sketch above:
+>
+> - **`messages.provider_message_id` is not globally unique, and could not be.** The table is
+>   partitioned by `created_at`, so every unique index on it must contain the partition key:
+>   `messages_provider_message_unique` is `(provider, provider_message_id, created_at) WHERE
+>   provider_message_id IS NOT NULL`. That makes it a **race guard**, not the idempotency gate the
+>   sketch assumed — the same message id next month would be allowed. The replay guarantee lives in
+>   `provider_events`, which is deliberately not partitioned, exactly as it does for the ad
+>   connectors; `FR-WA-6` is measured there and this index is what stops two jobs racing.
+>   The index is partial because an outbound message has no provider id until Meta accepts it, and
+>   a complete index would allow exactly one unsent message per workspace.
+> - **`created_at` is ours and `sent_at` is theirs.** `created_at` is the partition key and the
+>   inbox's sort order, so it is the instant the delivery reached us; `sent_at` is the instant Meta
+>   says the customer sent it. Writing the provider's timestamp into `created_at` is what the first
+>   implementation did, and it is wrong twice: Meta's timestamp is in **whole seconds**, so two
+>   messages in one second tie and "the latest message" becomes whichever row the planner returns
+>   first, and a provider clock we do not control decides which partition a row lands in.
+> - **The 24-hour window is measured from `sent_at`**, not from our receipt: Meta's clock closes it,
+>   and a window computed from a later instant would let an agent write a free-form reply Meta then
+>   refuses. `conversations_window_needs_inbound` refuses a `window_expires_at` with no
+>   `last_inbound_at` to count from.
+> - **`messages.reply_to_message_id` is `reply_to_provider_id`**, a provider id rather than a
+>   foreign key: the message being answered may not have arrived yet, and a composite FK into a
+>   partitioned table would need its instant as well as its id.
+> - **`whatsapp_numbers.phone_number_id` is unique _globally_**, with no `organization_id` — one of
+>   the few such columns in this schema, and deliberately so: an inbound delivery names a
+>   `phone_number_id` and nothing else, so it is the only thing that can resolve which workspace a
+>   message belongs to. A per-tenant unique would make that resolution a guess.
+> - **Nine CHECK constraints**, each written so no sub-expression can be NULL while the row is
+>   accepted: `whatsapp_numbers_display_phone_e164`, `conversations_contact_e164`,
+>   `conversations_unread_count_sane`, `conversations_closed_says_when`,
+>   `conversations_window_needs_inbound`, `messages_inbound_has_no_sender` (which is what stops a
+>   colleague's name appearing on a customer's words), `messages_failed_says_why`,
+>   `messages_provider_id_shape`, `messages_payload_is_an_object`.
+> - **The indexes below are built with two corrections.** `conversations_unread` is partial on
+>   `unread_count > 0 AND status <> 'closed'` — the predicate the badge and the list share, because
+>   a count and the list it belongs to must not be able to disagree. `messages_body_search` is a GIN
+>   index on `to_tsvector('simple', coalesce(body, ''))`, and the search that uses it is raw SQL, so
+>   `organization_id` is written out by hand there: raw SQL passes through neither the tenant-scoping
+>   extension nor the data scope.
+>
+> `conversations.lock_user_id`, `lock_expires_at`, `priority`, `snoozed_until`, `first_response_at`
+> and `customer_id` exist with **no writer**: they are the columns the shared inbox fills. Said
+> plainly, because a column with no writer is otherwise indistinguishable from a feature somebody
+> forgot.
+
 Indexes: `(organization_id, channel_account_id, status, last_message_at DESC)` for the inbox list;
 `(organization_id, assigned_user_id, status, last_message_at DESC)` for "my conversations";
 `(organization_id, conversation_id, created_at DESC)` for message paging;

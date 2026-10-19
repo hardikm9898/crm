@@ -428,6 +428,27 @@ All schedules are working-hours/timezone aware where they touch humans — a fol
 >   the capture's own idempotency key is the provider's event id. An at-least-once queue over the
 >   one guarantee this step exists for needs both.
 
+> **Amendment, 2026-10-19 (implementation, Phase 5 step 1 — WhatsApp inbound).** One more job, and
+> one more partition sweep:
+>
+> | Schedule     | Job                              | Purpose                                                            |
+> | ------------ | -------------------------------- | ------------------------------------------------------------------ |
+> | on demand    | `whatsapp.ingest-message`        | One `provider_events` row → a conversation, a message, a lead, a timeline entry |
+> | monthly      | `maintenance.activity-partitions`| now also creates `messages_*` months ahead and reports stranded rows |
+>
+> - **Which job a delivery becomes is read from the provider's capabilities**, not from its name:
+>   a `messaging` provider's events go to `whatsapp.ingest-message` and a `lead_ingest` provider's to
+>   `integration.ingest-event`. The third messaging provider needs no change to the code that routes
+>   it, which is the whole argument for the registry.
+> - **The job id is still the ledger row's id** (`integration-event-<uuid>`), so the same event
+>   cannot be queued twice while a different event still can, and `maintenance.integration-retry`
+>   re-queues an unresolved WhatsApp delivery exactly as it does an ad one.
+> - **The subject comes from `payload.aggregateId`**, like every other processor: the envelope is
+>   stable and a message delivered by an older release still has to process.
+> - **`messages` is partitioned monthly by `created_at`**, so it joins `activities` in the partition
+>   sweep. A month with no partition is worse than an error: rows land in `messages_default`, work
+>   fine, and then block attaching the real partition until they are moved.
+
 ## 6. Retry, failure and DLQ
 
 Policy: exponential backoff with full jitter, per-queue attempt caps (§3). Errors are classified:

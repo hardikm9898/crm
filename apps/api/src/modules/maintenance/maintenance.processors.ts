@@ -254,6 +254,15 @@ export class ActivityPartitionProcessor implements JobProcessor {
           SELECT ensure_webhook_delivery_partition(${target}::timestamptz)
         `;
         if (deliveryRow) created.push(deliveryRow.ensure_webhook_delivery_partition);
+        // And `messages`, a fourth time: a WhatsApp workspace's fastest-growing table, retained
+        // for 24 months (§15), so the drop is a partition drop and the month has to exist before
+        // the first message of it arrives.
+        const [messageRow] = await this.db.client.$queryRaw<
+          { ensure_message_partition: string }[]
+        >`
+          SELECT ensure_message_partition(${target}::timestamptz)
+        `;
+        if (messageRow) created.push(messageRow.ensure_message_partition);
       }
 
       const [stranded] = await this.db.client.$queryRaw<{ count: bigint }[]>`
@@ -265,10 +274,14 @@ export class ActivityPartitionProcessor implements JobProcessor {
       const [strandedDeliveries] = await this.db.client.$queryRaw<{ count: bigint }[]>`
         SELECT count(*)::bigint AS count FROM webhook_deliveries_default
       `;
+      const [strandedMessages] = await this.db.client.$queryRaw<{ count: bigint }[]>`
+        SELECT count(*)::bigint AS count FROM messages_default
+      `;
       const strandedCount =
         Number(stranded?.count ?? 0n) +
         Number(strandedPayloads?.count ?? 0n) +
-        Number(strandedDeliveries?.count ?? 0n);
+        Number(strandedDeliveries?.count ?? 0n) +
+        Number(strandedMessages?.count ?? 0n);
 
       if (strandedCount > 0) {
         // Warn, not error: the rows are readable and the product works. What they block is the next

@@ -50,6 +50,7 @@ import {
   WebhookFanoutProcessor,
   WebhookRetrySweepProcessor,
 } from '../../modules/webhooks/webhooks.processor.js';
+import { WhatsAppIngestMessageProcessor } from '../../modules/whatsapp/whatsapp.processor.js';
 import type { JobProcessor } from './job-processor.js';
 
 /**
@@ -104,6 +105,8 @@ export const PROCESSOR_TYPES: readonly Type<JobProcessor>[] = [
   IntegrationHealthCheckProcessor,
   IntegrationIngestEventProcessor,
   IntegrationRetrySweepProcessor,
+  // whatsapp
+  WhatsAppIngestMessageProcessor,
   // outbound webhooks
   WebhookFanoutProcessor,
   WebhookDeliverProcessor,

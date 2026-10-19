@@ -585,6 +585,12 @@ describe('every activity type the product writes has a describer', () => {
     // An *inbound* call nobody answered. Only a telephony provider can report one — the manual
     // driver never learns that a call came in at all — so nothing writes it until Phase 4.
     'call.missed': 4,
+    // Outbound WhatsApp: Phase 5 step 2 sends the messages these describe. `whatsapp.received` is
+    // written by step 1 and is therefore described.
+    'whatsapp.sent': 5,
+    'whatsapp.template_sent': 5,
+    'whatsapp.read': 5,
+    'whatsapp.failed': 5,
   };
 
   // Phase 3 step 1 added `task`, and took the five task types off the deferred list above as part
@@ -599,6 +605,7 @@ describe('every activity type the product writes has a describer', () => {
     'task',
     'sla',
     'call',
+    'whatsapp',
   ];
 
   it('describes every type in a module the product writes, except the ones nothing writes yet', () => {
@@ -617,6 +624,52 @@ describe('every activity type the product writes has a describer', () => {
     for (const type of Object.keys(NOT_WRITTEN_YET)) {
       expect(hasDescriber(type), `${type} is described; take it off the deferred list`).toBe(false);
     }
+  });
+});
+
+describe('a whatsapp message on the timeline (`FR-WA-3`)', () => {
+  it('says who messaged and what they said', () => {
+    const rendered = describeEntry(
+      entry({
+        type: 'whatsapp.received',
+        module: 'whatsapp',
+        payload: {
+          conversationId: 'c1',
+          messageId: 'm1',
+          preview: 'Is the 3BHK still available?',
+          messageType: 'text',
+          from: '+919845012345',
+          profileName: 'Asha Rao',
+        },
+      }),
+    );
+    expect(rendered.label).toBe('WhatsApp');
+    expect(rendered.description).toContain('Asha Rao');
+    // The words themselves: an entry that only says a message arrived sends the reader elsewhere
+    // to find out what it said.
+    expect(rendered.description).toContain('Is the 3BHK still available?');
+    expect(rendered.tone).toBe('warning');
+  });
+
+  it('falls back to the number when WhatsApp sent no profile name, and carries the media sentence', () => {
+    const rendered = describeEntry(
+      entry({
+        type: 'whatsapp.received',
+        module: 'whatsapp',
+        payload: {
+          conversationId: 'c1',
+          messageId: 'm2',
+          // What `describeMessagePreview` answers for an image with no caption — never "[image]",
+          // which would be indistinguishable from somebody typing it.
+          preview: 'Sent a photo',
+          messageType: 'image',
+          from: '+919845012345',
+          profileName: null,
+        },
+      }),
+    );
+    expect(rendered.description).toContain('+919845012345');
+    expect(rendered.description).toContain('Sent a photo');
   });
 });
 

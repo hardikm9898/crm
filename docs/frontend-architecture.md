@@ -894,3 +894,55 @@ answers normalised to and the source the connection named, Google Ads connected 
 generate shown once beside the URL to paste it into, a Google delivery appearing with Google's own
 id, the summary counting two connections with the right plural and no nought, and the whole screen
 at 375 px with **0 px** of sideways scroll.
+
+
+### 10.13 As built — Phase 5, step 1 (the WhatsApp inbox, and the number it arrives at)
+
+Two screens, and one of them is the first in this product that is somebody's **whole day**.
+
+- **`/inbox`** — the conversation list, the thread, and the lead beside it. Three regions on a
+  desktop and stacked at 375 px, which §5.3 asked for; the composer, the ownership lock, the
+  @mentions and the realtime it also asks for are not here, because nothing can send yet and a
+  disabled composer promising a later step is worse than a screen that does not pretend.
+- **`/settings/whatsapp`** — the WABA, its numbers with their quality rating and send tier, and who
+  answers each one by default. The credential is **not** on it: it lives on
+  `/settings/integrations`, which already stores it, rotates it, probes it and prints the callback
+  URL. A second form for the same secret would be a second answer to one question, and this screen
+  links to that one when there is no connection yet.
+
+Four things decided here:
+
+- **The open conversation is fetched by id, never found in the loaded list.** `/inbox?c=<id>` is the
+  link a notification will send somebody, and the filter it lands on may exclude that row — the trap
+  the task panel paid for, where a deep link into a filtered list silently opened nothing. A browser
+  check opens a conversation under a filter that hides it.
+- **The 24-hour window is the API's sentence, not arithmetic repeated here.** `FR-WA-1` is enforced
+  on the write path, and a screen that computed its own answer is how "the button was enabled and
+  the send was refused" happens. The API answers `windowIsOpen` for the button and `windowSummary`
+  for the person.
+- **Every figure is the whole filter's**, from `meta.unread` and `meta.open`. A badge that counted
+  the twenty-five rows it loaded would tell an agent their inbox is a fraction of its real size —
+  and the unread badge and the unread list share one predicate, so they cannot disagree.
+- **Mark-as-read reports success from the re-rendered server tree**, not from its own
+  `useActionState`: a successful mark revalidates the screen and the row loses its badge, which
+  survives a refresh in a way component state does not. The same reasoning as the replay button.
+
+The vocabulary is hand-written in `lib/whatsapp.ts` and reconciled with `@leados/shared` by
+`whatsapp.spec.ts`, for the reason `lib/tasks.ts` and `lib/sla.ts` both record: that package's entry
+point reaches `node:async_hooks`, and a client component that transitively imports it fails
+`next build`. And `whatsapp.received` gained a **describer** — "Asha Rao messaged on WhatsApp: '…'" —
+because an activity type with no describer renders as a bare row and loses the one thing somebody
+opened the lead for. Its three outbound siblings are on the registry spec's deferred list, which the
+spec keeps honest in both directions.
+
+**One suite, 28 checks**, all green: signing in through the form, the inbox in the navigation with no
+"coming in phase 5" marker, one conversation headed by the person rather than their `wa_id`,
+previewing the **latest** message rather than the first, the unread count, the three figures read
+from `data-stat-value` (the labels are CSS-uppercased, which has cost two debugging sessions), both
+messages in the thread oldest-first, the window as a sentence with no ISO instant in it, the lead's
+status and owner beside the messages with a link to the lead, a deep link opening a conversation the
+filter hides, the badge and the list agreeing after a mark-read, search finding a conversation by a
+word somebody wrote and nothing by a word nobody did, the connected number printed as text with the
+callback URL beside it, a default agent saved with the select still showing them, the lead's timeline
+reading "messaged on WhatsApp" rather than `whatsapp.received`, and both screens at 375 px with
+**0 px** of sideways scroll.

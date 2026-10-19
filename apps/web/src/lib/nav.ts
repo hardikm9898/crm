@@ -46,7 +46,10 @@ export const NAV_SECTIONS: readonly NavSection[] = [
       { label: 'Response times', href: '/sla', permissions: ['sla:read'] },
       // The manager's screen. `report:read` is the honest gate: it is about other people's work.
       { label: 'Oversight', href: '/oversight', permissions: ['report:read'] },
-      { label: 'Inbox', href: '/inbox', permissions: ['conversation:read'], phase: 5 },
+      // Built as of Phase 5 step 1: the conversations a WhatsApp number receives, beside the lead
+      // each one belongs to. The `phase` marker is gone because the screen is real — a disabled
+      // "coming in phase 5" row on a screen that exists is the navigation lying.
+      { label: 'Inbox', href: '/inbox', permissions: ['conversation:read'] },
     ],
   },
   {
@@ -138,6 +141,13 @@ export const NAV_SECTIONS: readonly NavSection[] = [
         label: 'Integrations',
         href: '/settings/integrations',
         permissions: ['integration:manage'],
+      },
+      // Under Integrations, because that is where its credential is: this screen is the numbers
+      // and who answers them, which is the WhatsApp-shaped half of the same setup.
+      {
+        label: 'WhatsApp',
+        href: '/settings/whatsapp',
+        permissions: ['whatsapp:manage'],
       },
       { label: 'Your security', href: '/settings/security', permissions: [] },
     ],
