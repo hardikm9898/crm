@@ -90,6 +90,23 @@ export const JOBS = {
    */
   INTEGRATION_HEALTH_CHECK: 'integration.health-check',
   /**
+   * One provider event, turned into a lead (Phase 4's fifth exit criterion).
+   *
+   * A queue hop rather than work in the request, because a provider that waits for us is a provider
+   * that **retries**: §7 of `api-architecture.md` asks for an acknowledgement in under a second,
+   * and a Meta delivery that takes two seconds to capture becomes a second delivery. The
+   * `provider_events` row is the durable record, so a worker restart costs a job and not a lead.
+   */
+  INTEGRATION_INGEST_EVENT: 'integration.ingest-event',
+  /**
+   * The provider events that have not become leads, re-queued (`maintenance.integration-retry`).
+   *
+   * The same argument the webhook retry sweep makes: the row is what is owed, and a job lost while
+   * a worker was down must not be a lead lost. Bounded at three attempts per row, because a lead
+   * Meta will not hand over is a credential problem and re-asking forever earns a rate limit.
+   */
+  INTEGRATION_RETRY_SWEEP: 'maintenance.integration-retry',
+  /**
    * One event, fanned out to the endpoints that asked for it (`FR-API-4`). Reads the subscribed
    * endpoints and writes a `webhook_deliveries` row per endpoint — the store that makes a delivery
    * survive a worker restart, exactly as `inbound_payloads` does inbound.

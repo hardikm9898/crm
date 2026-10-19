@@ -2319,6 +2319,111 @@ minutes, which is the retention sweep's job in Phase 9.
 
 ---
 
+### Step 7 — Meta Lead Ads and Google Ads lead forms, and the ledger that makes a retry harmless ✅ _(landed 2026-10-19)_
+
+Phase 4's **fifth exit criterion**, in its own words: "Meta Lead Ads: duplicate webhook delivery ⇒
+one lead; token revocation surfaces as a reconnect prompt." Both halves are now tested, and with
+them the phase's scope line is complete.
+
+Step 6's framework held: **both connectors are a registry entry and an adapter**, no domain module
+changed, and §8 of `integration-architecture.md` ends with exactly that test. What the two of them
+added was to the framework rather than to themselves — four optional port methods and one table —
+and both are now there for the third connector, which is the point of having built them in this
+order.
+
+**`provider_events` is the guarantee, and it is a constraint rather than a code path.**
+`UNIQUE (organization_id, provider, external_event_id)`, keyed on **the provider's own id** for the
+event, on a table that is deliberately **not** partitioned
+([ADR-0035](./decisions/ADR-0035-a-provider-event-is-deduplicated-on-the-providers-own-id.md)). That
+last part is the whole difference between it and `inbound_payloads`: a unique on a partitioned table
+has to contain the partition key, which makes it a race guard — the same event id next month would
+be allowed — and the question here is "have we **ever** seen this id". The service treats the
+violation as the normal case, counts it, and answers 200. Meta's retry carries a different `time`,
+so a hash of the body would have made it a new event; `leadgen_id` is what Meta promises to repeat.
+
+**A provider with no event id of its own does not touch the ledger.** The generic webhook has
+nothing to deduplicate on, and a key *we* invented would make every distinct lead look like a
+replay — so that door keeps `Idempotency-Key` and `idempotency_keys`, stays synchronous, and answers
+the lead id. One table per guarantee, rather than one table pretending to offer both.
+
+**The provider is acknowledged before the work, not after it.** Insert, enqueue, 200 — which is §7
+of `api-architecture.md`'s "enqueue → 200 in under a second", and which matters because a provider
+that waits for us is a provider that **retries**: a two-second capture would become a second
+delivery and the ledger would be absorbing a problem we had created.
+`maintenance.integration-retry` re-queues what the row still owes, three attempts at most, because a
+lead Meta will not hand over is a credential problem and re-asking forever earns a rate limit.
+
+**The port grew by four optional methods, and the registry reconciles each against the provider's
+own declaration at boot.** `verifyInbound` is three shapes because three real providers verify
+differently — an HMAC over the raw body in a header (ours and Meta's `X-Hub-Signature-256`), or a key
+**inside** the body (Google Ads, which signs nothing at all). `challenge` exists because Meta will
+not deliver anything until the callback URL echoes a `hub.challenge`, answered as **plain text**
+outside the envelope: `{"success":true,"data":"1158201444"}` would never confirm the subscription.
+`parseDelivery` exists because one request is zero or more events. `fetchLead` is the first method in
+this product that reads **from** a provider: Meta sends an id and the answers are a second request,
+with a *different* credential from the one that signed the delivery. A provider that claims a shape
+its adapter cannot honour now fails startup, which is the same stance as "every route declares its
+authorization".
+
+**A connection holds a set of secrets, in one envelope.** Meta needs two doing two jobs, and the
+alternative was worse in both directions: a second column makes "the app secret was rotated and the
+page token was not" a state the schema allows and nothing checks, and putting an app secret in
+`settings` puts a secret somewhere that is rendered on the screen, echoed back on a refusal and
+written into the audit log. So `credentialFields` is a list on the provider, `credentials` is a
+record on the API, and a `PATCH` takes all of them or none. That is a **breaking change to an
+endpoint shipped one step earlier** — the OpenAPI classifier flagged it, which is the check working
+— and it needs no migration, because the column already held an opaque envelope and the vault reads
+a plaintext that does not begin `{` as the old single-secret format.
+
+**Both connectors work the moment they are connected.** Each registry entry carries a
+`defaultMapping` of the provider's own standard questions, and the adapter flattens the provider's
+array into exactly those keys first: Meta sends `[{ name: 'full_name', values: [...] }]` and Google
+sends `[{ column_id: 'FULL_NAME', string_value: ... }]`, neither addressable by a dot path, and
+mapping them by index would be an index that moves the day somebody reorders the form's questions. A
+question answered twice keeps **both** answers, comma-joined, because taking the first discards
+something a person said; a Google column is keyed by `column_id` rather than `column_name`, because
+the name is the question's wording and changes when the form is edited.
+
+**A `is_test` delivery is recorded and acknowledged but never captured.** A provider that gets a 4xx
+from its own test disables the endpoint, and a test lead in somebody's pipeline is worse than no
+test at all. Meta's unsubscribed `page` changes are dropped and acknowledged for the same reason.
+
+**Two defects found by running it.** The first draft's "does this provider have an inbound door"
+read `authKind === 'shared_secret'`, which was right for the two providers that existed and would
+have answered **404 on Meta's own callback URL** — Meta holds a token we send *and* posts to us, so
+the question is `inboundVerification`, not the auth kind. And the health service's import of
+`sharedSecretField` from the main service closed an ESM cycle that fails as a `ReferenceError` at
+boot rather than a type error; the constants moved to `adapters/secret-names.ts`, which is where the
+underlying bug was hiding anyway — the service mints a generated secret and the adapter verifies
+with it, so two literals in two files is the shape where rotating works and verifying does not.
+
+**Verified.** **2 463 tests green** — 1 095 unit (603 shared, 320 web, 168 api, 4 db) and 1 368
+integration (779 api e2e, 589 across the schema-object and tenant-isolation suites) — with 41 new:
+**6 cases** over the two providers' own payload shapes in `@leados/shared` (every source in each
+default mapping being a key the flattener actually produces, every answer to a doubly-answered
+question kept, a Google column keyed by id and a custom one by name), **2** over the web lib's
+reconciliation of the credential fields and the per-provider instructions, a **20-case** e2e suite
+with a real in-process Graph API, and **13** schema-object and tenant-isolation cases over the
+new table — the unique refusing a second delivery per workspace and per provider, an event pointed
+at another workspace's connection refused by its composite FK, and both CHECK directions including
+the honest state each mirror would have forbidden. Then **49 HTTP checks** against a live API,
+**worker** and scheduler — the whole lifecycle through a real queue hop, with nothing driving a
+processor by hand — and **34 browser checks** connecting both providers from the screen and watching
+one delivery become one lead.
+
+**Carried forward, named rather than assumed:** there is still **no OAuth**. Both connectors take a
+long-lived credential somebody pastes, which is what a Meta Page token and a Google webhook key
+actually are; an app that connects a Page in two clicks needs an authorization-code exchange and a
+refresh sweep, and `INTEGRATION_AUTH_KINDS` therefore still has two values. The **ads insight
+syncs** — campaign and metric pulls, which are what `sync_cursors` exists for — are Phase 9 and
+remain unbuilt, so that table still has no user. Google Ads deliveries are **replayable by anybody
+who has ever seen one**: there is no signature over the bytes and no timestamp to bound, so the
+ledger's unique is the only thing between a captured payload and a duplicate lead — Google's design,
+not ours, and the reason this connector could not have been built before step 6. And
+`provider_events` is pruned by nothing until Phase 9's retention sweep.
+
+---
+
 ---
 
 ## Phase 5 — WhatsApp
@@ -2496,50 +2601,54 @@ partially landed, with the specific gaps named.
 ## Immediate next step
 
 _This section names the next step only; what each landed step actually did is in the step entries
-above. Last reviewed 2026-10-19, after Phase 4 step 6._
+above. Last reviewed 2026-10-19, after Phase 4 step 7._
 
-**Phase 3 is finished, exit criteria included** — tasks, reminders, the overdue sweeps, SLA
-policies and working-hours-aware clocks, escalation, the manager board, the notification centre
-with quiet hours, the Today workspace, oversight, calls with click-to-call, and the email adapter
-with bounce → suppression.
+**Phase 4 is finished, and all six of its exit criteria are met and tested** — each in the step that
+built it, and each named in that step's entry rather than asserted here:
 
-**Phase 4 is six steps in, and five of its six exit criteria are met and tested.** Capture forms;
-the public lead API with its never-lose payload store, replay, test tool and one-click custom
-field; outbound webhooks retried from their own row with SSRF refused twice; the key-authenticated
-REST surface where a key acts as the member who created it, with `api_logs` as the integration's own
-request log; the published contract, generated from the validators that run and committed so an
-unintended breaking change fails the build; and now the integration framework — a provider registry
-reconciled against its adapters at boot, a credential vault sealed to each row, per-connection
-health checks that turn a refused token into one reconnect prompt, generic field mappings applied
-inside the one capture pipeline, and an inbound door at `POST /wh/{provider}/{connectionId}`
-authenticated by the same signature the public lead API verifies.
+| Exit criterion                                                                 | Step | Where it is tested                                             |
+| ------------------------------------------------------------------------------ | ---- | --------------------------------------------------------------- |
+| Unknown extra fields accepted, raw payload stored, one-click custom field       | 2    | `ingestion.e2e-spec.ts`, and the `/ingestion` browser checks     |
+| A duplicate `Idempotency-Key` returns the first response and creates nothing    | 2    | `ingestion.e2e-spec.ts`                                          |
+| Killing the worker mid-ingestion loses no lead; the payload replays             | 2    | `ingestion.e2e-spec.ts`'s replay cases over `inbound_payloads`   |
+| Outbound webhook retried, logged per attempt, auto-disabled, SSRF refused       | 3    | `webhooks.e2e-spec.ts`, against a real in-process receiver       |
+| **Meta Lead Ads: a duplicate delivery ⇒ one lead; a revoked token ⇒ a prompt**  | 7    | `lead-ads.e2e-spec.ts`, against a real in-process Graph API      |
+| OpenAPI diff check active; published docs with working copy-paste examples      | 5    | `openapi.e2e-spec.ts` and the committed `docs/openapi.json`      |
 
-**The next step is the phase's fifth exit criterion: Meta Lead Ads and Google Ads lead forms.** Both
-are now additions rather than new subsystems — a registry entry, an adapter, and a `fieldMappings`
-default each — and the framework decides what is left to build for them:
+The phase's scope line is complete with it: dynamic forms and the page a stranger fills in; the
+public lead API with its never-lose payload store, replay, test tool and one-click custom field;
+API keys with scopes, rotation and an IP allowlist, and `api_logs` as the integration's own request
+log; outbound webhooks signed, retried from their own row and never following a redirect; the
+OpenAPI document generated from the validators that run, with a server-rendered reference and a
+committed artifact whose diff is classified; the integration framework — a provider registry
+reconciled against its adapters at boot, a credential vault, per-connection health checks and
+generic field mappings; and both ad connectors, on the inbound idempotency ledger that makes a
+retried delivery harmless.
 
-- **Meta needs `provider_events`**, the inbound idempotency ledger §8 has specified since Phase 0
-  and which nothing has needed yet: Meta sends its own `leadgen_id` and retries deliveries, and
-  "Meta's duplicate/retried webhook deliveries produce exactly one lead" is the headline test. The
-  `X-Hub-Signature-256` scheme is a second verification shape beside the one `verifySignature`
-  already implements, and the lead itself is **fetched** by `leadgen_id` rather than arriving in the
-  payload — the first adapter that reads from a provider rather than being read by one.
-- **Both need OAuth**, which this step deliberately does not have: an authorization-code exchange, a
-  refresh token, and a sweep that renews before `expires_at`. That is a third `INTEGRATION_AUTH_KIND`
-  and a `refresh` method on the port — an addition to the framework, not a replacement, as
-  [ADR-0034](./decisions/ADR-0034-a-provider-is-a-registry-entry-and-an-adapter.md) says in its
-  consequences.
-- **Google Ads lead forms** verify a shared secret inside the payload plus an address allowlist,
-  which is a third shape again; and its campaign and metric syncs are the first users of
-  `sync_cursors`, which is why that table is already built.
-- **A revoked token must surface as a reconnect prompt rather than as silence** — the other half of
-  that exit criterion — and that half is **done**: `integration.revoked` is a notification with a
-  link, `nextStatus` makes `unauthorized` immediate, and the screen prints what the provider said.
+**The next step is Phase 5 — WhatsApp**, whose scope and exit criteria are in its own section
+above. Three things from this phase decide how it starts:
 
-Carried forward from Phase 4 step 6: `sync_cursors` is built and unused; there is no OAuth and no
-`provider_events`; a connection's `scopes` is written empty; and `integration_health_checks` is
-pruned by nothing until the retention sweep in Phase 9. Carried forward from step 5: there is no
-"try it" sandbox and no generated client package (`packages/contracts`), both named in §11 of
-`api-architecture.md` and both deliberately absent — the web app calls the API through its own typed
-loaders, reconciled by a spec. There is no hand-written description per endpoint: the document says
-what each one needs and accepts, and the module READMEs say why it exists.
+- **`provider_events` already exists**, which is what `FR-WA-6` — "Meta's duplicate/retried
+  webhook deliveries produce exactly one message, one activity, one automation trigger" — is
+  measured against. It is the same table, the same unique and the same insert-before-work order
+  that step 7 proved on `leadgen_id`; WhatsApp's message id takes `external_event_id`.
+- **The integration framework takes `whatsapp_cloud` as a registry entry and an adapter**, with
+  `verifyInbound` already the right shape for `X-Hub-Signature-256` and `challenge` already the
+  right shape for Meta's handshake. What it does **not** yet have is the `MessagingProvider`
+  interface §2 of `integration-architecture.md` sketches — sends, templates, media — which is a
+  second interface beside this framework's own, not a change to it.
+- **OAuth is still absent**, and WhatsApp is where it starts to cost: a WABA is connected through
+  Meta's embedded signup, which is an authorization-code exchange and a refresh. That is a third
+  `INTEGRATION_AUTH_KIND` and a `refresh` method on the port — an addition the framework was
+  designed for, as [ADR-0034](./decisions/ADR-0034-a-provider-is-a-registry-entry-and-an-adapter.md)
+  says in its consequences.
+
+Carried forward from Phase 4, named rather than assumed: `sync_cursors` is built and has **no
+user** — the ads insight pulls it exists for are Phase 9; `integration_health_checks` and
+`provider_events` are pruned by nothing until Phase 9's retention sweep; a connection's `scopes`
+column is written empty, because inventing values for a provider that does not report them is a
+column nobody could trust; Google Ads deliveries are replayable by anybody who has seen one, which
+is Google's design and the reason the ledger is the only guard; and there is no "try it" sandbox and
+no generated client package (`packages/contracts`), both named in §11 of `api-architecture.md` and
+both deliberately absent — the web app calls the API through its own typed loaders, reconciled by a
+spec.

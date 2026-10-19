@@ -3,9 +3,11 @@ import { AppError } from '@leados/shared';
 import { APP_CONFIG } from '../../../infra/config/config.module.js';
 import type { AppConfig } from '../../../infra/config/config.schema.js';
 import type { AdapterContext, IntegrationAdapter, ProbeResult } from '../integration.port.js';
+import { SERVER_TOKEN_KEY } from './secret-names.js';
 
 /** How long a probe waits before calling the provider unreachable. */
 const PROBE_TIMEOUT_MS = 5_000;
+
 
 /**
  * Postmark, the service that delivers this workspace's email.
@@ -32,13 +34,16 @@ export class PostmarkAdapter implements IntegrationAdapter {
 
   constructor(@Inject(APP_CONFIG) private readonly config: AppConfig) {}
 
-  validate(input: { credential: string; settings: Record<string, unknown> }): void {
+  validate(input: {
+    secrets: Readonly<Record<string, string>>;
+    settings: Record<string, unknown>;
+  }): void {
     // Shape only, and said in the words of somebody pasting a token: whether the token *works* is
     // what the probe is for, and it runs immediately after the connection is stored.
-    if (input.credential.trim().length < 20) {
+    if ((input.secrets[SERVER_TOKEN_KEY] ?? '').trim().length < 20) {
       throw AppError.validation('That does not look like a Postmark server token', [
         {
-          field: 'credential',
+          field: `credentials.${SERVER_TOKEN_KEY}`,
           code: 'INVALID_CREDENTIAL',
           message:
             'Paste the Server API token from Postmark → your server → API Tokens. It is a long identifier, not your account password.',
@@ -64,7 +69,7 @@ export class PostmarkAdapter implements IntegrationAdapter {
         method: 'GET',
         headers: {
           accept: 'application/json',
-          'X-Postmark-Server-Token': context.credential,
+          'X-Postmark-Server-Token': context.secrets[SERVER_TOKEN_KEY] ?? '',
         },
         signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
       });

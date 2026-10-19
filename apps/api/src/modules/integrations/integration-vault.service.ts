@@ -41,11 +41,48 @@ export class IntegrationVaultService {
     return this.encryption.currentKeyVersion;
   }
 
-  seal(connectionId: string, plaintext: string): string {
-    return this.encryption.encrypt(plaintext, integrationAad(connectionId));
+  /**
+   * Seals a **set** of secrets as one envelope.
+   *
+   * One envelope rather than one per field, because the whole set is what a connection is: two
+   * columns would make "the app secret was rotated and the page token was not" a state the schema
+   * allowed and nothing checked, and the AAD would then have to distinguish them. The JSON inside
+   * is never seen by anything but `open`.
+   */
+  seal(connectionId: string, secrets: Readonly<Record<string, string>>): string {
+    return this.encryption.encrypt(JSON.stringify(secrets), integrationAad(connectionId));
   }
 
-  open(connectionId: string, envelope: string): string {
+  /**
+   * Opens the set.
+   *
+   * Envelopes written before this provider needed more than one secret hold a bare string rather
+   * than JSON; `legacyKey` says which field such a value is. A parse that is attempted and caught
+   * is the honest way to read two formats, and it costs one `try` on a path that already has one.
+   */
+  open(
+    connectionId: string,
+    envelope: string,
+    legacyKey = 'credential',
+  ): Readonly<Record<string, string>> {
+    const plaintext = this.openRaw(connectionId, envelope);
+    if (!plaintext.startsWith('{')) return { [legacyKey]: plaintext };
+    try {
+      const parsed = JSON.parse(plaintext) as unknown;
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return { [legacyKey]: plaintext };
+      }
+      const secrets: Record<string, string> = {};
+      for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+        if (typeof value === 'string') secrets[key] = value;
+      }
+      return secrets;
+    } catch {
+      return { [legacyKey]: plaintext };
+    }
+  }
+
+  private openRaw(connectionId: string, envelope: string): string {
     try {
       return this.encryption.decrypt(envelope, integrationAad(connectionId));
     } catch (error) {

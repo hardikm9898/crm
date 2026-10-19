@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  INBOUND_VERIFICATIONS,
   INTEGRATION_PROVIDERS,
+  flattenGoogleColumnData,
+  flattenMetaFieldData,
   MAPPABLE_LEAD_FIELDS,
   applyFieldMapping,
   describeStatus,
@@ -20,6 +23,23 @@ describe('the provider registry', () => {
       // The summary is what somebody reads before deciding to connect it.
       expect(provider.summary.length, provider.key).toBeGreaterThan(40);
       expect(provider.capabilities.length, provider.key).toBeGreaterThan(0);
+      // A secret with no name is a secret the connect form cannot ask for and the adapter cannot
+      // read. `shared_secret` providers declare none, because we generate theirs.
+      for (const field of provider.credentialFields) {
+        expect(field.key, provider.key).toMatch(/^[a-zA-Z][a-zA-Z0-9]*$/);
+        expect(field.label.length, `${provider.key}.${field.key}`).toBeGreaterThan(2);
+      }
+      if (provider.authKind === 'shared_secret') {
+        expect(provider.credentialFields, provider.key).toEqual([]);
+      } else {
+        expect(provider.credentialFields.length, provider.key).toBeGreaterThan(0);
+      }
+      // Declared, so the registry's boot check has something to reconcile against.
+      expect(INBOUND_VERIFICATIONS, provider.key).toContain(provider.inboundVerification);
+      // A provider whose delivery is only a reference must be one that posts to us at all.
+      if (provider.deliveryIsAReference) {
+        expect(provider.inboundVerification, provider.key).not.toBe('none');
+      }
       for (const setting of provider.settings) {
         expect(setting.key, provider.key).toMatch(/^[a-zA-Z][a-zA-Z0-9]*$/);
         expect(setting.label.length, setting.key).toBeGreaterThan(2);
@@ -178,5 +198,112 @@ describe('what a probe means for the connection', () => {
     // A connection nothing has used yet is not the same as one that is working.
     expect(describeStatus('connected', null)).not.toBe(describeStatus('connected', '2026-10-19T00:00:00.000Z'));
     expect(describeStatus('revoked', null)).toMatch(/reconnect/);
+  });
+});
+
+describe('the providers that bring leads in', () => {
+  const metaEntry = INTEGRATION_PROVIDERS.find((provider) => provider.key === 'meta_lead_ads')!;
+  const googleEntry = INTEGRATION_PROVIDERS.find(
+    (provider) => provider.key === 'google_ads_leads',
+  )!;
+
+  it('starts Meta with a mapping that matches what Meta actually sends', () => {
+    // The point of a default mapping: the connection works the moment it is made. Each source here
+    // is a key `flattenMetaFieldData` produces from Meta's own standard questions, which is what
+    // makes this assertion more than a restatement of the constant.
+    const flat = flattenMetaFieldData({
+      field_data: [
+        { name: 'full_name', values: ['Asha Rao'] },
+        { name: 'phone_number', values: ['+919845012345'] },
+        { name: 'email', values: ['ASHA@example.test'] },
+        { name: 'city', values: ['Bengaluru'] },
+        { name: 'company_name', values: ['Rao Interiors'] },
+      ],
+    });
+    for (const entry of metaEntry.defaultMapping) {
+      expect(flat[entry.source], entry.source).toBeDefined();
+    }
+    const mapped = applyFieldMapping(flat, metaEntry.defaultMapping);
+    expect(mapped.mapped['name']).toBe('Asha Rao');
+    expect(mapped.mapped['email']).toBe('asha@example.test');
+    expect(mapped.missing).toEqual([]);
+  });
+
+  it('keeps every answer to a question somebody answered twice', () => {
+    // Taking the first would silently discard an answer a person gave. A checkbox group is the
+    // commonest case, and the one a mapping can still read a single value out of.
+    const flat = flattenMetaFieldData({
+      field_data: [{ name: 'interested_in', values: ['Kitchen', 'Wardrobe'] }],
+    });
+    expect(flat['interested_in']).toBe('Kitchen, Wardrobe');
+  });
+
+  it('leaves a Meta payload alone when it carries no field data', () => {
+    expect(flattenMetaFieldData({ leadgen_id: '1' })).toEqual({ leadgen_id: '1' });
+    expect(flattenMetaFieldData({ field_data: 'not an array' })).toEqual({
+      field_data: 'not an array',
+    });
+    // An entry with no values is skipped rather than written as undefined: a key whose value is
+    // undefined reads as "answered with nothing" to a mapping.
+    expect(flattenMetaFieldData({ field_data: [{ name: 'city', values: [] }] })['city']).toBe(
+      undefined,
+    );
+  });
+
+  it('starts Google Ads with a mapping that matches its column ids', () => {
+    const flat = flattenGoogleColumnData({
+      lead_id: 'abc',
+      user_column_data: [
+        { column_id: 'FULL_NAME', column_name: 'Full name', string_value: 'Asha Rao' },
+        { column_id: 'PHONE_NUMBER', column_name: 'Phone', string_value: '+91 98450 12345' },
+        { column_id: 'EMAIL', column_name: 'Email', string_value: 'ASHA@example.test' },
+        { column_id: 'CITY', column_name: 'City', string_value: 'Bengaluru' },
+        { column_id: 'COMPANY_NAME', column_name: 'Company', string_value: 'Rao Interiors' },
+      ],
+    });
+    for (const entry of googleEntry.defaultMapping) {
+      expect(flat[entry.source], entry.source).toBeDefined();
+    }
+    const mapped = applyFieldMapping(flat, googleEntry.defaultMapping);
+    expect(mapped.mapped['name']).toBe('Asha Rao');
+    // The phone transform keeps the country code and drops the spaces.
+    expect(mapped.mapped['phone']).toBe('+919845012345');
+    expect(mapped.missing).toEqual([]);
+  });
+
+  it('keys a Google column by its id, and falls back to its name only for a custom question', () => {
+    const flat = flattenGoogleColumnData({
+      user_column_data: [
+        { column_id: 'FULL_NAME', column_name: 'Full name', string_value: 'Asha' },
+        // A custom question has no standard id; its name is the only key there is.
+        { column_name: 'Budget', string_value: '45,00,000' },
+        // Nothing to key on at all, and nothing to lose by skipping it.
+        { string_value: 'orphan' },
+        // An unanswered question is skipped rather than written as an empty string, which a
+        // mapping would otherwise store as a blank city.
+        { column_id: 'CITY', string_value: '' },
+      ],
+    });
+    expect(flat['FULL_NAME']).toBe('Asha');
+    expect(flat['Budget']).toBe('45,00,000');
+    expect(flat['CITY']).toBe(undefined);
+    expect(Object.values(flat)).not.toContain('orphan');
+  });
+
+  it('declares both of them as mappable providers that post to us', () => {
+    for (const entry of [metaEntry, googleEntry]) {
+      expect(entry.mappable, entry.key).toBe(true);
+      expect(entry.capabilities, entry.key).toContain('lead_ingest');
+      expect(entry.inboundVerification, entry.key).not.toBe('none');
+      // Every target in a default mapping has to be one a mapping may write, or the connection is
+      // born refusing to save.
+      for (const mapping of entry.defaultMapping) {
+        expect(isMappableTarget(mapping.target), `${entry.key} → ${mapping.target}`).toBe(true);
+      }
+      expect(mappingProblems(entry.defaultMapping), entry.key).toEqual([]);
+    }
+    // Meta is the one whose delivery is a reference: it sends an id, not the answers.
+    expect(metaEntry.deliveryIsAReference).toBe(true);
+    expect(googleEntry.deliveryIsAReference).toBe(false);
   });
 });

@@ -477,6 +477,28 @@ POST /exports                       GET /exports/{id}
 >   integrations** — a credential that can mint credentials is a privilege escalation left in
 >   somebody else's config file.
 
+> **Amendment, 2026-10-19 (implementation, Phase 4 step 7).** Two changes to the surface above
+> ([ADR-0035](./decisions/ADR-0035-a-provider-event-is-deduplicated-on-the-providers-own-id.md)):
+>
+> ```
+> GET  /integrations/events           what each provider has told us, and what became of it
+> ```
+>
+> - **`credential` became `credentials`**, a record keyed by the names a provider's
+>   `credentialFields` declare. Meta Lead Ads needs two doing two jobs — an app secret to verify a
+>   delivery and a page token to fetch the lead it refers to — and a single `credential` would have
+>   forced the second into `settings`, which are rendered on the screen, echoed back on a refusal
+>   and written to the audit log. It is **all-or-nothing** on a `PATCH`: a set where one secret is
+>   fresh and another is whatever was there before is the half-reconnection that looks fine and
+>   fails on the next delivery. This is a breaking change to an endpoint shipped one step earlier,
+>   and the OpenAPI classifier flagged it — which is the check working rather than a reason not to
+>   make it.
+> - **`GET /integrations/events` is the delivery ledger**, which is what somebody reads when a lead
+>   did not appear: the provider said something, and either it became a lead or here is their own
+>   reason. `meta.unresolved` counts the failures across the **whole** set rather than the page,
+>   because a figure beside a filtered list that is not itself filtered is the recurring bug in this
+>   codebase.
+
 > **Amendment, 2026-10-05 (implementation).** The import and export surface as built:
 >
 > ```
@@ -1009,6 +1031,40 @@ return `401` and are counted per connection with alerting on spikes.
 >   `firstName`, so a schema here would be the feature's opposite. The mapped result is then parsed
 >   by `publicLeadSchema` inside the capture pipeline, and a value it refuses is a `400` naming the
 >   field with an `ingestion_errors` row at the `validate` stage.
+
+> **Amendment, 2026-10-19 (implementation, Phase 4 step 7 — Meta Lead Ads and Google Ads lead
+> forms).** Two more providers, and the first `GET` on this surface:
+>
+> | Route                                               | Provider          | Verification                                                         |
+> | --------------------------------------------------- | ----------------- | -------------------------------------------------------------------- |
+> | `GET  /api/v1/wh/meta_lead_ads/{connectionId}`       | Meta Lead Ads     | `hub.verify_token` echo, constant-time, against the connection's own |
+> | `POST /api/v1/wh/meta_lead_ads/{connectionId}`       | Meta Lead Ads     | `X-Hub-Signature-256` HMAC over the **raw** body, with the app secret |
+> | `POST /api/v1/wh/google_ads_leads/{connectionId}`    | Google lead forms | `google_key` **inside** the body, compared in constant time          |
+>
+> This is the table §7 sketched, built — and the three differences from the sketch are each the
+> provider's doing rather than ours:
+>
+> - **The verification shape is a property of the provider**, declared in the registry
+>   (`inboundVerification`) and reconciled against the adapter at boot. Google Ads does not sign
+>   anything: it asks *you* for a webhook key and echoes it in the body, so a framework that had
+>   assumed an HMAC header would have been reopened for it. One consequence worth stating: a Google
+>   delivery is replayable by anybody who has ever seen one, and `provider_events`' unique on
+>   Google's own `lead_id` is the only thing between a captured payload and a duplicate lead.
+> - **`hub.verify_token` is answered as plain text**, outside the response envelope: Meta's verifier
+>   compares the body to the challenge it sent, and `{"success":true,"data":"1158201444"}` would
+>   never confirm the subscription. A mismatch is **403**, not 404 — the connection exists and the
+>   handshake was refused, and a 404 would send somebody checking a URL they pasted correctly.
+> - **The cross-check of the payload's account id does not apply.** §7 asks for the tenant to be
+>   resolved from the path **and** the payload's account id cross-checked; Meta's delivery carries a
+>   `page_id` and Google's carries nothing of the sort, and a cross-check against a value the
+>   provider only sometimes sends would be a check that passes by absence. What the path's id cannot
+>   do on its own is authenticate: an unverified request is a 401 whatever id it carries.
+>
+> `provider_events` is now built and is the dedupe gate §7 names, with one addition the sketch does
+> not have: the insert comes **before** the enqueue and its unique violation is the normal case, so
+> a retried delivery is counted and answered 200 rather than raising anything. Unknown event types
+> are dropped and acknowledged, exactly as the paragraph above requires — Meta sends `page` changes
+> nobody subscribed to, and a 4xx teaches a provider to disable the endpoint.
 
 ---
 

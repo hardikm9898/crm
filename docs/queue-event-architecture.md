@@ -221,6 +221,7 @@ can retune cadence.
 | every 5 min        | `sla.sweep`                                                           | At-risk → warn, breached → escalate (`FR-TSK-8`). Built; breaches handled before warnings in a tick                                       |
 | every 5 min        | `rollup.*-daily` (today's partial)                                    | Near-real-time dashboards                                                                                                                 |
 | every 10 min       | `integration.health-check`                                            | Per-connection probes → `integration_health_checks`. Built — on `maintenance`, see the amendment below                                     |
+| every 5 min        | `maintenance.integration-retry`                                       | Re-queue the provider events that have not become leads (`provider_events`). Built — see the amendment below                               |
 | every 15 min       | `analytics.session-close`                                             | Close sessions idle > 30 min                                                                                                              |
 | hourly             | `ads.sync-metrics`                                                    | Spend/impressions/clicks                                                                                                                  |
 | hourly             | `webhook.reap-exhausted`                                              | Disable dead endpoints, alert admins                                                                                                      |
@@ -405,6 +406,27 @@ All schedules are working-hours/timezone aware where they touch humans — a fol
 > The sweep notifies only on the **transition** into `revoked` (`integration.revoked`, not
 > opt-out), because a deleted credential probed every ten minutes would otherwise produce six
 > notifications an hour — the shape of alert people mute and then stop reading.
+
+> **Amendment, 2026-10-19 (implementation, Phase 4 step 7).** Two more jobs, both on
+> `maintenance`, both because a provider that waits for us is a provider that retries
+> ([ADR-0035](./decisions/ADR-0035-a-provider-event-is-deduplicated-on-the-providers-own-id.md)):
+>
+> | Schedule     | Job                              | Purpose                                                              |
+> | ------------ | -------------------------------- | -------------------------------------------------------------------- |
+> | on demand    | `integration.ingest-event`       | One `provider_events` row → fetch if needed → the capture pipeline    |
+> | every 5 min  | `maintenance.integration-retry`  | Re-queue the provider events that have not become leads (max 3 tries) |
+>
+> - **The webhook answers 200 before the work**, which is what §7 of `api-architecture.md` asks for
+>   and what keeps a two-second capture from becoming a second Meta delivery. The ledger row is the
+>   durable record, so a worker restart costs a job and not a lead.
+> - **The retry is a sweep over a row**, not a BullMQ delay — the same argument the webhook retry
+>   sweep makes. Five minutes rather than one, because a failed event is usually waiting on the
+>   provider itself and a three-attempt ceiling would otherwise spend all three inside the same bad
+>   minute. The ceiling exists because a lead Meta will not hand over is a credential problem, and
+>   re-asking forever earns a rate limit.
+> - **The ingest job is idempotent on the ledger row**: a row already `processed` is left alone, and
+>   the capture's own idempotency key is the provider's event id. An at-least-once queue over the
+>   one guarantee this step exists for needs both.
 
 ## 6. Retry, failure and DLQ
 

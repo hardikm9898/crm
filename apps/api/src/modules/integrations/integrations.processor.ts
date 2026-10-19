@@ -6,6 +6,7 @@ import { JOBS, QUEUES } from '../../infra/queue/queue.constants.js';
 import type { JobProcessor } from '../../infra/queue/job-processor.js';
 import type { JobPayload } from '../../infra/queue/queue.service.js';
 import { IntegrationHealthService } from './integration-health.service.js';
+import { IntegrationInboundService } from './integration-inbound.service.js';
 
 /**
  * Every connection whose provider asks to be probed, probed (`integration.health-check`).
@@ -40,5 +41,51 @@ export class IntegrationHealthCheckProcessor implements JobProcessor {
       // lead capture stopping, and the notification that says so is the only other trace.
       this.logger.warn({ revoked: result.revoked }, 'integration credentials were refused');
     }
+  }
+}
+
+/**
+ * One provider event, turned into a lead.
+ *
+ * Reads its subject from `payload.aggregateId`, not from a field inside the payload: the envelope
+ * is stable and payload bodies change, and an event queued by an older release still has to
+ * process. Idempotent on the ledger row — a row that is already `processed` is left alone — which
+ * is what makes an at-least-once queue safe over the one guarantee this step exists for.
+ */
+@Injectable()
+export class IntegrationIngestEventProcessor implements JobProcessor {
+  readonly queue = QUEUES.MAINTENANCE;
+  readonly jobName = JOBS.INTEGRATION_INGEST_EVENT;
+
+  constructor(
+    private readonly inbound: IntegrationInboundService,
+    @Inject(LOGGER) private readonly logger: Logger,
+  ) {}
+
+  async process(payload: JobPayload, _job: Job): Promise<void> {
+    const organizationId = payload.organizationId;
+    const eventId = typeof payload['aggregateId'] === 'string' ? payload['aggregateId'] : null;
+    if (!organizationId || !eventId) {
+      this.logger.warn({ payload }, 'a provider event job has no subject');
+      return;
+    }
+    await this.inbound.ingest(organizationId, eventId);
+  }
+}
+
+/** The provider events that have not become leads, re-queued (`maintenance.integration-retry`). */
+@Injectable()
+export class IntegrationRetrySweepProcessor implements JobProcessor {
+  readonly queue = QUEUES.MAINTENANCE;
+  readonly jobName = JOBS.INTEGRATION_RETRY_SWEEP;
+
+  constructor(
+    private readonly inbound: IntegrationInboundService,
+    @Inject(LOGGER) private readonly logger: Logger,
+  ) {}
+
+  async process(_payload: JobPayload, _job: Job): Promise<void> {
+    const queued = await this.inbound.sweepUnresolved();
+    if (queued > 0) this.logger.debug({ queued }, 'provider events re-queued');
   }
 }

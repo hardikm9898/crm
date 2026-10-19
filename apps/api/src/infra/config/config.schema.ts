@@ -97,6 +97,15 @@ export const configSchema = z
     POSTMARK_SERVER_TOKEN: z.string().optional(),
     POSTMARK_API_URL: z.string().url().default('https://api.postmarkapp.com'),
     /**
+     * Meta's Graph API, versioned.
+     *
+     * Configurable for the same reason `POSTMARK_API_URL` is: it is what makes the Meta Lead Ads
+     * adapter genuinely testable — the suite points it at an in-process server and gets a real
+     * fetch over real HTTP. The version is in the base URL because Meta's are dated and a bump is
+     * a deployment decision, not a code change.
+     */
+    META_GRAPH_URL: z.string().url().default('https://graph.facebook.com/v21.0'),
+    /**
      * The shared secret a provider's delivery webhook must present.
      *
      * Required the moment a real driver is configured: the webhook is the only thing that writes the

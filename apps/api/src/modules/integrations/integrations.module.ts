@@ -2,13 +2,20 @@ import { Module } from '@nestjs/common';
 import { IngestionModule } from '../ingestion/ingestion.module.js';
 import { NotificationsModule } from '../notifications/notifications.module.js';
 import { GenericWebhookAdapter } from './adapters/generic-webhook.adapter.js';
+import { GoogleAdsLeadsAdapter } from './adapters/google-ads-leads.adapter.js';
+import { MetaLeadAdsAdapter } from './adapters/meta-lead-ads.adapter.js';
 import { PostmarkAdapter } from './adapters/postmark.adapter.js';
 import { IntegrationHealthService } from './integration-health.service.js';
 import { IntegrationInboundController } from './integration-inbound.controller.js';
+import { IntegrationInboundService } from './integration-inbound.service.js';
 import { IntegrationRegistryService } from './integration-registry.service.js';
 import { IntegrationVaultService } from './integration-vault.service.js';
 import { IntegrationsController } from './integrations.controller.js';
-import { IntegrationHealthCheckProcessor } from './integrations.processor.js';
+import {
+  IntegrationHealthCheckProcessor,
+  IntegrationIngestEventProcessor,
+  IntegrationRetrySweepProcessor,
+} from './integrations.processor.js';
 import { IntegrationsService } from './integrations.service.js';
 
 /**
@@ -33,12 +40,23 @@ import { IntegrationsService } from './integrations.service.js';
   providers: [
     PostmarkAdapter,
     GenericWebhookAdapter,
+    MetaLeadAdsAdapter,
+    GoogleAdsLeadsAdapter,
     IntegrationRegistryService,
     IntegrationVaultService,
     IntegrationHealthService,
     IntegrationsService,
+    IntegrationInboundService,
     IntegrationHealthCheckProcessor,
+    IntegrationIngestEventProcessor,
+    IntegrationRetrySweepProcessor,
   ],
-  exports: [IntegrationsService, IntegrationHealthCheckProcessor],
+  exports: [
+    IntegrationsService,
+    IntegrationInboundService,
+    IntegrationHealthCheckProcessor,
+    IntegrationIngestEventProcessor,
+    IntegrationRetrySweepProcessor,
+  ],
 })
 export class IntegrationsModule {}

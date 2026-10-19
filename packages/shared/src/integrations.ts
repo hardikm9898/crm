@@ -29,6 +29,19 @@ export const INTEGRATION_AUTH_KINDS = ['api_key', 'shared_secret'] as const;
 export type IntegrationAuthKind = (typeof INTEGRATION_AUTH_KINDS)[number];
 
 /**
+ * How a provider proves an inbound request is really from it.
+ *
+ * Three, because three real providers verify differently, and a framework that assumed one would
+ * have to be reopened for each — the thing a registry exists to avoid.
+ *
+ * `hmac_header` — a signature over the raw body in a header (ours, and Meta's `X-Hub-Signature-256`).
+ * `payload_key` — a shared key **inside** the body, which is what Google Ads lead forms send.
+ * `none` — the provider does not post to us at all.
+ */
+export const INBOUND_VERIFICATIONS = ['hmac_header', 'payload_key', 'none'] as const;
+export type InboundVerification = (typeof INBOUND_VERIFICATIONS)[number];
+
+/**
  * A connection's standing, which is the thing a screen is really about.
  *
  * `degraded` exists because "it worked an hour ago and the last probe failed" is neither healthy nor
@@ -49,6 +62,14 @@ export type IntegrationStatus = (typeof INTEGRATION_STATUSES)[number];
 export const PROBE_OUTCOMES = ['ok', 'degraded', 'unauthorized', 'unreachable'] as const;
 export type ProbeOutcome = (typeof PROBE_OUTCOMES)[number];
 
+/** One field of a connect form — a setting or a secret. The screen renders both from these. */
+export interface ProviderField {
+  readonly key: string;
+  readonly label: string;
+  readonly hint?: string;
+  readonly required: boolean;
+}
+
 export interface IntegrationProvider {
   readonly key: string;
   readonly label: string;
@@ -57,21 +78,37 @@ export interface IntegrationProvider {
   readonly capabilities: readonly IntegrationCapability[];
   readonly authKind: IntegrationAuthKind;
   /**
-   * The fields the connect form asks for, beyond the secret itself. Rendered by the screen, so a
-   * new provider needs no new UI — which is the whole point of a registry.
+   * The **secrets** the connect form asks for, by name.
+   *
+   * A list rather than one `credential`, because Meta Lead Ads needs two that do different jobs: an
+   * app secret to verify a delivery, and a page access token to fetch the lead it refers to. One
+   * column holding "the credential" would have made the second one a setting — and a setting is
+   * rendered, logged and shown back, which an app secret must never be. Empty when **we** generate
+   * the secret (`shared_secret`), because there is nothing for anybody to paste.
    */
-  readonly settings: readonly {
-    readonly key: string;
-    readonly label: string;
-    readonly hint?: string;
-    readonly required: boolean;
-  }[];
+  readonly credentialFields: readonly ProviderField[];
+  /**
+   * The non-secret fields the connect form asks for. Rendered by the screen, so a new provider
+   * needs no new UI — which is the whole point of a registry.
+   */
+  readonly settings: readonly ProviderField[];
   /** Whether a payload this provider sends goes through a field mapping. */
   readonly mappable: boolean;
   /** The mapping a workspace starts with, which they can then edit. */
   readonly defaultMapping: readonly FieldMapping[];
   /** How often the health probe runs, in minutes. Null means "never probed on a schedule". */
   readonly probeEveryMinutes: number | null;
+  /** How a delivery from this provider is proved to be from it. */
+  readonly inboundVerification: InboundVerification;
+  /**
+   * Whether a delivery is only a **reference** to the lead.
+   *
+   * Meta sends a `leadgen_id` and nothing else, so the lead has to be fetched with the stored
+   * token; Google Ads sends the answers. It is declared here rather than inferred per payload,
+   * because a provider that sometimes sends the lead and sometimes a reference would be two
+   * providers.
+   */
+  readonly deliveryIsAReference: boolean;
 }
 
 /**
@@ -138,6 +175,7 @@ export const INTEGRATION_PROVIDERS: readonly IntegrationProvider[] = [
     capabilities: ['lead_ingest'],
     // We generate the secret: the sender signs with it, exactly as the public lead API's callers do.
     authKind: 'shared_secret',
+    credentialFields: [],
     settings: [
       {
         key: 'sourceName',
@@ -151,6 +189,8 @@ export const INTEGRATION_PROVIDERS: readonly IntegrationProvider[] = [
     // field names, and a wrong guess silently drops the fields it did not expect.
     defaultMapping: [],
     probeEveryMinutes: null,
+    inboundVerification: 'hmac_header',
+    deliveryIsAReference: false,
   },
   {
     key: 'postmark',
@@ -159,6 +199,14 @@ export const INTEGRATION_PROVIDERS: readonly IntegrationProvider[] = [
       'The service that delivers this workspace’s email — verifications, invitations, resets and notifications.',
     capabilities: ['email_send'],
     authKind: 'api_key',
+    credentialFields: [
+      {
+        key: 'serverToken',
+        label: 'Server API token',
+        hint: 'Postmark → your server → API Tokens. A long identifier, not your account password.',
+        required: true,
+      },
+    ],
     settings: [
       {
         key: 'fromAddress',
@@ -179,6 +227,112 @@ export const INTEGRATION_PROVIDERS: readonly IntegrationProvider[] = [
     // `integration.health-check`: often enough that a revoked token is a prompt within the hour,
     // rare enough that a hundred workspaces do not become a hundred requests a minute.
     probeEveryMinutes: 10,
+    inboundVerification: 'none',
+    deliveryIsAReference: false,
+  },
+  {
+    key: 'meta_lead_ads',
+    label: 'Meta Lead Ads',
+    summary:
+      'Leads from your Facebook and Instagram lead forms, the moment somebody submits one — with the answers they gave, on their lead record here.',
+    capabilities: ['lead_ingest'],
+    // Two secrets, doing two jobs. The app secret proves a delivery is Meta's; the page token
+    // fetches the lead Meta only refers to. Neither is a setting, because a setting is rendered
+    // back to the screen.
+    authKind: 'api_key',
+    credentialFields: [
+      {
+        key: 'appSecret',
+        label: 'App secret',
+        hint: 'Meta for Developers → your app → Settings → Basic → App Secret. We check every delivery’s signature against it.',
+        required: true,
+      },
+      {
+        key: 'pageAccessToken',
+        label: 'Page access token',
+        hint: 'A long-lived token for the Page the form belongs to, with leads_retrieval. Meta sends us only an id; this is what fetches the answers.',
+        required: true,
+      },
+    ],
+    settings: [
+      {
+        key: 'pageId',
+        label: 'Page id',
+        hint: 'The numeric id of the Facebook Page. Shown on the connection and used for the health check.',
+        required: true,
+      },
+      {
+        key: 'verifyToken',
+        label: 'Verify token',
+        hint: 'Any phrase you choose. Meta echoes it once when you add the callback URL, and we answer only if it matches.',
+        required: false,
+      },
+      {
+        key: 'sourceName',
+        label: 'Call these leads',
+        hint: 'The source name that appears on every lead this connection brings in — "Facebook", "Instagram".',
+        required: false,
+      },
+    ],
+    mappable: true,
+    /**
+     * Meta's own field names, so the connection works the moment it is made.
+     *
+     * Unlike "any webhook", this **is** knowable: `full_name`, `phone_number` and `email` are
+     * Meta's standard lead-form questions, and a workspace that asks custom questions edits the
+     * mapping rather than starting from nothing. The adapter flattens `field_data` to these keys
+     * before the mapping runs, which is what makes a dot path enough.
+     */
+    defaultMapping: [
+      { source: 'full_name', target: 'name', transform: 'trim' },
+      { source: 'phone_number', target: 'phone', transform: 'phone' },
+      { source: 'email', target: 'email', transform: 'lowercase' },
+      { source: 'city', target: 'city', transform: 'trim' },
+      { source: 'company_name', target: 'company', transform: 'trim' },
+    ],
+    probeEveryMinutes: 10,
+    inboundVerification: 'hmac_header',
+    // Meta sends a `leadgen_id`. The lead itself is a second request, with the page token.
+    deliveryIsAReference: true,
+  },
+  {
+    key: 'google_ads_leads',
+    label: 'Google Ads lead forms',
+    summary:
+      'Leads from your Google Ads lead form extensions, posted here as each one is submitted, with the answers the person gave.',
+    capabilities: ['lead_ingest'],
+    // Google Ads asks *you* for a webhook key and echoes it in every payload, so we generate it —
+    // the same arrangement as "any webhook", with the key in the body rather than in a signature.
+    authKind: 'shared_secret',
+    credentialFields: [],
+    settings: [
+      {
+        key: 'sourceName',
+        label: 'Call these leads',
+        hint: 'The source name that appears on every lead this connection brings in — "Google Ads".',
+        required: false,
+      },
+    ],
+    mappable: true,
+    /**
+     * Google's own column ids, which arrive upper-cased in `user_column_data`.
+     *
+     * `FULL_NAME`, `PHONE_NUMBER`, `EMAIL`, `CITY` and `COMPANY_NAME` are the standard questions a
+     * lead form extension offers; the adapter flattens the array to these keys, so a workspace that
+     * adds a custom question maps one more row rather than rewriting this.
+     */
+    defaultMapping: [
+      { source: 'FULL_NAME', target: 'name', transform: 'trim' },
+      { source: 'PHONE_NUMBER', target: 'phone', transform: 'phone' },
+      { source: 'EMAIL', target: 'email', transform: 'lowercase' },
+      { source: 'CITY', target: 'city', transform: 'trim' },
+      { source: 'COMPANY_NAME', target: 'company', transform: 'trim' },
+    ],
+    // Nothing to probe: Google posts to us, and the key it posts with is one we generated. The
+    // connection is healthy when something arrives, which is `last_success_at`.
+    probeEveryMinutes: null,
+    inboundVerification: 'payload_key',
+    deliveryIsAReference: false,
   },
 ];
 
@@ -364,6 +518,66 @@ export function nextStatus(
   if (outcome === 'ok') return 'connected';
   if (outcome === 'unauthorized') return 'revoked';
   return current === 'degraded' || current === 'error' ? 'error' : 'degraded';
+}
+
+// ── Provider payload shapes ─────────────────────────────────────────────────
+
+/**
+ * Meta's `field_data` as a flat object.
+ *
+ * Meta sends `[{ name: 'full_name', values: ['Asha Rao'] }]` — an array of question/answer pairs,
+ * which a dot path cannot address by name and which would otherwise force every mapping to be
+ * written as `field_data.0.values.0`: an index that moves the day somebody reorders the form's
+ * questions. Flattening by `name` is what makes `full_name` a stable source, and it is why the
+ * provider's `defaultMapping` can be written at all.
+ *
+ * A question answered more than once (a checkbox group) keeps **all** its values, joined by a
+ * comma: taking the first silently discards an answer somebody gave, and a mapping that wanted one
+ * value can still read it.
+ */
+export function flattenMetaFieldData(payload: Record<string, unknown>): Record<string, unknown> {
+  const flat: Record<string, unknown> = { ...payload };
+  const entries = payload['field_data'];
+  if (!Array.isArray(entries)) return flat;
+  for (const entry of entries) {
+    if (entry === null || typeof entry !== 'object') continue;
+    const name = (entry as { name?: unknown }).name;
+    const values = (entry as { values?: unknown }).values;
+    if (typeof name !== 'string' || name === '') continue;
+    const list = Array.isArray(values) ? values.filter((value) => value !== null && value !== undefined) : [];
+    if (list.length === 0) continue;
+    flat[name] = list.length === 1 ? list[0] : list.map((value) => String(value)).join(', ');
+  }
+  return flat;
+}
+
+/**
+ * Google Ads' `user_column_data` as a flat object.
+ *
+ * Google sends `[{ column_id: 'FULL_NAME', string_value: 'Asha Rao' }]`, and `column_name` beside
+ * it for a custom question. The **id** is the key, because it is the stable one: `column_name` is
+ * the question's wording and changes when somebody edits the form. A custom question has no
+ * standard id, so its name is used — which is the only case where a mapping can break on an edit,
+ * and the one Google gives no alternative for.
+ */
+export function flattenGoogleColumnData(payload: Record<string, unknown>): Record<string, unknown> {
+  const flat: Record<string, unknown> = { ...payload };
+  const entries = payload['user_column_data'];
+  if (!Array.isArray(entries)) return flat;
+  for (const entry of entries) {
+    if (entry === null || typeof entry !== 'object') continue;
+    const row = entry as { column_id?: unknown; column_name?: unknown; string_value?: unknown };
+    const key =
+      typeof row.column_id === 'string' && row.column_id !== ''
+        ? row.column_id
+        : typeof row.column_name === 'string' && row.column_name !== ''
+          ? row.column_name
+          : null;
+    if (key === null) continue;
+    if (row.string_value === null || row.string_value === undefined || row.string_value === '') continue;
+    flat[key] = row.string_value;
+  }
+  return flat;
 }
 
 /** Whether this standing needs a person, as opposed to time. */

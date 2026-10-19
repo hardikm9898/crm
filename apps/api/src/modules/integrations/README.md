@@ -17,8 +17,12 @@ adapters, not as two more modules with their own idea of where a credential live
 | `integrations.controller.ts` | `/integrations`, all of it behind `integration:manage`. |
 | `integration-inbound.controller.ts` | `POST /wh/{provider}/{connectionId}` — somebody else's server posting leads. |
 | `integrations.processor.ts` | `integration.health-check`, every ten minutes. |
+| `integration-inbound.service.ts` | A delivery → the ledger → a queued capture. |
+| `adapters/secret-names.ts` | The names each provider's secrets are filed under, in one place. |
 | `adapters/postmark.adapter.ts` | A token we send, probed with `GET /server`. |
 | `adapters/generic-webhook.adapter.ts` | A secret we generate, signed by the sender. No probe, on purpose. |
+| `adapters/meta-lead-ads.adapter.ts` | Meta's handshake, its signature, its batches, and the lead fetch. |
+| `adapters/google-ads-leads.adapter.ts` | A key inside the body, compared in constant time. No probe. |
 
 The vocabulary — the provider catalogue, the four statuses, the mapping engine, the transition
 table — is in `@leados/shared/src/integrations.ts`, because the web app renders the same catalogue
@@ -69,15 +73,39 @@ first draft did.
 all take the workspace from the context. Read across tenants, write inside
 `tenantContext.run(systemPrincipal(...), …)` — the quotation-expiry sweep's lesson.
 
+## The inbound ledger (step 7)
+
+A provider that sends its **own** event id gets `provider_events`, whose
+`UNIQUE (organization_id, provider, external_event_id)` *is* the "a duplicate delivery produces one
+lead" guarantee. The insert comes **before** any work and its unique violation is the normal case:
+a retry is counted and answered 200. The table is deliberately not partitioned — a unique on a
+partitioned table must contain the partition key, which makes it a race guard rather than the point
+read this needs.
+
+A provider with **no** event id of its own (the generic webhook) does not touch the ledger: a key
+we invented would make every distinct lead look like a replay. That door stays synchronous, answers
+the lead id, and deduplicates on `Idempotency-Key` through `idempotency_keys`.
+
+The webhook answers 200 and the lead is made by `integration.ingest-event`, because a provider that
+waits for us is a provider that **retries**: a two-second capture would become a second delivery.
+`maintenance.integration-retry` re-queues what the ledger still owes, three attempts at most.
+
 ## Adding a provider
 
 1. An entry in `INTEGRATION_PROVIDERS` (`@leados/shared`): label, a summary written for the person
-   deciding whether to connect it, its capabilities, its auth kind, the settings its connect form
-   asks for, whether it maps fields, and its probe cadence.
-2. An adapter in `adapters/`, registered in `IntegrationRegistryService`'s constructor. Omit
-   `probe` if there is genuinely nothing to ask.
-3. Nothing else. The screen renders the form from the registry, the vault seals whatever the
-   adapter accepts, the sweep picks it up from its declared cadence, and the boot check tells you
+   deciding whether to connect it, its capabilities, its auth kind, **the secrets it needs by name**
+   (`credentialFields`), the settings its connect form asks for, whether it maps fields, its probe
+   cadence, how it verifies an inbound delivery, and whether that delivery is only a reference to
+   the lead.
+2. An adapter in `adapters/`, registered in `IntegrationRegistryService`'s constructor. Omit any
+   method there is genuinely nothing to do — `probe` for a provider that posts to us, `fetchLead`
+   for one that sends the answers — and the boot check will tell you if the registry entry and the
+   adapter disagree about which.
+3. A `defaultMapping` of the provider's own standard field names, and whatever flattening makes
+   those names reachable by a dot path (`flattenMetaFieldData`, `flattenGoogleColumnData` in
+   `@leados/shared`). This is what makes a connection work the moment it is made.
+4. Nothing else. The screen renders the form from the registry, the vault seals whatever the
+   adapter accepts, the sweeps pick it up from its declared cadence, and the boot check tells you
    if you have forgotten half of it.
 
 A new provider needs **no migration**: `integration_connections.provider` is a string checked

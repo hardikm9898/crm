@@ -3,6 +3,8 @@ import { AppError, INTEGRATION_PROVIDERS, type IntegrationProvider } from '@lead
 import type { Logger } from 'pino';
 import { LOGGER } from '../../infra/observability/logger.module.js';
 import { GenericWebhookAdapter } from './adapters/generic-webhook.adapter.js';
+import { GoogleAdsLeadsAdapter } from './adapters/google-ads-leads.adapter.js';
+import { MetaLeadAdsAdapter } from './adapters/meta-lead-ads.adapter.js';
 import { PostmarkAdapter } from './adapters/postmark.adapter.js';
 import type { IntegrationAdapter, RegisteredProvider } from './integration.port.js';
 
@@ -31,14 +33,21 @@ export class IntegrationRegistryService implements OnApplicationBootstrap {
   constructor(
     postmark: PostmarkAdapter,
     genericWebhook: GenericWebhookAdapter,
+    metaLeadAds: MetaLeadAdsAdapter,
+    googleAdsLeads: GoogleAdsLeadsAdapter,
     @Inject(LOGGER) private readonly logger: Logger,
   ) {
-    for (const adapter of [postmark, genericWebhook]) this.adapters.set(adapter.provider, adapter);
+    for (const adapter of [postmark, genericWebhook, metaLeadAds, googleAdsLeads]) {
+      this.adapters.set(adapter.provider, adapter);
+    }
   }
 
   onApplicationBootstrap(): void {
     const missing: string[] = [];
     const unprobeable: string[] = [];
+    const unverifiable: string[] = [];
+    const unreadable: string[] = [];
+    const unfetchable: string[] = [];
     for (const provider of INTEGRATION_PROVIDERS) {
       const adapter = this.adapters.get(provider.key);
       if (!adapter) {
@@ -48,6 +57,18 @@ export class IntegrationRegistryService implements OnApplicationBootstrap {
       if (provider.probeEveryMinutes !== null && adapter.probe === undefined) {
         unprobeable.push(provider.key);
       }
+      // The same reconciliation, for every other thing a provider declares about itself. Each of
+      // these is a 500 on the first real delivery if it is wrong, and a boot failure if it is
+      // checked — which is the trade this check exists to make.
+      if (provider.inboundVerification !== 'none' && adapter.verifyInbound === undefined) {
+        unverifiable.push(provider.key);
+      }
+      if (provider.inboundVerification !== 'none' && adapter.parseDelivery === undefined) {
+        unreadable.push(provider.key);
+      }
+      if (provider.deliveryIsAReference && adapter.fetchLead === undefined) {
+        unfetchable.push(provider.key);
+      }
     }
     const orphans = [...this.adapters.keys()].filter(
       (key) => !INTEGRATION_PROVIDERS.some((provider) => provider.key === key),
@@ -56,6 +77,9 @@ export class IntegrationRegistryService implements OnApplicationBootstrap {
     const faults = [
       ...missing.map((key) => `${key} is in the catalogue with no adapter`),
       ...unprobeable.map((key) => `${key} asks to be probed and its adapter cannot be`),
+      ...unverifiable.map((key) => `${key} declares an inbound verification its adapter cannot do`),
+      ...unreadable.map((key) => `${key} accepts deliveries its adapter cannot read`),
+      ...unfetchable.map((key) => `${key} says its delivery is a reference and cannot fetch a lead`),
       ...orphans.map((key) => `${key} has an adapter and is not in the catalogue`),
     ];
     if (faults.length > 0) {

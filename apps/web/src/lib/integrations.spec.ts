@@ -22,6 +22,7 @@ import {
   describeCheck,
   describeIntegrations,
   describeStatus,
+  inboundInstruction,
   inboundUrl,
   isMappableTarget,
   needsReconnect,
@@ -93,6 +94,32 @@ describe('the vocabulary matches the API', () => {
     for (const transform of MAPPING_TRANSFORMS) {
       expect(TRANSFORM_LABELS[transform], transform).toBeTruthy();
     }
+  });
+
+  it('renders a form for every provider from the registry alone', () => {
+    for (const provider of INTEGRATION_PROVIDERS) {
+      // What the screen needs in order to ask for this provider's secrets without knowing anything
+      // about it: a name, a label and whether it is required. A provider that generates its own
+      // secret declares none, and the screen says so instead of rendering an empty box.
+      for (const field of provider.credentialFields) {
+        expect(field.key, provider.key).toBeTruthy();
+        expect(field.label, `${provider.key}.${field.key}`).toBeTruthy();
+      }
+      // And what it needs to decide whether to show an inbound address at all.
+      expect(['hmac_header', 'payload_key', 'none']).toContain(provider.inboundVerification);
+    }
+  });
+
+  it('has an instruction for every provider that posts to us, and none that is generic', () => {
+    const posting = INTEGRATION_PROVIDERS.filter(
+      (provider) => provider.inboundVerification !== 'none',
+    );
+    expect(posting.length).toBeGreaterThan(1);
+    const sentences = posting.map((provider) => inboundInstruction(provider.key));
+    // A sentence per provider, because "post leads here" is not what somebody configuring Google
+    // Ads or Meta needs to read — they need to know which box to paste it into.
+    expect(new Set(sentences).size).toBe(sentences.length);
+    for (const sentence of sentences) expect(sentence.length).toBeGreaterThan(40);
   });
 
   it('knows which providers exist without a second list', () => {

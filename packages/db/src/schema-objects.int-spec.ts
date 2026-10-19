@@ -177,6 +177,9 @@ const REQUIRED_INDEXES = [
   // `RESTRICT` on a partitioned table means disconnecting a provider would scan every partition —
   // the lesson `leads_duplicate_of` paid for.
   'inbound_payloads_connection',
+  // The retry queue for provider deliveries that have not become leads. Partial, so it stays small
+  // however many succeed.
+  'provider_events_unresolved',
 ];
 
 /**
@@ -580,6 +583,14 @@ const REQUIRED_CONSTRAINTS = [
   'sync_cursors_connection_same_org_fk',
   'integration_health_checks_connection_same_org_fk',
   'inbound_payloads_connection_same_org_fk',
+  // The inbound idempotency ledger (Phase 4 step 7). The unique that makes it a ledger is Prisma's
+  // own; these are the four CHECKs and the FK that are not.
+  'provider_events_provider_is_a_key',
+  'provider_events_external_id_present',
+  'provider_events_lead_was_processed',
+  'provider_events_received_is_untried',
+  'provider_events_raw_is_an_object',
+  'provider_events_connection_same_org_fk',
 ];
 
 describe('hand-written indexes survive every generated migration', () => {

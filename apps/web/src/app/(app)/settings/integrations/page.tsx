@@ -4,14 +4,19 @@ import { can, readAccessToken, requireCurrentUser } from '@/lib/session';
 import { Card, EmptyState, ErrorNotice, PageHeader, StatCard } from '@/components/ui';
 import { relativeWhen } from '@/lib/forms';
 import {
+  EVENT_STATUS_CLASSES,
+  EVENT_STATUS_LABELS,
   OUTCOME_LABELS,
+  describeEvent,
   describeIntegrations,
   loadConnections,
   loadHealthChecks,
+  loadProviderEvents,
   loadProviders,
   needsReconnect,
   type ConnectionRecord,
   type HealthCheckRow,
+  type ProviderEventRow,
   type ProviderOption,
 } from '@/lib/integrations';
 import { ConnectForm, ConnectionRow, ProviderCard } from './_components/integration-forms';
@@ -49,11 +54,13 @@ export default async function IntegrationsPage() {
   let providers: ProviderOption[];
   let connections: ConnectionRecord[];
   let checks: (HealthCheckRow & { connection: { id: string; provider: string; name: string } })[];
+  let events: { items: ProviderEventRow[]; unresolved: number };
   try {
-    [providers, connections, checks] = await Promise.all([
+    [providers, connections, checks, events] = await Promise.all([
       loadProviders(token),
       loadConnections(token),
       loadHealthChecks(token),
+      loadProviderEvents(token),
     ]);
   } catch (error) {
     return (
@@ -104,9 +111,9 @@ export default async function IntegrationsPage() {
             hint="A refused credential stops everything it carries."
           />
           <StatCard
-            label="Checks kept"
-            value={checks.length}
-            hint="So “failing since Tuesday” has an answer."
+            label="Not yet leads"
+            value={events.unresolved}
+            hint="Deliveries we are still trying, with the provider’s own reason."
           />
         </div>
       )}
@@ -133,6 +140,47 @@ export default async function IntegrationsPage() {
                   />
                 ))}
               </div>
+            )}
+          </Card>
+
+          <Card
+            title="What your providers have sent"
+            description="One row per delivery, keyed on the provider’s own id — so a delivery they retry is recognised rather than becoming a second lead."
+          >
+            {events.items.length === 0 ? (
+              <p className="text-sm text-[var(--color-text-muted)]">
+                Nothing yet. A provider that posts to us appears here as each delivery arrives,
+                whether or not it became a lead.
+              </p>
+            ) : (
+              <ul className="flex flex-col divide-y divide-[var(--color-border)]/60">
+                {events.items.map((event) => (
+                  <li key={event.id} className="py-3 text-sm" data-provider-event={event.id}>
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <p>
+                        <span
+                          className={`rounded px-2 py-0.5 text-xs ${EVENT_STATUS_CLASSES[event.status]}`}
+                          data-event-status={event.id}
+                        >
+                          {EVENT_STATUS_LABELS[event.status]}
+                        </span>{' '}
+                        {event.providerLabel}{' '}
+                        <code className="text-xs text-[var(--color-text-muted)]">
+                          {event.externalEventId}
+                        </code>
+                      </p>
+                      {event.leadId !== null && (
+                        <Link href={`/leads/${event.leadId}`} className="text-xs underline">
+                          The lead it became
+                        </Link>
+                      )}
+                    </div>
+                    <p className="mt-1 text-xs text-[var(--color-text-muted)]" data-event-detail={event.id}>
+                      {describeEvent(event)}
+                    </p>
+                  </li>
+                ))}
+              </ul>
             )}
           </Card>
 

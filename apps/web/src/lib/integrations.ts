@@ -122,11 +122,15 @@ export interface ProviderOption {
   summary: string;
   capabilities: string[];
   authKind: 'api_key' | 'shared_secret';
+  /** The secrets this provider's form asks for, by name. Empty when we generate the secret. */
+  credentialFields: ProviderSetting[];
   settings: ProviderSetting[];
   mappable: boolean;
   defaultMapping: FieldMapping[];
   probeEveryMinutes: number | null;
   probeable: boolean;
+  /** Whether this provider posts deliveries to us, and therefore has an inbound address. */
+  inboundVerification: 'hmac_header' | 'payload_key' | 'none';
   connection: { id: string; name: string; status: IntegrationStatus; summary: string } | null;
 }
 
@@ -140,6 +144,7 @@ export interface HealthCheckRow {
 export interface ConnectionRecord {
   id: string;
   provider: string;
+  inboundVerification?: 'hmac_header' | 'payload_key' | 'none';
   providerLabel: string;
   capabilities: string[];
   authKind: 'api_key' | 'shared_secret' | null;
@@ -161,6 +166,39 @@ export interface CreatedConnection extends ConnectionRecord {
   secret?: string;
   secretShownOnce?: boolean;
 }
+
+/** One thing a provider has told us, and what became of it. */
+export interface ProviderEventRow {
+  id: string;
+  provider: string;
+  providerLabel: string;
+  connection: { id: string; provider: string; name: string } | null;
+  externalEventId: string;
+  eventType: string;
+  status: 'received' | 'processed' | 'duplicate' | 'failed';
+  leadId: string | null;
+  error: string | null;
+  attempts: number;
+  receivedAt: string;
+  processedAt: string | null;
+  raw: Record<string, unknown>;
+}
+
+export const EVENT_STATUS_LABELS: Record<ProviderEventRow['status'], string> = {
+  received: 'Queued',
+  processed: 'Became a lead',
+  // Your own duplicate rules, not a redelivery: this person was already a lead, so the enquiry was
+  // added to the record they already had. A redelivery never appears here at all.
+  duplicate: 'Added to an existing lead',
+  failed: 'Did not become a lead',
+};
+
+export const EVENT_STATUS_CLASSES: Record<ProviderEventRow['status'], string> = {
+  received: 'bg-[var(--color-surface-muted)] text-[var(--color-text-muted)]',
+  processed: 'bg-[var(--color-success-soft)] text-[var(--color-success-strong)]',
+  duplicate: 'bg-[var(--color-surface-muted)] text-[var(--color-text-muted)]',
+  failed: 'bg-[var(--color-danger-soft)] text-[var(--color-danger-strong)]',
+};
 
 // ── Sentences ───────────────────────────────────────────────────────────────
 
@@ -257,6 +295,24 @@ export function inboundUrl(apiBase: string, provider: string, connectionId: stri
 }
 
 /**
+ * What to do with the address, in the provider's own words.
+ *
+ * Three providers post to us and each wants it somewhere different, which is the sentence somebody
+ * is looking for when they copy it: the generic webhook signs with the secret, Google Ads is given
+ * the key to echo, and Meta subscribes a Page to the callback URL.
+ */
+export function inboundInstruction(provider: string): string {
+  switch (provider) {
+    case 'meta_lead_ads':
+      return 'In Meta for Developers, add this as the app’s Webhooks callback URL for the Page, with the verify token you set above, and subscribe it to leadgen.';
+    case 'google_ads_leads':
+      return 'In Google Ads, open the lead form extension → Webhook integration, and paste this URL with the key below.';
+    default:
+      return 'Have the sending system POST one lead per request to this address, signed with the secret.';
+  }
+}
+
+/**
  * The signing a sender has to write, in their own language.
  *
  * On the screen rather than in a document somebody has to find, for the reason the outbound
@@ -300,6 +356,38 @@ export async function loadConnections(
   query = '',
 ): Promise<ConnectionRecord[]> {
   return (await request<ConnectionRecord[]>(`/integrations${query}`, { token })).data;
+}
+
+/**
+ * What each provider has told us (`provider_events`).
+ *
+ * Throwing, like the rest: on a screen whose job is to answer "why did that lead not appear", a
+ * swallowed failure would say "nothing has arrived" to a workspace whose provider is delivering.
+ */
+export async function loadProviderEvents(
+  token: string | null,
+  query = '?limit=20',
+): Promise<{ items: ProviderEventRow[]; unresolved: number }> {
+  const page = await request<ProviderEventRow[]>(`/integrations/events${query}`, { token });
+  return {
+    items: page.data,
+    // From the API's own `meta`, over the whole set rather than this page: a figure beside a list
+    // that totals the page is the recurring bug in this codebase.
+    unresolved: Number((page.meta as { unresolved?: unknown } | undefined)?.unresolved ?? 0),
+  };
+}
+
+/** One ledger row, as a line somebody can act on. */
+export function describeEvent(event: ProviderEventRow, now = new Date()): string {
+  const when = relativeWhen(event.receivedAt, now);
+  if (event.status === 'failed') {
+    const attempts = `${event.attempts} ${event.attempts === 1 ? 'attempt' : 'attempts'}`;
+    return `${when} · ${attempts} · ${event.error ?? 'no reason recorded'}`;
+  }
+  if (event.status === 'duplicate') {
+    return `${when} · this person was already in your leads`;
+  }
+  return `${when} · ${event.eventType}`;
 }
 
 export async function loadHealthChecks(

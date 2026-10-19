@@ -12,6 +12,7 @@ import {
   TRANSFORM_LABELS,
   describeActivity,
   describeCheck,
+  inboundInstruction,
   needsReconnect,
   signingSnippet,
   type ConnectionRecord,
@@ -57,10 +58,12 @@ function ShownOnceSecret({
   secret,
   url,
   name,
+  provider,
 }: {
   secret: string;
   url: string | null;
   name: string;
+  provider: string;
 }) {
   return (
     <div
@@ -69,13 +72,17 @@ function ShownOnceSecret({
     >
       <p className="text-sm font-medium">Copy this now — it is not shown again.</p>
       <Field
-        label={`Signing secret for ${name}`}
-        hint="The sending system hashes it with a timestamp and the raw body, and sends the result as X-Signature."
+        label={`Secret for ${name}`}
+        hint={
+          provider === 'google_ads_leads'
+            ? 'Paste this into the lead form’s webhook settings in Google Ads as the key. Every delivery carries it back, and we check it.'
+            : 'The sending system hashes it with a timestamp and the raw body, and sends the result as X-Signature.'
+        }
       >
         <input readOnly value={secret} className={controlClassName} data-connection-secret />
       </Field>
       {url !== null && (
-        <Field label="Post leads to" hint="One lead per request, as JSON, in your own field names.">
+        <Field label="Post leads to" hint={inboundInstruction(provider)}>
           <input readOnly value={url} className={controlClassName} data-connection-url />
         </Field>
       )}
@@ -265,6 +272,7 @@ export function ConnectForm({
               : null
           }
           name={success?.data?.['name'] ?? 'this connection'}
+          provider={success?.data?.['provider'] ?? ''}
         />
       )}
       {state.status === 'success' && secret === '' && (
@@ -310,18 +318,33 @@ export function ConnectForm({
         />
       </Field>
 
-      {provider?.authKind === 'api_key' ? (
-        <Field
-          label="Their token"
-          hint="Paste the credential the provider gave you. We encrypt it and never show it again."
-          {...(errorOf(state, 'credential') ? { error: errorOf(state, 'credential') } : {})}
-        >
-          <input name="credential" className={controlClassName} autoComplete="off" />
-        </Field>
+      {(provider?.credentialFields ?? []).length > 0 ? (
+        (provider?.credentialFields ?? []).map((field) => (
+          <Field
+            key={field.key}
+            label={field.required ? field.label : `${field.label} (optional)`}
+            {...(field.hint ? { hint: field.hint } : {})}
+            {...(errorOf(state, `credentials.${field.key}`)
+              ? { error: errorOf(state, `credentials.${field.key}`) }
+              : {})}
+          >
+            {/*
+              Never echoed back on a refusal, unlike every other field on this form. A secret
+              restored into an input is a secret in the page's HTML on a screen somebody may be
+              sharing, and retyping one is a smaller cost than that.
+            */}
+            <input
+              name={`credentials.${field.key}`}
+              className={controlClassName}
+              autoComplete="off"
+              data-credential-field={field.key}
+            />
+          </Field>
+        ))
       ) : (
         <p className="rounded-md bg-[var(--color-surface-muted)] px-3 py-2 text-xs text-[var(--color-text-muted)]">
-          We generate the secret for this one and show it to you once. The sending system signs each
-          request with it.
+          We generate the secret for this one and show it to you once. The sending system proves
+          each delivery with it.
         </p>
       )}
 
@@ -420,6 +443,7 @@ export function ConnectionRow({
           secret={rotateState.data['secret']}
           url={inbound}
           name={connection.name}
+          provider={connection.provider}
         />
       )}
 
@@ -438,8 +462,8 @@ export function ConnectionRow({
         </details>
       )}
 
-      {provider?.authKind === 'shared_secret' && (
-        <Field label="They post leads to" hint="Signed with the secret, one lead per request.">
+      {provider !== undefined && provider.inboundVerification !== 'none' && (
+        <Field label="They post leads to" hint={inboundInstruction(connection.provider)}>
           <input readOnly value={inbound} className={controlClassName} data-inbound-url={connection.id} />
         </Field>
       )}
@@ -452,14 +476,19 @@ export function ConnectionRow({
           defaultValue={connection.name}
           aria-label="What it is called"
         />
-        {provider?.authKind === 'api_key' ? (
-          <input
-            name="credential"
-            className={controlClassName}
-            placeholder="A new token (leave blank to keep this one)"
-            autoComplete="off"
-            aria-label="A new token"
-          />
+        {(provider?.credentialFields ?? []).length > 0 ? (
+          <div className="flex flex-col gap-2">
+            {(provider?.credentialFields ?? []).map((field) => (
+              <input
+                key={field.key}
+                name={`credentials.${field.key}`}
+                className={controlClassName}
+                placeholder={`New ${field.label.toLowerCase()} (leave all blank to keep these)`}
+                autoComplete="off"
+                aria-label={`New ${field.label}`}
+              />
+            ))}
+          </div>
         ) : (
           <span className="text-xs text-[var(--color-text-muted)]">
             Its secret is ours to generate — rotate it rather than replacing it.
@@ -479,7 +508,7 @@ export function ConnectionRow({
             </Button>
           </form>
         )}
-        {provider?.authKind === 'shared_secret' && (
+        {provider?.credentialFields.length === 0 && (
           <form action={rotate}>
             <input type="hidden" name="connectionId" value={connection.id} />
             <Button type="submit" variant="secondary" pending={rotating}>
@@ -497,7 +526,7 @@ export function ConnectionRow({
 
       {provider?.mappable === true && <MappingEditor connection={connection} />}
 
-      {provider?.authKind === 'shared_secret' && (
+      {provider?.inboundVerification === 'hmac_header' && provider.credentialFields.length === 0 && (
         <details>
           <summary className="cursor-pointer text-xs text-[var(--color-text-muted)]">
             How the sending system signs a request

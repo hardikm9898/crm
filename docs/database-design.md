@@ -1055,8 +1055,7 @@ message search (`FR-VIEW-1`).
 >   `inbound_payloads_connection_same_org_fk (organization_id, integration_connection_id)` with
 >   `ON DELETE RESTRICT` — which is the other reason the disconnect is soft.
 >
-> `provider_events` remains specified and unbuilt: it is the inbound idempotency ledger for a
-> provider that sends us its **own** event ids, which neither provider in this step does.
+> `provider_events` was specified and unbuilt at this step; it arrives in step 7, below.
 > `integration_health_checks.status` is named `outcome` in the built table, because the four values
 > it holds (`ok`, `degraded`, `unauthorized`, `unreachable`) are what a probe **found**, and
 > `integration_connections.status` is what the connection now **is** — one column per fact, and two
@@ -1065,6 +1064,56 @@ message search (`FR-VIEW-1`).
 > All eleven CHECKs, the partial unique, the two further indexes and the three composite FKs are
 > listed in `packages/db/src/schema-objects.int-spec.ts`: Prisma's next diff would otherwise drop
 > every one of them.
+
+> **Amendment, 2026-10-19 (implementation, Phase 4 step 7 — Meta Lead Ads and Google Ads lead
+> forms).** `provider_events` is built as specified above, with five changes
+> ([ADR-0035](./decisions/ADR-0035-a-provider-event-is-deduplicated-on-the-providers-own-id.md)):
+>
+> - **It is deliberately _not_ partitioned**, and that is the whole difference between it and
+>   `inbound_payloads`. A unique on a partitioned table must contain the partition key, which makes
+>   it a race guard rather than a point read — the same event id next month would be allowed. The
+>   question here is "have we **ever** seen this id", and `UNIQUE (organization_id, provider,
+>   external_event_id)` is the answer no partition boundary can defeat. It is also what makes the
+>   phase's exit criterion a constraint rather than a code path: Meta's retried delivery fails the
+>   insert.
+> - **`status` is an enum of four, and `duplicate` means the _workspace's_ duplicate rules**, not a
+>   redelivery: the person who filled the form in was already a lead, so the event was accepted and
+>   attached as a touch rather than creating a second record. A redelivery never becomes a row at
+>   all. §8 wrote `status` untyped; the four values are what the screen and the retry sweep branch
+>   on, so an enum is right here for the same reason it is on `integration_connections`.
+> - **It gained `connection_id`, `lead_id`, `error` and `attempts`.** `connection_id` carries a
+>   composite FK (`provider_events_connection_same_org_fk`, `RESTRICT`), because "which connection
+>   brought this" is the first question about a delivery and a connection with events is
+>   disconnected rather than deleted. `lead_id` has **no** FK at all — the same decision
+>   `inbound_payloads.lead_id` makes: the ledger has to outlive the lead, `Restrict` would make a
+>   lead undeletable, and `SetNull` on a composite FK would null the NOT NULL `organization_id`
+>   with it. `error` and `attempts` are what make a failed delivery diagnosable and retryable from
+>   the row rather than from the provider.
+> - **Four CHECKs, each written in the one direction that is a contradiction.**
+>   `provider_events_lead_was_processed` is a `CASE`: an event that produced a lead has been
+>   processed and says when. Its mirror ("anything processed produced a lead") reads just as
+>   sensibly and is **false** — an event the duplicate rules attached to an existing lead is
+>   honestly processed with no lead of its own. `provider_events_received_is_untried` says
+>   `received` implies zero attempts, and again only that direction: an event abandoned as `failed`
+>   having never been attempted is a real state, and the first version of
+>   `webhook_deliveries_pending_is_untried` made exactly that unrepresentable.
+>   `provider_events_external_id_present` keeps the key the unique is built on from being empty, and
+>   `provider_events_provider_is_a_key` holds the column to the same registry-key shape
+>   `integration_connections.provider` is held to, because the two carry the same vocabulary.
+> - **One hand-written partial index**, `provider_events_unresolved` on
+>   `(organization_id, received_at DESC) WHERE status IN ('received','failed')` — the queue the
+>   retry sweep reads, which stays small however many deliveries succeed.
+>
+> `integration_connections.credentials_encrypted` now holds a **set** of secrets as one JSON
+> envelope rather than a single value, under the same AAD. Meta Lead Ads needs two doing two jobs —
+> an app secret to verify a delivery and a page token to fetch the lead it refers to — and one
+> envelope rather than one column per secret is what keeps "the app secret was rotated and the page
+> token was not" out of the schema. No migration: the column already held an opaque envelope, and
+> the vault reads a bare string as the single-secret format so a connection made in step 6 keeps
+> working.
+>
+> All five CHECKs, the partial index and the composite FK are listed in
+> `packages/db/src/schema-objects.int-spec.ts`.
 
 ---
 

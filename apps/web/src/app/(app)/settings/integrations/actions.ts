@@ -26,15 +26,26 @@ function refresh(): void {
  * provider registry: an action with its own copy of each provider's settings would be a second
  * list, wrong on the day somebody adds a provider.
  */
-function settingsOf(form: FormData): Record<string, string> {
-  const settings: Record<string, string> = {};
+function prefixed(form: FormData, prefix: string): Record<string, string> {
+  const values: Record<string, string> = {};
   for (const [key, value] of form.entries()) {
-    if (!key.startsWith('settings.') || typeof value !== 'string') continue;
+    if (!key.startsWith(`${prefix}.`) || typeof value !== 'string') continue;
     const trimmed = value.trim();
-    if (trimmed !== '') settings[key.slice('settings.'.length)] = trimmed;
+    if (trimmed !== '') values[key.slice(prefix.length + 1)] = trimmed;
   }
-  return settings;
+  return values;
 }
+
+const settingsOf = (form: FormData) => prefixed(form, 'settings');
+
+/**
+ * The secrets the form submitted, under one prefix.
+ *
+ * Read by prefix for the same reason the settings are: the fields are rendered from the provider's
+ * `credentialFields`, and an action with its own copy of each provider's secrets would be a second
+ * list, wrong on the day somebody adds a provider.
+ */
+const credentialsOf = (form: FormData) => prefixed(form, 'credentials');
 
 /**
  * The mapping rows the editor submitted.
@@ -70,12 +81,12 @@ export async function connectIntegration(
   if (!token) return { status: 'error', message: 'Please sign in again.' };
 
   const provider = text(form, 'provider') ?? '';
-  const credential = text(form, 'credential');
+  const credentials = credentialsOf(form);
   const mapping = mappingOf(form);
   const body = {
     provider,
     name: text(form, 'name') ?? '',
-    ...(credential ? { credential } : {}),
+    ...(Object.keys(credentials).length > 0 ? { credentials } : {}),
     settings: settingsOf(form),
     ...(mapping.length > 0 ? { fieldMappings: mapping } : {}),
   };
@@ -112,7 +123,7 @@ export async function updateIntegration(
   form: FormData,
 ): Promise<ActionState> {
   const id = text(form, 'connectionId') ?? '';
-  const credential = text(form, 'credential');
+  const credentials = credentialsOf(form);
   const settings = settingsOf(form);
   const name = text(form, 'name');
   const state = await callApi(
@@ -121,7 +132,9 @@ export async function updateIntegration(
       method: 'PATCH',
       body: {
         ...(name ? { name } : {}),
-        ...(credential ? { credential } : {}),
+        // All of them or none: a set where one secret is fresh and another is whatever was there
+        // before is the half-reconnection that looks fine and fails on the next delivery.
+        ...(Object.keys(credentials).length > 0 ? { credentials } : {}),
         ...(Object.keys(settings).length > 0 ? { settings } : {}),
       },
     },

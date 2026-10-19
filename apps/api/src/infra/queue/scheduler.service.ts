@@ -89,6 +89,15 @@ export const SCHEDULES: readonly ScheduleDefinition[] = [
     description: 'Probe the connected providers whose credential can be checked',
   },
   {
+    queue: QUEUES.MAINTENANCE,
+    jobName: JOBS.INTEGRATION_RETRY_SWEEP,
+    // Every five minutes: a provider event that failed is usually waiting on the provider itself
+    // (a rate limit, a lead not yet readable), and the three-attempt ceiling means a minute-by-
+    // minute sweep would spend all three inside the same bad minute.
+    cron: '*/5 * * * *',
+    description: 'Re-queue the provider events that have not become leads',
+  },
+  {
     queue: QUEUES.WEBHOOKS,
     jobName: JOBS.WEBHOOK_RETRY_SWEEP,
     // Every minute, because the first retry is ten seconds out and a schedule whose first step is

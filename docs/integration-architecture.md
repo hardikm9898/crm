@@ -184,6 +184,49 @@ adapter + decrypted credentials, and is the only component that can decrypt.
 > module rather than global infrastructure, because the vault it needs is deliberately reachable only
 > from inside that module.
 
+> **Amendment, 2026-10-19 (implementation, Phase 4 step 7 — Meta Lead Ads and Google Ads lead
+> forms).** The port grew by four **optional** methods, each because a real provider works that way
+> ([ADR-0035](./decisions/ADR-0035-a-provider-event-is-deduplicated-on-the-providers-own-id.md)):
+>
+> ```ts
+> interface IntegrationAdapter {
+>   readonly provider: string;
+>   validate(input: { secrets; settings }): void | Promise<void>;
+>   probe?(context: AdapterContext): Promise<ProbeResult>;
+>   verifyInbound?(input: { rawBody; headers; body; secrets; settings }): VerificationResult;
+>   challenge?(input: { query; secrets; settings }): string | null;
+>   parseDelivery?(body): readonly ProviderDelivery[];
+>   fetchLead?(input: { externalId; context }): Promise<Record<string, unknown>>;
+> }
+> ```
+>
+> - **`verifyWebhook` and `parseWebhook` from §2 are here**, as `verifyInbound` and `parseDelivery`,
+>   and the first is three shapes rather than one: an HMAC over the raw body in a header (ours and
+>   Meta's `X-Hub-Signature-256`), or a key **inside** the body (Google Ads, which signs nothing).
+>   The provider declares which (`inboundVerification`) and the registry reconciles the declaration
+>   against the adapter **at boot**, so a claim no adapter can honour fails startup rather than
+>   answering 500 on its first delivery. The same check covers `deliveryIsAReference` and
+>   `fetchLead`.
+> - **`fetchLead` is §2's own `fetchLead?`, and it is the first method on any port in this product
+>   that reads *from* a provider.** Meta sends a `leadgen_id`; the answers are a second request with
+>   a *different* credential from the one that signed the delivery, which is why a connection holds
+>   a set of secrets rather than one.
+> - **`challenge` is not in §2 and had to be added.** Meta will not deliver anything until the
+>   callback URL echoes a `hub.challenge`, once. A provider-specific handshake is exactly what a
+>   registry exists to keep out of the HTTP layer, and keeping it on the port is what lets the
+>   controller have no idea which provider it is serving.
+> - **`healthCheck` stays `probe`, and stays optional.** Google Ads lead forms post to us with a key
+>   we generated: there is nothing of theirs to call, and the connection is healthy when something
+>   arrives.
+> - **`AdapterContext.secrets` is a map**, not a `Credentials` blob: the names come from the
+>   provider's own `credentialFields`, so an adapter asks for `appSecret` and `pageAccessToken` by
+>   name and a call site cannot hand it the wrong one.
+>
+> What is still **not** on this port is everything channel- or ads-specific: `sendText`,
+> `listTemplates`, `getDailyMetrics`, `listCampaigns`. §2 is right to keep those on separate
+> interfaces, and they arrive with the phase that needs them — the ads *insight* pulls are Phase 9,
+> which is also when `sync_cursors` gets its first user.
+
 
 ---
 
@@ -337,6 +380,24 @@ decryption is confined to `ProviderRegistry` and is audit-logged with the callin
 >   the screen is actually asking about. The decryption audit log is **not** built: every read is
 >   from the probe or the inbound door, both of which already record what they did.
 
+> **Amendment, 2026-10-19 (implementation, Phase 4 step 7).** The envelope now holds a **set** of
+> secrets rather than one value, as JSON, under the same AAD:
+>
+> ```
+> plaintext = {"appSecret":"…","pageAccessToken":"…"}
+> ```
+>
+> Meta Lead Ads needs two doing two jobs, and the alternative was worse in both directions: a second
+> column makes "the app secret was rotated and the page token was not" a state the schema allows and
+> nothing checks, and putting the app secret in `settings` puts a secret somewhere that is rendered
+> on the screen, echoed back on a refusal and written into the audit log. The names come from the
+> provider's `credentialFields`, so `AdapterContext.secrets` is keyed by the same names the connect
+> form asked for.
+>
+> **No migration.** The column already held an opaque envelope, and `open` reads a plaintext that
+> does not begin `{` as the single-secret format — so a connection made in step 6 keeps working
+> rather than needing to be reconnected.
+
 
 ---
 
@@ -398,6 +459,29 @@ deploy, no code (Rule 1, Rule 4).
 >   connection, a secret, a URL and a saved mapping. Meta Lead Ads and Google Ads lead forms remain
 >   Phase 4 and remain unbuilt — both need OAuth and Meta needs `provider_events`, which is the
 >   ledger for a provider that sends its own event ids.
+
+> **Amendment, 2026-10-19 (implementation, Phase 4 step 7).** The **Meta Lead Ads** and **Google
+> Ads lead forms** rows are built, exactly as §6 describes them — "webhook `leadgen` → fetch by
+> `leadgen_id` → normalize → capture pipeline" and "webhook + shared secret → capture pipeline" —
+> with three things the table could not say:
+>
+> - **Neither needs OAuth after all.** A Meta Page access token and a Google Ads webhook key are
+>   long-lived credentials somebody pastes, which is what those products actually hand out. An
+>   authorization-code exchange would make connecting a Page two clicks instead of five minutes and
+>   is worth building; it is not what stood between this product and these two connectors.
+> - **Both work the moment they are connected**, because each registry entry carries a
+>   `defaultMapping` of the provider's own standard questions (`full_name`, `phone_number`, `email`
+>   for Meta; `FULL_NAME`, `PHONE_NUMBER`, `EMAIL` for Google) and the adapter flattens the
+>   provider's array into exactly those keys first. A workspace whose form asks a custom question
+>   adds one row rather than writing a mapping from nothing.
+> - **The "shared secret" in Google's row is one _we_ generate.** Google asks you for a webhook key
+>   when you configure the lead form and echoes it in every delivery; there is no signature over the
+>   bytes and no timestamp, so a delivery is replayable by anybody who has ever seen one and
+>   `provider_events`' unique on Google's own `lead_id` is the only thing between a captured payload
+>   and a duplicate lead.
+>
+> `provider_events` is built with it, and `FR-WA-6`'s dedupe gate is therefore in place before
+> WhatsApp needs it.
 
 
 ---
@@ -461,3 +545,16 @@ the abstraction is wrong and the PR is rejected.
 > bulkhead and token buckets wait for a provider whose quota makes them necessary. What exists
 > instead is the thing a failed probe produces — a standing, a recorded reason, and one notification
 > — which is the degradation §7's last row asks for.
+
+> **Amendment, 2026-10-19 (implementation, Phase 4 step 7).** The checklist held: both connectors
+> were a registry entry and an adapter, and **no domain module changed** — which is the test §8 ends
+> with. What the two of them added to the framework, rather than to themselves, was four optional
+> port methods and the `provider_events` ledger; both are now there for the third connector, which
+> is the point of having built them this way round.
+>
+> Step 5's "contract tests against recorded provider fixtures" is built as a **real in-process HTTP
+> server** standing in for Meta's Graph API rather than as recorded fixtures: the suite points
+> `META_GRAPH_URL` at it, so the signature check, the fetch and the error codes are all exercised
+> over real sockets. Recorded fixtures prove a parser; a server proves the adapter. Its five
+> answers are the ones that matter — a Page, a lead, a revoked token (code 190), an unsupported
+> request, and nothing at all.

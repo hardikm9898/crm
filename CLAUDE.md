@@ -728,6 +728,64 @@ prisma migrate deploy` after generating a migration.
   `data.items` from `GET /integrations` read `undefined` and failed with "cannot read properties of
   undefined" rather than with anything about the endpoint. `{ items, pagination }` becomes
   `data: [...]` with `meta.pagination` beside it.
+- **A capability derived from a near-synonym is right until the provider that breaks the synonym
+  arrives.** "Does this provider have an inbound door" was read off `authKind === 'shared_secret'`,
+  which was true for both providers that existed — and Meta Lead Ads holds a token we **send** and
+  also posts to us, so its own callback URL would have answered 404. The question is
+  `inboundVerification`; the auth kind is a different fact that happened to correlate. A provider
+  declares each capability separately and the registry's boot check reconciles the declaration
+  against the adapter, so a mismatch is a failed startup rather than a 500 on the first delivery.
+- **An ESM import cycle between two Nest services is a `ReferenceError` at boot, not a type
+  error.** `integration-health.service.ts` imported one function from `integrations.service.ts`,
+  which imports the health service, and the app died with "Cannot access 'IntegrationHealthService'
+  before initialization" — nothing in either file looks wrong and `tsc` is silent. Shared constants
+  and pure helpers belong in their own module (`adapters/secret-names.ts`), which is usually where
+  they belonged anyway.
+- **A secret that one half of the system generates and the other half verifies must have its name
+  in one place.** The service mints a `shared_secret` provider's secret under a key and the adapter
+  reads it under a key; two literals in two files is the shape of bug where rotating works,
+  verifying does not, and neither file looks wrong. `sharedSecretField(provider)` is the one
+  definition.
+- **A connection that needs two secrets must not put the second one in `settings`.** Settings are
+  rendered on the screen, echoed back on a refusal and written into the audit log — the three things
+  a secret must never be. The vault holds a **set** as one JSON envelope under the row's own id, and
+  one envelope rather than one column per secret is what keeps "the app secret was rotated and the
+  page token was not" out of the schema.
+- **A secret is the one field a refused form must not echo back.** `ActionState.values` restores
+  text boxes so eight fields are not retyped — but a secret restored into an input is a secret in
+  the page's HTML, on a screen somebody may be sharing. Echo the name, the ids and the settings;
+  leave the secret boxes empty and let them be retyped.
+- **A provider's verification challenge must be answered outside the response envelope.** Meta
+  compares the body of the `hub.challenge` response to the challenge it sent, so
+  `{"success":true,"data":"1158201444"}` never confirms the subscription. `@Res()` without
+  `passthrough` is how a handler opts out of the interceptor; a mismatch answers **403** rather than
+  404, because the connection exists and a 404 sends somebody checking a URL they pasted correctly.
+- **A webhook must be acknowledged before the work, not after it.** A provider that waits for us is
+  a provider that **retries**: a two-second capture becomes a second delivery, and the idempotency
+  ledger then absorbs a problem we created. Insert the ledger row, enqueue, answer 200 — and the row
+  is what a retry sweep reads, because a job lost while a worker was down must not be a lead lost.
+- **An idempotency ledger is keyed on the provider's own id, never on a hash of the body.** Meta's
+  retry carries a different `time`, so a body hash makes it a new event; Google's retry is
+  byte-identical, so a hash would work by luck. And the table holding that unique must **not** be
+  partitioned: a unique on a partitioned table has to contain the partition key, which makes it a
+  race guard that would allow the same id again next month. `inbound_payloads` is the never-lose
+  store and `provider_events` is the ledger, and they are two tables because they answer two
+  questions.
+- **A provider's own test delivery must be acknowledged and then dropped.** Google Ads sends
+  `is_test: true` with the literal lead id `lead_id_123` when somebody presses "Send test data". A
+  4xx teaches a provider to disable the endpoint — which stops the real leads, silently — and
+  capturing it puts a test lead in somebody's pipeline. Record it, answer 200, capture nothing.
+- **An array of question/answer pairs has to be flattened by name before a mapping can reach it.**
+  Meta sends `[{ name: 'full_name', values: ['Asha'] }]`; mapping that as `field_data.0.values.0` is
+  an index that moves the day somebody reorders the form's questions. Flattening by the question's
+  own stable key is also what makes a provider's `defaultMapping` writable, and therefore what makes
+  a connection work the moment it is made. A question answered twice keeps **both** answers — taking
+  the first discards something a person said — and a Google column is keyed by `column_id` rather
+  than `column_name`, because the name is the wording and changes when the form is edited.
+- **A `message` key returned inside a handler's payload is not the envelope's `message`.** Three
+  assertions read `body.message` and got `undefined`, because the envelope only lifts what
+  `withMessage()` sets. The public lead API's family of endpoints deliberately carries its sentence
+  **inside** the payload; whichever a handler does, the test has to look where that handler put it.
 
 ## Reporting work
 

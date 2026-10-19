@@ -3599,3 +3599,127 @@ describe('layer 3 — the integration framework (Phase 4 step 6)', () => {
     expect(theirs.checks.every((row) => row.organizationId === h.orgB.organizationId)).toBe(true);
   });
 });
+
+describe('layer 4 — the inbound idempotency ledger (Phase 4 step 7)', () => {
+  async function connection(organizationId: string, provider: string) {
+    const id = newId();
+    await h.unscoped.integrationConnection.create({
+      data: {
+        id,
+        organizationId,
+        provider,
+        name: `Ads ${id.slice(-8)}`,
+        credentialsEncrypted: `v1.1.${id.slice(-8)}.${id.slice(-8)}.${id.slice(-8)}`,
+        scopes: [],
+      } as never,
+    });
+    return id;
+  }
+
+  /** One event in whichever workspace is asked for. */
+  async function event(
+    organizationId: string,
+    over: Record<string, unknown> = {},
+  ): Promise<string> {
+    const id = newId();
+    await h.unscoped.providerEvent.create({
+      data: {
+        id,
+        organizationId,
+        provider: 'meta_lead_ads',
+        externalEventId: `leadgen_${id.slice(-10)}`,
+        eventType: 'leadgen',
+        raw: { leadgen_id: id.slice(-10) },
+        ...over,
+      } as never,
+    });
+    return id;
+  }
+
+  it('makes a second delivery of the same event impossible, per workspace', async () => {
+    // The guarantee the exit criterion is about: Meta retries a delivery it did not get a 200 for,
+    // and the **database** is what stops the second lead rather than a check somebody remembered.
+    const external = `leadgen_${newId().slice(-10)}`;
+    await expect(event(h.orgA.organizationId, { externalEventId: external })).resolves.toBeTruthy();
+    await expect(event(h.orgA.organizationId, { externalEventId: external })).rejects.toThrow(
+      /provider_event_external_key|unique/i,
+    );
+
+    // Two providers can legitimately use the same id, and so can two workspaces: the unique is
+    // `(organization_id, provider, external_event_id)`, not the id alone.
+    await expect(
+      event(h.orgA.organizationId, { externalEventId: external, provider: 'google_ads_leads' }),
+    ).resolves.toBeTruthy();
+    await expect(event(h.orgB.organizationId, { externalEventId: external })).resolves.toBeTruthy();
+  });
+
+  it('refuses an event pointed at another workspace’s connection', async () => {
+    const theirs = await connection(h.orgB.organizationId, 'meta_lead_ads');
+    await expect(
+      event(h.orgA.organizationId, { connectionId: theirs }),
+    ).rejects.toThrow(/provider_events_connection_same_org_fk|foreign key/i);
+
+    // And our own is accepted, so the refusal above is about the tenant and not about the column.
+    const mine = await connection(h.orgA.organizationId, 'meta_lead_ads');
+    await expect(event(h.orgA.organizationId, { connectionId: mine })).resolves.toBeTruthy();
+  });
+
+  it('refuses a provider key that is prose and an external id that is empty', async () => {
+    await expect(event(h.orgA.organizationId, { provider: 'Meta Lead Ads' })).rejects.toThrow(
+      /provider_events_provider_is_a_key/i,
+    );
+    // An empty id would make every event from a provider that forgot to send one collide with the
+    // first — which is the unique working exactly as designed against a meaningless key.
+    await expect(event(h.orgA.organizationId, { externalEventId: '' })).rejects.toThrow(
+      /provider_events_external_id_present/i,
+    );
+  });
+
+  it('insists an event that became a lead says when it was processed', async () => {
+    await expect(
+      event(h.orgA.organizationId, { leadId: newId(), status: 'received' }),
+    ).rejects.toThrow(/provider_events_lead_was_processed/i);
+    await expect(
+      event(h.orgA.organizationId, { leadId: newId(), status: 'processed' }),
+    ).rejects.toThrow(/provider_events_lead_was_processed/i);
+    await expect(
+      event(h.orgA.organizationId, {
+        leadId: newId(),
+        status: 'processed',
+        processedAt: new Date(),
+        attempts: 1,
+      }),
+    ).resolves.toBeTruthy();
+
+    // The honest state the mirror would have forbidden: processed, and the duplicate rules attached
+    // it to a lead that already existed, so this event produced none of its own.
+    await expect(
+      event(h.orgA.organizationId, {
+        status: 'processed',
+        processedAt: new Date(),
+        attempts: 1,
+      }),
+    ).resolves.toBeTruthy();
+  });
+
+  it('refuses a received event that claims to have been tried', async () => {
+    await expect(event(h.orgA.organizationId, { attempts: 1 })).rejects.toThrow(
+      /provider_events_received_is_untried/i,
+    );
+    // And the state a connection switched off between the delivery and the attempt leaves behind,
+    // which the biconditional would have made unrepresentable.
+    await expect(
+      event(h.orgA.organizationId, { status: 'failed', attempts: 0, error: 'the connection was off' }),
+    ).resolves.toBeTruthy();
+  });
+
+  it('keeps one workspace’s ledger invisible to another', async () => {
+    const mine = await event(h.orgA.organizationId);
+    const theirs = await tenantContext.run(h.orgB.principal, async () => ({
+      one: await h.db.providerEvent.findFirst({ where: { id: mine } }),
+      all: await h.db.providerEvent.findMany({}),
+    }));
+    expect(theirs.one).toBeNull();
+    expect(theirs.all.every((row) => row.organizationId === h.orgB.organizationId)).toBe(true);
+  });
+});

@@ -16,6 +16,7 @@ import { LOGGER } from '../../infra/observability/logger.module.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { IntegrationRegistryService } from './integration-registry.service.js';
 import { IntegrationVaultService } from './integration-vault.service.js';
+import { sharedSecretField } from './adapters/secret-names.js';
 import type { ProbeResult } from './integration.port.js';
 
 /** The row a probe needs, and nothing else. */
@@ -144,11 +145,15 @@ export class IntegrationHealthService {
       throw new Error(`${subject.provider} cannot be probed`);
     }
 
-    const credential = this.vault.open(subject.id, subject.credentialsEncrypted);
+    const secrets = this.vault.open(
+      subject.id,
+      subject.credentialsEncrypted,
+      sharedSecretField(subject.provider),
+    );
     const result: ProbeResult = await adapter.probe({
       connectionId: subject.id,
       organizationId: subject.organizationId,
-      credential,
+      secrets,
       settings: (subject.settings ?? {}) as Record<string, unknown>,
       externalAccountId: subject.externalAccountId,
     });

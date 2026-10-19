@@ -32,11 +32,15 @@ export const connectIntegrationSchema = z
     provider: z.string().trim().min(1).max(60),
     name: z.string().trim().min(1).max(120),
     /**
-     * The provider's token, for an `api_key` provider. **Absent** for a `shared_secret` one, where
-     * we generate it: the adapter refuses a value rather than ignoring it, because a connection
-     * whose secret is not the one the sender was told about fails every signature check.
+     * The provider's secrets, by the names its `credentialFields` declare.
+     *
+     * A record rather than one `credential`, because Meta Lead Ads needs two doing two jobs — an
+     * app secret to prove a delivery is Meta's, and a page token to fetch the lead it refers to.
+     * **Absent** for a `shared_secret` provider, where we generate the secret: the adapter refuses
+     * a value rather than ignoring it, because a connection whose secret is not the one the sender
+     * was told about fails every signature check.
      */
-    credential: z.string().min(1).max(4_000).optional(),
+    credentials: z.record(z.string().max(60), z.string().min(1).max(4_000)).optional(),
     externalAccountId: z.string().trim().max(200).optional(),
     settings: z.record(z.string().max(60), z.unknown()).default({}),
     fieldMappings: z.array(fieldMappingSchema).max(100).optional(),
@@ -46,8 +50,15 @@ export const connectIntegrationSchema = z
 export const updateIntegrationSchema = z
   .object({
     name: z.string().trim().min(1).max(120).optional(),
-    /** A new token for the same connection. The old one stops being used the moment this returns. */
-    credential: z.string().min(1).max(4_000).optional(),
+    /**
+     * New secrets for the same connection. The old ones stop being used the moment this returns.
+     *
+     * All of them, not a patch: a set where one field is fresh and another is whatever was there
+     * before is the state nobody can reason about, and "the app secret was rotated and the page
+     * token was not" is exactly the half-reconnection that looks fine and fails on the next
+     * delivery.
+     */
+    credentials: z.record(z.string().max(60), z.string().min(1).max(4_000)).optional(),
     externalAccountId: z.string().trim().max(200).nullish(),
     settings: z.record(z.string().max(60), z.unknown()).optional(),
     fieldMappings: z.array(fieldMappingSchema).max(100).optional(),
@@ -81,6 +92,15 @@ export const listHealthChecksSchema = z
   })
   .strict();
 
+export const listProviderEventsSchema = z
+  .object({
+    connectionId: z.string().uuid().optional(),
+    provider: z.string().trim().max(60).optional(),
+    status: z.enum(['received', 'processed', 'duplicate', 'failed']).optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(25),
+  })
+  .strict();
+
 /**
  * The mapping preview (`FR-CAP-6`'s test tool, for a mapped provider).
  *
@@ -106,3 +126,4 @@ export type UpdateIntegrationInput = z.infer<typeof updateIntegrationSchema>;
 export type ListIntegrationsQuery = z.infer<typeof listIntegrationsSchema>;
 export type ListHealthChecksQuery = z.infer<typeof listHealthChecksSchema>;
 export type PreviewMappingInput = z.infer<typeof previewMappingSchema>;
+export type ListProviderEventsQuery = z.infer<typeof listProviderEventsSchema>;

@@ -8,11 +8,13 @@ import {
   connectIntegrationSchema,
   listHealthChecksSchema,
   listIntegrationsSchema,
+  listProviderEventsSchema,
   previewMappingSchema,
   updateIntegrationSchema,
   type ConnectIntegrationInput,
   type ListHealthChecksQuery,
   type ListIntegrationsQuery,
+  type ListProviderEventsQuery,
   type PreviewMappingInput,
   type UpdateIntegrationInput,
 } from './integrations.dto.js';
@@ -51,6 +53,18 @@ export class IntegrationsController {
   @RequirePermission(PERMISSIONS.INTEGRATION_MANAGE)
   async health(@Query(new ZodBody(listHealthChecksSchema)) query: ListHealthChecksQuery) {
     return this.integrations.healthChecks(query);
+  }
+
+  /**
+   * What each provider has told us, and what became of it.
+   *
+   * Declared before `:id`, like the two above it, or `/integrations/events` is read as a connection
+   * id and answers 404 from the global UUID pipe.
+   */
+  @Get('events')
+  @RequirePermission(PERMISSIONS.INTEGRATION_MANAGE)
+  async events(@Query(new ZodBody(listProviderEventsSchema)) query: ListProviderEventsQuery) {
+    return this.integrations.providerEvents(query);
   }
 
   @Get()

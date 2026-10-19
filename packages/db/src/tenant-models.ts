@@ -114,6 +114,9 @@ export const TENANT_MODELS = [
   'IntegrationConnection',
   'SyncCursor',
   'IntegrationHealthCheck',
+  // Phase 4, step 7 — the inbound idempotency ledger. Tenant-scoped: an event is a fact about one
+  // workspace's advertising, and the unique that makes it a ledger is per workspace too.
+  'ProviderEvent',
 ] as const;
 
 export type TenantModel = (typeof TENANT_MODELS)[number];

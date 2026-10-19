@@ -852,3 +852,45 @@ agreeing, the lead itself appearing with the phone the mapping tidied, the secre
 old one refused at once, the connection disconnected and off the screen, a Postmark connection
 refused for an unverified sender address with the name and the provider still in the form, and the
 whole screen at 375 px with **0 px** of sideways scroll.
+
+### 10.12 As built — Phase 4, step 7 (the two ad providers, from the same screen)
+
+No new screen. Both connectors appear on `/settings/integrations` because the connect form is
+rendered from the registry — which was the claim §10.11 made, and this is the step that tested it.
+What changed is three things, each of which the two providers forced:
+
+- **The form asks for secrets by name, from `credentialFields`.** Meta needs two doing two jobs — an
+  app secret to verify a delivery and a page access token to fetch the lead it refers to — so a
+  single "their token" box became a box per declared secret, each with the sentence that says where
+  to find it ("Meta for Developers → your app → Settings → Basic → App Secret"). A provider whose
+  secret we generate declares none and the form says so rather than rendering an empty box.
+- **A secret is never echoed back on a refusal**, unlike every other field on the form. A refused
+  submission restores the name, the page id and the verify token — so only the secrets are retyped
+  — because a secret restored into an input is a secret in the page's HTML on a screen somebody may
+  be sharing. That is a deliberate exception to the "echo the submission back" rule, and the browser
+  check asserts both halves of it.
+- **The inbound address carries the provider's own instruction.** "Post leads here" is not what
+  somebody configuring Meta or Google Ads needs to read; they need to know which box to paste it
+  into. `inboundInstruction(provider)` is one sentence per provider, asserted to be distinct — and
+  the signing snippet is shown **only** for the provider that signs with a secret we generated,
+  because Meta signs with its own app secret and Google signs nothing.
+
+**And one new section: the delivery ledger.** "What your providers have sent" — one row per
+delivery, keyed on the provider's own id, with what became of it and a link to the lead. It is the
+screen somebody opens when a lead did not appear, and it reads the provider's own words rather than
+ours ("Unsupported get request"). The figure above it (`Not yet leads`) counts the failures across
+the **whole** set from the API's `meta`, not the page, because a figure beside a filtered list that
+is not itself filtered is the recurring bug in this codebase. A redelivery never appears as a second
+row — its insert fails the ledger's unique — so "one delivery, one row" is what the check asserts,
+rather than looking for a row labelled "duplicate".
+
+**One suite, 34 checks**, all green: both providers in the catalogue, Meta's form asking for exactly
+`appSecret` and `pageAccessToken` with their hints, a short app secret refused under its own field
+with the page id and the name still in the form and the secrets deliberately gone, the connection
+probing the Page and reading as working, the callback URL on the row with Meta's own instruction
+beside it and no signing snippet, a signed delivery and its retry both acknowledged, the screen
+showing one row becoming one lead with a link to it, the lead itself carrying the phone Meta's
+answers normalised to and the source the connection named, Google Ads connected with the key we
+generate shown once beside the URL to paste it into, a Google delivery appearing with Google's own
+id, the summary counting two connections with the right plural and no nought, and the whole screen
+at 375 px with **0 px** of sideways scroll.

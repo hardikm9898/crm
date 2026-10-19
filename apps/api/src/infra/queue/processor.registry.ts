@@ -40,7 +40,11 @@ import { CallOutcomeSweepProcessor } from '../../modules/calls/calls.processor.j
 import { ApiLogPartitionProcessor } from '../../modules/api-keys/api-log.processor.js';
 import { IdempotencyPruneProcessor } from '../../modules/ingestion/ingestion.processor.js';
 import { ImportProcessProcessor } from '../../modules/imports/imports.processor.js';
-import { IntegrationHealthCheckProcessor } from '../../modules/integrations/integrations.processor.js';
+import {
+  IntegrationHealthCheckProcessor,
+  IntegrationIngestEventProcessor,
+  IntegrationRetrySweepProcessor,
+} from '../../modules/integrations/integrations.processor.js';
 import {
   WebhookDeliverProcessor,
   WebhookFanoutProcessor,
@@ -98,6 +102,8 @@ export const PROCESSOR_TYPES: readonly Type<JobProcessor>[] = [
   ExportGenerateProcessor,
   // integrations
   IntegrationHealthCheckProcessor,
+  IntegrationIngestEventProcessor,
+  IntegrationRetrySweepProcessor,
   // outbound webhooks
   WebhookFanoutProcessor,
   WebhookDeliverProcessor,

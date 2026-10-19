@@ -21,13 +21,27 @@ import { IngestionService } from '../ingestion/ingestion.service.js';
 import { IntegrationHealthService } from './integration-health.service.js';
 import { IntegrationRegistryService } from './integration-registry.service.js';
 import { IntegrationVaultService } from './integration-vault.service.js';
+import { sharedSecretField } from './adapters/secret-names.js';
 import type {
   ConnectIntegrationInput,
   ListHealthChecksQuery,
+  ListProviderEventsQuery,
   ListIntegrationsQuery,
   PreviewMappingInput,
   UpdateIntegrationInput,
 } from './integrations.dto.js';
+
+/** What the inbound door needs about a connection, with its secrets opened and nothing else. */
+export interface InboundConnection {
+  readonly organizationId: string;
+  readonly connectionId: string;
+  readonly provider: string;
+  readonly secrets: Readonly<Record<string, string>>;
+  readonly settings: Record<string, unknown>;
+  readonly mapping: readonly FieldMapping[];
+  readonly sourceName: string | null;
+  readonly externalAccountId: string | null;
+}
 
 /**
  * The columns every presenter reads. Note what is **absent**: `credentials_encrypted`.
@@ -209,6 +223,53 @@ export class IntegrationsService {
     };
   }
 
+  /**
+   * What each provider has told us, and what became of it (the ledger, read).
+   *
+   * The question this answers is the one somebody asks when a lead did not appear: Meta said
+   * something, and either it became a lead or it did not and here is the provider's own reason. The
+   * `raw` delivery is included, because "what did they actually send" is the next question and the
+   * payload store cannot answer it for an event that never got as far as a capture.
+   */
+  async providerEvents(query: ListProviderEventsQuery) {
+    const where = {
+      ...(query.connectionId ? { connectionId: query.connectionId } : {}),
+      ...(query.provider ? { provider: query.provider } : {}),
+      ...(query.status ? { status: query.status } : {}),
+    };
+    const [total, unresolved, rows] = await Promise.all([
+      this.db.client.providerEvent.count({ where }),
+      // The figure beside the list is over the **whole** set, not this page: a board that totals
+      // its page tells somebody their problem is a fifth of its real size.
+      this.db.client.providerEvent.count({ where: { status: 'failed' } }),
+      this.db.client.providerEvent.findMany({
+        where,
+        orderBy: [{ receivedAt: 'desc' }, { id: 'desc' }],
+        take: query.limit,
+        include: { connection: { select: { id: true, provider: true, name: true } } },
+      }),
+    ]);
+    return {
+      items: rows.map((row) => ({
+        id: row.id,
+        provider: row.provider,
+        providerLabel: findProvider(row.provider)?.label ?? row.provider,
+        connection: row.connection,
+        externalEventId: row.externalEventId,
+        eventType: row.eventType,
+        status: row.status,
+        leadId: row.leadId,
+        error: row.error,
+        attempts: row.attempts,
+        receivedAt: row.receivedAt,
+        processedAt: row.processedAt,
+        raw: row.raw,
+      })),
+      pagination: { limit: query.limit, nextCursor: null, hasMore: false, total },
+      meta: { unresolved },
+    };
+  }
+
   // ── Writing ───────────────────────────────────────────────────────────────
 
   async connect(input: ConnectIntegrationInput) {
@@ -233,22 +294,12 @@ export class IntegrationsService {
     // anything else — or a row created and then updated — is a secret that is not tied to its row.
     const id = newId();
     const shared = provider.authKind === 'shared_secret';
-    if (shared) {
-      // Refuses a caller-supplied secret rather than ignoring it; the adapter owns that rule.
-      await adapter.validate({ credential: input.credential ?? '', settings: input.settings });
-    } else {
-      if (!input.credential) {
-        throw AppError.validation('That provider needs a credential', [
-          {
-            field: 'credential',
-            code: 'CREDENTIAL_REQUIRED',
-            message: `Paste the token ${provider.label} gave you.`,
-          },
-        ]);
-      }
-      await adapter.validate({ credential: input.credential, settings: input.settings });
-    }
-    const secret = shared ? this.vault.generateSharedSecret() : input.credential!;
+    const supplied = input.credentials ?? {};
+    if (!shared) this.assertCredentials(provider, supplied);
+    await adapter.validate({ secrets: supplied, settings: input.settings });
+    // For a `shared_secret` provider the whole credential is ours, filed under the one name its
+    // adapter reads. Nothing is generated for an `api_key` provider: the secrets are the caller's.
+    const secrets = shared ? { [sharedSecretField(provider.key)]: this.vault.generateSharedSecret() } : supplied;
 
     await this.db.client.$transaction(async (tx) => {
       await tx.integrationConnection.create({
@@ -258,7 +309,7 @@ export class IntegrationsService {
           provider: provider.key,
           name: input.name,
           externalAccountId: input.externalAccountId ?? null,
-          credentialsEncrypted: this.vault.seal(id, secret),
+          credentialsEncrypted: this.vault.seal(id, secrets),
           keyVersion: this.vault.keyVersion,
           scopes: [],
           settings: input.settings as never,
@@ -286,7 +337,9 @@ export class IntegrationsService {
       ...connection,
       // Answered exactly once, and only for a provider whose secret we minted. An `api_key`
       // provider's token was the caller's; echoing it back puts their credential in our logs.
-      ...(shared ? { secret, secretShownOnce: true as const } : {}),
+      ...(shared
+        ? { secret: secrets[sharedSecretField(provider.key)]!, secretShownOnce: true as const }
+        : {}),
     };
   }
 
@@ -311,13 +364,14 @@ export class IntegrationsService {
     const mapping =
       input.fieldMappings === undefined ? undefined : this.checkMapping(provider, input.fieldMappings);
 
-    if (input.credential !== undefined) {
+    if (input.credentials !== undefined) {
       if (provider.authKind === 'shared_secret') {
         throw AppError.businessRule(
           'This connection’s secret is generated here. Use “rotate the secret” to replace it.',
         );
       }
-      await adapter.validate({ credential: input.credential, settings });
+      this.assertCredentials(provider, input.credentials);
+      await adapter.validate({ secrets: input.credentials, settings });
     }
 
     await this.db.client.$transaction(async (tx) => {
@@ -330,9 +384,9 @@ export class IntegrationsService {
             : {}),
           ...(input.settings !== undefined ? { settings: input.settings as never } : {}),
           ...(mapping !== undefined ? { fieldMappings: mapping as never } : {}),
-          ...(input.credential !== undefined
+          ...(input.credentials !== undefined
             ? {
-                credentialsEncrypted: this.vault.seal(id, input.credential),
+                credentialsEncrypted: this.vault.seal(id, input.credentials),
                 keyVersion: this.vault.keyVersion,
                 // A new credential starts again from `connected`: leaving a `revoked` connection
                 // revoked after somebody has pasted a fresh token is the product refusing to be
@@ -345,7 +399,7 @@ export class IntegrationsService {
         },
       });
       await this.audit.recordInTransaction(tx, {
-        action: input.credential !== undefined ? 'integration.reconnected' : 'integration.updated',
+        action: input.credentials !== undefined ? 'integration.reconnected' : 'integration.updated',
         resourceType: 'integration_connection',
         resourceId: id,
         before: { name: row.name, settings: row.settings },
@@ -353,12 +407,12 @@ export class IntegrationsService {
           ...(input.name !== undefined ? { name: input.name } : {}),
           ...(input.settings !== undefined ? { settings: input.settings } : {}),
           ...(mapping !== undefined ? { fieldMappings: mapping } : {}),
-          ...(input.credential !== undefined ? { credentialRotated: true } : {}),
+          ...(input.credentials !== undefined ? { credentialsRotated: Object.keys(input.credentials) } : {}),
         },
       });
     });
 
-    if (input.credential !== undefined) await this.probeQuietly(id, provider.key);
+    if (input.credentials !== undefined) await this.probeQuietly(id, provider.key);
     return this.findOne(id);
   }
 
@@ -381,7 +435,12 @@ export class IntegrationsService {
     await this.db.client.$transaction(async (tx) => {
       await tx.integrationConnection.update({
         where: { id },
-        data: { credentialsEncrypted: this.vault.seal(id, secret), keyVersion: this.vault.keyVersion },
+        data: {
+          credentialsEncrypted: this.vault.seal(id, {
+            [sharedSecretField(provider.key)]: secret,
+          }),
+          keyVersion: this.vault.keyVersion,
+        },
       });
       await this.audit.recordInTransaction(tx, {
         action: 'integration.secret_rotated',
@@ -513,17 +572,12 @@ export class IntegrationsService {
   async openForInbound(
     provider: string,
     connectionId: string,
-  ): Promise<{
-    organizationId: string;
-    connectionId: string;
-    secret: string;
-    mapping: readonly FieldMapping[];
-    sourceName: string | null;
-  }> {
+  ): Promise<InboundConnection> {
     const { provider: registered } = this.registry.require(provider);
-    if (registered.authKind !== 'shared_secret') {
-      // A provider we authenticate *to* has no inbound door, and saying so is better than a 404
-      // that reads as "wrong id".
+    if (registered.inboundVerification === 'none') {
+      // A provider that does not post to us has no inbound door. Decided by **how it verifies**
+      // rather than by its auth kind: Meta Lead Ads holds a token we send *and* posts to us, and an
+      // earlier draft keyed this off `authKind === 'shared_secret'` and would have 404'd it.
       throw AppError.notFound('Connection');
     }
     // Across tenants, and audited by the reason string: the URL is the only thing that says which
@@ -541,6 +595,7 @@ export class IntegrationsService {
             credentialsEncrypted: true,
             fieldMappings: true,
             settings: true,
+            externalAccountId: true,
           },
         }),
     );
@@ -552,9 +607,12 @@ export class IntegrationsService {
     return {
       organizationId: row.organizationId,
       connectionId: row.id,
-      secret: this.vault.open(row.id, row.credentialsEncrypted),
+      provider: registered.key,
+      secrets: this.vault.open(row.id, row.credentialsEncrypted, sharedSecretField(registered.key)),
+      settings,
       mapping: storedMapping(row.fieldMappings),
       sourceName: typeof settings['sourceName'] === 'string' ? settings['sourceName'] : null,
+      externalAccountId: row.externalAccountId,
     };
   }
 
@@ -601,6 +659,38 @@ export class IntegrationsService {
       ]);
     }
     return mapping;
+  }
+
+  /** The secrets the registry says are required, present — and nothing it has not declared. */
+  private assertCredentials(
+    provider: IntegrationProvider,
+    supplied: Readonly<Record<string, string>>,
+  ): void {
+    const missing = provider.credentialFields
+      .filter((field) => field.required)
+      .filter((field) => (supplied[field.key] ?? '').trim() === '');
+    if (missing.length > 0) {
+      throw AppError.validation(`${provider.label} needs its credentials`, [
+        ...missing.map((field) => ({
+          field: `credentials.${field.key}`,
+          code: 'CREDENTIAL_REQUIRED',
+          message: field.hint ?? `${field.label} is required.`,
+        })),
+      ]);
+    }
+    const known = new Set(provider.credentialFields.map((field) => field.key));
+    const unknown = Object.keys(supplied).filter((key) => !known.has(key));
+    if (unknown.length > 0) {
+      // Refused rather than stored: a secret nothing reads is a secret somebody believes is
+      // protecting something, which is worse than no secret at all.
+      throw AppError.validation(`${provider.label} has no such credential`, [
+        ...unknown.map((key) => ({
+          field: `credentials.${key}`,
+          code: 'UNKNOWN_CREDENTIAL',
+          message: `${provider.label} takes: ${provider.credentialFields.map((field) => field.key).join(', ') || 'no credentials — we generate its secret'}.`,
+        })),
+      ]);
+    }
   }
 
   /** The settings the registry says are required, present. Nothing about their meaning. */
@@ -686,6 +776,7 @@ export class IntegrationsService {
       providerLabel: provider?.label ?? row.provider,
       capabilities: provider?.capabilities ?? [],
       authKind: provider?.authKind ?? null,
+      inboundVerification: provider?.inboundVerification ?? 'none',
       name: row.name,
       externalAccountId: row.externalAccountId,
       keyVersion: row.keyVersion,
@@ -725,10 +816,16 @@ function describeProvider(provider: IntegrationProvider) {
     summary: provider.summary,
     capabilities: provider.capabilities,
     authKind: provider.authKind,
+    // The names, labels and hints only — never a value, because there is never a value to send.
+    credentialFields: provider.credentialFields,
     settings: provider.settings,
     mappable: provider.mappable,
     defaultMapping: provider.defaultMapping,
     probeEveryMinutes: provider.probeEveryMinutes,
+    // What the screen needs to decide whether this provider has an inbound address at all, and
+    // which snippet to show beside it.
+    inboundVerification: provider.inboundVerification,
+    deliveryIsAReference: provider.deliveryIsAReference,
   };
 }
 

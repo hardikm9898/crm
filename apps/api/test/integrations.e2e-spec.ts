@@ -144,7 +144,7 @@ async function connectPostmark(
     payload: {
       provider: 'postmark',
       name: 'Transactional email',
-      credential: GOOD_TOKEN,
+      credentials: { serverToken: GOOD_TOKEN },
       settings: { fromAddress: 'hello@leados.test', messageStream: 'outbound' },
       ...overrides,
     },
@@ -292,7 +292,7 @@ describe('connecting a provider we authenticate to', () => {
       payload: {
         provider: 'postmark',
         name: 'Email',
-        credential: GOOD_TOKEN,
+        credentials: { serverToken: GOOD_TOKEN },
         settings: { messageStream: 'outbound' },
       },
     });
@@ -306,7 +306,7 @@ describe('connecting a provider we authenticate to', () => {
       payload: {
         provider: 'postmark',
         name: 'Email',
-        credential: GOOD_TOKEN,
+        credentials: { serverToken: GOOD_TOKEN },
         settings: { fromAddress: 'hello@leados.test', replyTo: 'nobody@leados.test' },
       },
     });
@@ -321,12 +321,12 @@ describe('connecting a provider we authenticate to', () => {
       payload: {
         provider: 'postmark',
         name: 'Email',
-        credential: 'hunter2',
+        credentials: { serverToken: 'hunter2' },
         settings: { fromAddress: 'hello@leados.test' },
       },
     });
     expect(response.statusCode).toBe(400);
-    expect(JSON.stringify(response.body.error?.details)).toContain('credential');
+    expect(JSON.stringify(response.body.error?.details)).toContain('credentials.serverToken');
     // Nothing was asked of Postmark: a shape we can rule out ourselves is not a round trip.
     expect(postmarkRequests.length).toBe(before);
   });
@@ -371,7 +371,7 @@ describe('connecting a provider we authenticate to', () => {
       payload: {
         provider: 'postmark',
         name: 'Another one',
-        credential: GOOD_TOKEN,
+        credentials: { serverToken: GOOD_TOKEN },
         settings: { fromAddress: 'hello@leados.test' },
       },
     });
@@ -460,7 +460,7 @@ describe('what a probe does to a connection', () => {
 
     const updated = await setup<Connection>('PATCH', `/integrations/${id}`, {
       token: orgB.token,
-      payload: { credential: 'postmark-server-token-abcdefghij' },
+      payload: { credentials: { serverToken: 'postmark-server-token-abcdefghij' } },
     });
     expect(updated.status).toBe('connected');
     expect(updated.lastError).toBeNull();
@@ -501,7 +501,7 @@ describe('the credential vault', () => {
       payload: {
         provider: 'generic_webhook',
         name: 'Mine',
-        credential: 'whsec_i_picked_this_myself',
+        credentials: { signingSecret: 'whsec_i_picked_this_myself' },
         settings: {},
       },
     });

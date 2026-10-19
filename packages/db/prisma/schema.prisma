@@ -797,6 +797,7 @@ model Organization {
   integrations        IntegrationConnection[]
   syncCursors         SyncCursor[]
   integrationChecks   IntegrationHealthCheck[]
+  providerEvents      ProviderEvent[]
   inboundPayloads     InboundPayload[]
   webhookEndpoints    WebhookEndpoint[]
   webhookDeliveries   WebhookDelivery[]
@@ -4011,9 +4012,10 @@ model IntegrationConnection {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   connectedBy  Membership?  @relation("integration_connector", fields: [organizationId, connectedById], references: [organizationId, userId], onDelete: Restrict, map: "integration_connections_connector_same_org_fk")
 
-  cursors      SyncCursor[]
-  healthChecks IntegrationHealthCheck[]
-  payloads     InboundPayload[]
+  cursors        SyncCursor[]
+  healthChecks   IntegrationHealthCheck[]
+  payloads       InboundPayload[]
+  providerEvents ProviderEvent[]
 
   @@unique([organizationId, id], name: "integration_connection_tenant_key")
   /// One live connection per provider per workspace. Partial, hand-written, because a disconnected
@@ -4075,6 +4077,81 @@ model IntegrationHealthCheck {
   @@unique([organizationId, id], name: "integration_health_check_tenant_key")
   @@index([organizationId, connectionId, checkedAt(sort: Desc)])
   @@map("integration_health_checks")
+}
+
+/// What became of one of a provider's events.
+///
+/// `duplicate` is the **workspace's** duplicate rules speaking — the person who filled the form in
+/// was already a lead, so the delivery was accepted and attached as a touch rather than creating a
+/// second record. It is *not* a redelivery: one of those never becomes a row at all, because its
+/// insert fails the unique that makes this table a ledger.
+enum ProviderEventStatus {
+  received
+  processed
+  duplicate
+  failed
+
+  @@map("provider_event_status")
+}
+
+/// **The inbound idempotency ledger** (`FR-WA-6`, Phase 4's "a duplicate webhook delivery must
+/// produce one lead").
+///
+/// One row per event a provider has told us about, keyed by **the provider's own id for it** —
+/// `UNIQUE (organization_id, provider, external_event_id)`. That unique *is* the guarantee: Meta
+/// retries a delivery it did not get a 200 for, and the second insert fails rather than the second
+/// lead being created. Everything after the insert is therefore allowed to be at-least-once.
+///
+/// It is **not** partitioned, deliberately, which is the whole difference between it and
+/// `inbound_payloads`: a unique on a partitioned table must contain the partition key, which makes
+/// it a race guard rather than a point read — the same event id next month would be allowed. The
+/// replay question here is "have we ever seen this id", and that needs a lookup no partition
+/// boundary can defeat.
+///
+/// `raw` is what arrived, so a failed ingestion can be retried from the row rather than from the
+/// provider; `lead_id` is what it became. Both are why this is a ledger and not a set of ids.
+model ProviderEvent {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  /// From `INTEGRATION_PROVIDERS` — the same vocabulary `integration_connections.provider` holds.
+  provider     String
+  /// Which connection it arrived through. Nullable because a platform-level provider may one day
+  /// post events that belong to no connection; every row written today carries one.
+  connectionId String? @map("connection_id") @db.Uuid
+
+  /// The provider's own id for this event: Meta's `leadgen_id`, Google's `lead_id`.
+  externalEventId String @map("external_event_id")
+  /// The provider's own name for what happened, kept because an unknown type is acknowledged.
+  eventType       String @map("event_type")
+
+  raw      Json                @default("{}") @db.JsonB
+  status   ProviderEventStatus @default(received)
+  /// What it became, when it became something.
+  ///
+  /// No foreign key, and that is the same decision `inbound_payloads.lead_id` makes: the ledger has
+  /// to outlive the lead. `Restrict` would make a lead undeletable while an event referenced it,
+  /// and `SetNull` on a composite FK would null the NOT NULL `organization_id` with it — the trap
+  /// `leads_next_action_task_same_org_fk` paid for. A dangling pointer in a diagnostic column is
+  /// the honest cost; the unique that makes this table a ledger is the part that must hold.
+  leadId   String?             @map("lead_id") @db.Uuid
+  error    String?
+  /// How many times we have tried to turn it into a lead.
+  attempts Int                 @default(0)
+
+  receivedAt  DateTime  @default(now()) @map("received_at") @db.Timestamptz(6)
+  processedAt DateTime? @map("processed_at") @db.Timestamptz(6)
+
+  organization Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// `Restrict`, like every other composite FK here: a connection with events is disconnected
+  /// (soft) rather than deleted, which is what `disconnected_at` is for.
+  connection   IntegrationConnection? @relation(fields: [organizationId, connectionId], references: [organizationId, id], onDelete: Restrict, map: "provider_events_connection_same_org_fk")
+
+  @@unique([organizationId, id], name: "provider_event_tenant_key")
+  @@unique([organizationId, provider, externalEventId], name: "provider_event_external_key")
+  @@index([organizationId, status, receivedAt(sort: Desc)])
+  @@index([organizationId, connectionId, receivedAt(sort: Desc)])
+  @@map("provider_events")
 }
 
 /// One row per request a **key** made to this workspace's API (`FR-API-1`, `FR-SA-4`).
