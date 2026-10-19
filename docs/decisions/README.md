@@ -41,3 +41,4 @@ A decision is changed by writing a **new** ADR that supersedes the old one, neve
 | [0034](./ADR-0034-a-provider-is-a-registry-entry-and-an-adapter.md)                                | A provider is a registry entry and an adapter, and its credential never leaves the vault | Accepted |
 | [0035](./ADR-0035-a-provider-event-is-deduplicated-on-the-providers-own-id.md)                     | A provider event is deduplicated on the provider's own id, and fetched before it is captured | Accepted |
 | [0036](./ADR-0036-an-inbound-message-becomes-a-lead-through-the-capture-path.md)                   | An inbound WhatsApp message becomes a lead through the capture path, and its conversation is keyed on the number and the contact | Accepted |
+| [0037](./ADR-0037-a-send-is-a-queued-write-whose-status-only-moves-forward.md)                     | A WhatsApp send is a queued write whose status only moves forward, and whose failure is never silent | Accepted |

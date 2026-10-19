@@ -149,6 +149,13 @@ export const NAV_SECTIONS: readonly NavSection[] = [
         href: '/settings/whatsapp',
         permissions: ['whatsapp:manage'],
       },
+      // Beside the numbers, because the two are one setup: a template is the only thing that can
+      // reach somebody outside the 24-hour window, and the number is what sends it.
+      {
+        label: 'WhatsApp templates',
+        href: '/settings/whatsapp/templates',
+        permissions: ['whatsapp:manage'],
+      },
       { label: 'Your security', href: '/settings/security', permissions: [] },
     ],
   },

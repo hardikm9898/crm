@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import {
   ACTIVITY_TYPES,
@@ -18,6 +17,7 @@ import { DbService } from '../../infra/db/db.service.js';
 import { LOGGER } from '../../infra/observability/logger.module.js';
 import { TimelineService } from '../../infra/timeline/timeline.service.js';
 import { LeadsService } from '../leads/leads.service.js';
+import { deterministicEventId } from './whatsapp-ids.js';
 
 /** What one inbound message did, for the log and for a test. */
 export interface InboundResult {
@@ -324,8 +324,13 @@ export class WhatsAppInboundService {
     if (existing) return { id: existing.id, created: false };
 
     try {
+      // WhatsApp's profile name is a **display** name — "Asha Rao", not "Asha" — so putting it in
+      // `firstName` whole makes every template greet her "Hello Asha Rao". Split on the first
+      // space, which is as much as a display name can honestly be read for.
+      const [profileFirst, ...profileRest] = (message.profileName ?? '').trim().split(/\s+/);
       const created = await this.leads.create({
-        firstName: message.profileName ?? undefined,
+        firstName: profileFirst === '' ? undefined : profileFirst,
+        ...(profileRest.length > 0 ? { lastName: profileRest.join(' ') } : {}),
         whatsapp: contactE164,
         phone: contactE164,
         createdVia: 'whatsapp',
@@ -344,24 +349,4 @@ export class WhatsAppInboundService {
       return { id: null, created: false };
     }
   }
-}
-
-/**
- * A stable event id for the timeline, from the provider's message id.
- *
- * The timeline deduplicates on `(organization_id, source_event_id, occurred_at)` and the column is
- * a uuid, so the `wamid` cannot be it. What is needed is only that the same message always produces
- * the same uuid, which a hash of its id gives — so a replayed job writes no second row.
- */
-function deterministicEventId(providerMessageId: string): string {
-  const digest = createHash('sha256').update(providerMessageId).digest('hex');
-  return [
-    digest.slice(0, 8),
-    digest.slice(8, 12),
-    // Version 8: a uuid whose bits are ours to choose, which is exactly what this is.
-    `8${digest.slice(13, 16)}`,
-    ((parseInt(digest.slice(16, 18), 16) & 0x3f) | 0x80).toString(16).padStart(2, '0') +
-      digest.slice(18, 20),
-    digest.slice(20, 32),
-  ].join('-');
 }

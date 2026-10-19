@@ -175,7 +175,7 @@ export class IntegrationInboundService {
       accepted += 1;
       await this.queues.enqueue(
         QUEUES.MAINTENANCE,
-        this.jobFor(connection.provider),
+        this.jobFor(connection.provider, event.eventType),
         { organizationId: connection.organizationId, aggregateId: id },
         // The ledger row's id, so the same event cannot be queued twice while a different event
         // still can. BullMQ rejects ':' in a custom id.
@@ -309,13 +309,13 @@ export class IntegrationInboundService {
           },
           orderBy: { receivedAt: 'asc' },
           take: limit,
-          select: { id: true, organizationId: true, provider: true },
+          select: { id: true, organizationId: true, provider: true, eventType: true },
         }),
     );
     for (const row of rows) {
       await this.queues.enqueue(
         QUEUES.MAINTENANCE,
-        this.jobFor(row.provider),
+        this.jobFor(row.provider, row.eventType),
         { organizationId: row.organizationId, aggregateId: row.id },
         { jobId: `integration-event-retry-${row.id}-${Date.now()}` },
       );
@@ -361,13 +361,17 @@ export class IntegrationInboundService {
    * Read from the provider's **capabilities** rather than from its name: a `messaging` delivery
    * becomes a conversation and a message, and a `lead_ingest` one becomes a lead through the
    * capture path. The second messaging provider therefore needs no change here — it declares
-   * `messaging` in the registry and is routed, which is the whole argument for a registry.
+   * `messaging` in the registry and is routed, which is the whole argument for a registry. Within
+   * messaging, the **event type** decides: `status.*` is about a message we sent.
    */
-  private jobFor(provider: string): JobName {
+  private jobFor(provider: string, eventType: string): JobName {
     const entry = findProvider(provider);
-    return entry?.capabilities.includes('messaging') === true
-      ? JOBS.WHATSAPP_INGEST_MESSAGE
-      : JOBS.INTEGRATION_INGEST_EVENT;
+    if (entry?.capabilities.includes('messaging') !== true) return JOBS.INTEGRATION_INGEST_EVENT;
+    // A receipt about a message **we** sent is a different pipeline from a message that arrived,
+    // and a job name covering both would be a name that lies in an operator's dashboard.
+    return eventType.startsWith('status.')
+      ? JOBS.WHATSAPP_INGEST_STATUS
+      : JOBS.WHATSAPP_INGEST_MESSAGE;
   }
 
   /** The adapter's own reading of a delivery: zero or more events with the provider's own ids. */

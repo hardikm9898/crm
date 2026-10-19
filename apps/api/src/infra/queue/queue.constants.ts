@@ -116,6 +116,35 @@ export const JOBS = {
    */
   WHATSAPP_INGEST_MESSAGE: 'whatsapp.ingest-message',
   /**
+   * One status receipt, applied to the message it is about (`FR-WA-4`).
+   *
+   * Its own job rather than a branch inside the ingest one, because it is about a message we sent
+   * rather than one that arrived — and a job name that covered both would be a name that lies in an
+   * operator's dashboard, which is the one place a job name is read.
+   */
+  WHATSAPP_INGEST_STATUS: 'whatsapp.ingest-status',
+  /**
+   * One queued message, handed to Meta (`FR-WA-9`).
+   *
+   * A queue hop rather than an inline call for the reason every send path in this product has one:
+   * a message somebody typed must not be lost to a provider timeout, and per-number rate limiting
+   * is only possible where the sends are serialised. The job reads its subject from
+   * `payload.aggregateId` — the message's own id.
+   */
+  WHATSAPP_SEND_MESSAGE: 'whatsapp.send-message',
+  /**
+   * Re-queues a message a worker never sent (`FR-WA-9`). The shape the webhook and integration
+   * retries already have: a sweep over a row, because a job lost while a worker was down must not
+   * be a message lost.
+   */
+  WHATSAPP_SEND_RETRY: 'maintenance.whatsapp-send-retry',
+  /**
+   * Reconciles every template against Meta (`FR-WA-5`). Meta approves, rejects, pauses and disables
+   * on its own schedule, so a product that remembered its own last word would offer a button that
+   * fails in front of a customer.
+   */
+  WHATSAPP_SYNC_TEMPLATES: 'whatsapp.sync-templates',
+  /**
    * One event, fanned out to the endpoints that asked for it (`FR-API-4`). Reads the subscribed
    * endpoints and writes a `webhook_deliveries` row per endpoint — the store that makes a delivery
    * survive a worker restart, exactly as `inbound_payloads` does inbound.

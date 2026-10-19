@@ -617,6 +617,41 @@ export class IntegrationsService {
   }
 
   /**
+   * The same credential, opened inside the workspace's own context — for an **outbound** call.
+   *
+   * Scoped, not platform-scoped: a send has a principal, so the tenant-scoping extension is both
+   * correct and the stronger guarantee — a connection id from another workspace is simply not
+   * found, with no reason string to get wrong. The two methods are deliberately separate rather
+   * than one with a flag: "which scope does this read use" is exactly the question a flag hides.
+   */
+  async openForSending(provider: string, connectionId: string): Promise<InboundConnection> {
+    const { provider: registered } = this.registry.require(provider);
+    const row = await this.db.client.integrationConnection.findFirst({
+      where: { id: connectionId, provider: registered.key, disconnectedAt: null },
+      select: {
+        id: true,
+        organizationId: true,
+        credentialsEncrypted: true,
+        fieldMappings: true,
+        settings: true,
+        externalAccountId: true,
+      },
+    });
+    if (!row) throw AppError.notFound('Connection');
+    const settings = (row.settings ?? {}) as Record<string, unknown>;
+    return {
+      organizationId: row.organizationId,
+      connectionId: row.id,
+      provider: registered.key,
+      secrets: this.vault.open(row.id, row.credentialsEncrypted, sharedSecretField(registered.key)),
+      settings,
+      mapping: storedMapping(row.fieldMappings),
+      sourceName: typeof settings['sourceName'] === 'string' ? settings['sourceName'] : null,
+      externalAccountId: row.externalAccountId,
+    };
+  }
+
+  /**
    * What a successful inbound capture writes back: the connection is demonstrably working.
    *
    * Inside the connection's own tenant context, not under `withPlatformScope`: this is a write to

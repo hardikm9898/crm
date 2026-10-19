@@ -364,6 +364,31 @@ WhatsApp automation path.
 > is still absent from `INTEGRATION_AUTH_KINDS`, and a WABA is connected here with a manual token —
 > the fallback the paragraph above calls a fallback is, for now, the only path.
 
+> **Amendment, 2026-10-19 (implementation, Phase 5 step 2 — sending).** The outbound path above is
+> built, with four differences from the sketch:
+>
+> - **The adapter gained `sendMessage`, `submitTemplate` and `listTemplates`.** One send method for
+>   both text and template, because the difference between them is the body Meta is posted and
+>   nothing else — while the error handling, which is the part that matters, is the same. It answers
+>   a typed `SendOutcome` whose `retryable` is the difference between "Meta is busy" and "this
+>   message will never send"; only the second is worth showing an agent as failed.
+> - **The sketch's `entitlement + usage check` and `consent + suppression check` are one check, not
+>   two, and only for marketing.** `FR-BIL-4`'s metering has no meter yet, and a utility message is
+>   something the customer asked for — refusing a delivery notification because nobody ticked a
+>   marketing box would be the wrong rule in the other direction.
+> - **Rate limiting is a fixed one-second window per `phone_number_id` in Redis**, checked in the
+>   processor rather than configured on the queue: BullMQ's limiter is per worker, and Meta's limit
+>   is per number. Redis being unavailable reads as "under the limit", because a product that cannot
+>   reply to customers because a cache is down is worse than one that occasionally earns a 429 —
+>   which the adapter then treats as retryable.
+> - **Templates are reconciled, never remembered.** `wa.sync-templates` is
+>   `whatsapp.sync-templates`, every six hours, plus a button; a template Meta holds that this
+>   workspace has never seen is **adopted** rather than hidden, because a template they can send is
+>   one the picker should offer. Its wording stays at Meta — the row carries an empty body, which is
+>   honest, rather than a guess at what it says.
+>
+> Media and the opt-out keyword are still unbuilt, and so is Embedded Signup.
+
 ---
 
 ## 5. Credential vault (`NFR-SEC-3`)

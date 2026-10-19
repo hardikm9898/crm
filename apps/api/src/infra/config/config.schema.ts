@@ -106,6 +106,16 @@ export const configSchema = z
      */
     META_GRAPH_URL: z.string().url().default('https://graph.facebook.com/v21.0'),
     /**
+     * How many WhatsApp messages one business number may be handed to Meta per second
+     * (`FR-WA-9`).
+     *
+     * Meta's own ceiling depends on the number's messaging tier and is not readable from the API,
+     * so this is a floor we keep rather than a limit we discover: ten a second is far under every
+     * tier, and a workspace that needs more raises it deliberately. Zero switches the limiter off,
+     * which is what the test harness uses when it is not the thing being tested.
+     */
+    WHATSAPP_SENDS_PER_SECOND: z.coerce.number().int().min(0).max(1_000).default(10),
+    /**
      * The shared secret a provider's delivery webhook must present.
      *
      * Required the moment a real driver is configured: the webhook is the only thing that writes the

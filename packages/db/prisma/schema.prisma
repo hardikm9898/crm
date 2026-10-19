@@ -797,8 +797,10 @@ model Organization {
   integrations        IntegrationConnection[]
   whatsappAccounts    WhatsAppAccount[]
   whatsappNumbers     WhatsAppNumber[]
+  whatsappTemplates   WhatsAppTemplate[]
   conversations       Conversation[]
   messages            Message[]
+  messageStatusEvents MessageStatusEvent[]
   syncCursors         SyncCursor[]
   integrationChecks   IntegrationHealthCheck[]
   providerEvents      ProviderEvent[]
@@ -956,6 +958,7 @@ model Membership {
   assignedConversations   Conversation[]          @relation("conversation_assignee")
   closedConversations     Conversation[]          @relation("conversation_closer")
   sentMessages            Message[]               @relation("message_sender")
+  whatsappTemplatesWritten WhatsAppTemplate[]     @relation("whatsapp_template_author")
 
   @@unique([organizationId, id], name: "membership_tenant_key")
   @@unique([organizationId, userId])
@@ -4126,7 +4129,8 @@ model WhatsAppAccount {
   organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   connection   IntegrationConnection @relation(fields: [organizationId, integrationConnectionId], references: [organizationId, id], onDelete: Restrict, map: "whatsapp_accounts_connection_same_org_fk")
 
-  numbers WhatsAppNumber[]
+  numbers   WhatsAppNumber[]
+  templates WhatsAppTemplate[]
 
   @@unique([organizationId, id], name: "whatsapp_account_tenant_key")
   @@unique([organizationId, wabaId], name: "whatsapp_account_waba_key")
@@ -4266,6 +4270,14 @@ model Message {
   /// Meta's `wamid.…`. Null for an outbound message not yet accepted.
   providerMessageId String? @map("provider_message_id")
 
+  /// Which template this message is, when it is one. A composite FK, so a message cannot name
+  /// another workspace's template; `Restrict`, because a template with messages is archived rather
+  /// than deleted and its history has to keep reading correctly.
+  templateId String? @map("template_id") @db.Uuid
+  /// How many times sending has been attempted. A failure is retryable (`FR-WA-9`), and the count
+  /// is what stops a retry loop from being invisible.
+  sendAttempts Int @default(0) @map("send_attempts")
+
   /// The message this one answers or reacts to, by the provider's id rather than ours: the subject
   /// may not have arrived yet, and a composite FK into a partitioned table would need its instant.
   replyToProviderId String? @map("reply_to_provider_id")
@@ -4291,6 +4303,9 @@ model Message {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   conversation Conversation @relation(fields: [organizationId, conversationId], references: [organizationId, id], onDelete: Cascade, map: "messages_conversation_same_org_fk")
   sender       Membership?  @relation("message_sender", fields: [organizationId, senderUserId], references: [organizationId, userId], onDelete: Restrict, map: "messages_sender_same_org_fk")
+  template     WhatsAppTemplate? @relation(fields: [organizationId, templateId], references: [organizationId, id], onDelete: Restrict, map: "messages_template_same_org_fk")
+
+  statusEvents MessageStatusEvent[]
 
   @@id([id, createdAt])
   @@unique([organizationId, id, createdAt], name: "message_tenant_key")
@@ -4668,4 +4683,112 @@ enum WebhookDeliveryStatus {
   exhausted
 
   @@map("webhook_delivery_status")
+}
+
+
+/// One WhatsApp message template, and its standing with Meta (`FR-WA-5`).
+///
+/// Authored here, submitted to Meta, and then **reconciled** by a sweep rather than trusted: Meta
+/// approves, rejects, pauses and disables templates on its own schedule, and a product that
+/// remembered its own last word would offer a button that fails. `rejectionReason` is Meta's own
+/// sentence, kept rather than paraphrased.
+model WhatsAppTemplate {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  accountId String @map("account_id") @db.Uuid
+
+  /// Meta's own naming rule: lower case, digits and underscores.
+  name     String
+  /// A WhatsApp language code — `en`, `en_US`.
+  language String
+  category WhatsAppTemplateCategory
+  status   WhatsAppTemplateStatus   @default(draft)
+  /// Why Meta refused it. Null unless it did.
+  rejectionReason String? @map("rejection_reason")
+
+  /// `{ header?, body, footer?, buttons? }` — the shape `renderTemplate` reads.
+  components Json @db.JsonB
+  /// `{ "1": "lead.fullName", "2": "custom.course" }` — what fills each variable at send time.
+  variableMap Json @default("{}") @map("variable_map") @db.JsonB
+
+  /// Meta's id for the template, once it has one.
+  providerTemplateId String?   @map("provider_template_id")
+  submittedAt        DateTime? @map("submitted_at") @db.Timestamptz(6)
+  syncedAt           DateTime? @map("synced_at") @db.Timestamptz(6)
+
+  createdById String?  @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  account      WhatsAppAccount @relation(fields: [organizationId, accountId], references: [organizationId, id], onDelete: Cascade, map: "whatsapp_templates_account_same_org_fk")
+  createdBy    Membership?     @relation("whatsapp_template_author", fields: [organizationId, createdById], references: [organizationId, userId], onDelete: Restrict, map: "whatsapp_templates_author_same_org_fk")
+
+  messages Message[]
+
+  @@unique([organizationId, id], name: "whatsapp_template_tenant_key")
+  /// One template per name and language on an account, which is Meta's own key for them.
+  @@unique([organizationId, accountId, name, language], name: "whatsapp_template_name_key")
+  @@index([organizationId, status])
+  @@map("whatsapp_templates")
+}
+
+/// Every status Meta has reported for one message (`FR-WA-4`).
+///
+/// A **history**, not a column: "it says delivered but she never got it" is answerable only if the
+/// instants are kept, and Meta's receipts arrive out of order often enough that the message's own
+/// `status` column is a derived summary. The parent is partitioned, so the composite FK carries the
+/// message's `created_at` as well as its id — the `ingestion_errors` shape, for the same reason.
+model MessageStatusEvent {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  messageId        String   @map("message_id") @db.Uuid
+  messageCreatedAt DateTime @map("message_created_at") @db.Timestamptz(6)
+
+  status MessageStatus
+  /// Meta's instant for the transition, never ours: a receipt that arrives late still happened when
+  /// it happened, and a median "time to read" computed from our clock would measure our queue.
+  occurredAt DateTime @map("occurred_at") @db.Timestamptz(6)
+
+  errorCode    String? @map("error_code")
+  errorMessage String? @map("error_message")
+  /// What Meta charged this conversation as, when it says.
+  conversationCategory String? @map("conversation_category")
+  billable             Boolean @default(false)
+
+  raw Json @default("{}") @db.JsonB
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  message      Message      @relation(fields: [organizationId, messageId, messageCreatedAt], references: [organizationId, id, createdAt], onDelete: Cascade, map: "message_status_events_message_same_org_fk")
+
+  @@unique([organizationId, id], name: "message_status_event_tenant_key")
+  /// One row per status per message: Meta redelivers receipts, and the same fact twice would make
+  /// the history read as two events.
+  @@unique([organizationId, messageId, status], name: "message_status_event_once_key")
+  @@index([organizationId, messageId, occurredAt])
+  @@map("message_status_events")
+}
+
+enum WhatsAppTemplateCategory {
+  marketing
+  utility
+  authentication
+
+  @@map("whatsapp_template_category")
+}
+
+enum WhatsAppTemplateStatus {
+  draft
+  pending
+  approved
+  rejected
+  paused
+  disabled
+
+  @@map("whatsapp_template_status")
 }

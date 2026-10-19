@@ -185,6 +185,24 @@ export const SCHEDULES: readonly ScheduleDefinition[] = [
     cron: '7 1 * * *',
     description: 'Take points off leads nobody has touched, so a stale score cannot look hot',
   },
+  {
+    queue: QUEUES.MAINTENANCE,
+    jobName: JOBS.WHATSAPP_SEND_RETRY,
+    // Every two minutes. A message queued and never handed to Meta is a customer waiting for an
+    // answer, so this is the shortest sweep in the product after the notification release — and
+    // the read is an indexed scan of nothing (`messages_queued`) on almost every tick.
+    cron: '*/2 * * * *',
+    description: 'Re-queue the WhatsApp messages a worker never handed to Meta',
+  },
+  {
+    queue: QUEUES.MAINTENANCE,
+    jobName: JOBS.WHATSAPP_SYNC_TEMPLATES,
+    // Every six hours. Meta reviews a template in hours rather than minutes, and its own
+    // notification of the verdict is a webhook field this product does not subscribe to yet — so
+    // this sweep is how an approval becomes a sendable template without anybody pressing anything.
+    cron: '23 */6 * * *',
+    description: 'Reconcile every workspace’s WhatsApp templates against Meta',
+  },
 ];
 
 const HEARTBEAT_INTERVAL_MS = 30_000;

@@ -100,10 +100,10 @@ function answerLines(payload: Record<string, unknown>): string[] {
 /**
  * Only the types the product can actually produce are described here.
  *
- * Adding a describer for `whatsapp.sent` today would be writing copy for a screen nobody can reach,
- * and it would rot before it was read — `whatsapp.received` is described because Phase 5 step 1
- * writes it, and its three outbound siblings are not. The fallback covers them until their step
- * lands, which is exactly what the fallback is for.
+ * `whatsapp.received`, `whatsapp.sent`, `whatsapp.template_sent` and `whatsapp.failed` are
+ * described because Phase 5 writes them. `whatsapp.read` is **not**: a read receipt lives on the
+ * message in the thread, and a timeline with four rows per message is a timeline nobody reads. The
+ * fallback covers a type whose step has not landed, which is exactly what the fallback is for.
  */
 const DESCRIBERS: Readonly<Record<string, Describer>> = {
   'lead.created': (payload) => ({
@@ -543,6 +543,27 @@ const DESCRIBERS: Readonly<Record<string, Describer>> = {
     }.`,
     // Amber for the same reason a dialled call is: somebody is waiting for an answer.
     tone: 'warning',
+  }),
+  'whatsapp.sent': (payload) => ({
+    label: 'Replied',
+    description: `Answered on WhatsApp${
+      text(payload, 'preview') ? `: “${text(payload, 'preview')}”` : ''
+    }.`,
+  }),
+  'whatsapp.template_sent': (payload) => ({
+    label: 'Template sent',
+    description: `Sent an approved WhatsApp template${
+      text(payload, 'preview') ? `: “${text(payload, 'preview')}”` : ''
+    }.`,
+  }),
+  'whatsapp.failed': (payload) => ({
+    label: 'Not delivered',
+    // WhatsApp's own sentence, never a paraphrase: "more than 24 hours have passed since the
+    // customer last replied" is the one thing that says what to do instead.
+    description: `WhatsApp did not deliver this message — ${
+      text(payload, 'reason') ?? 'it did not say why'
+    }.`,
+    tone: 'danger',
   }),
 };
 

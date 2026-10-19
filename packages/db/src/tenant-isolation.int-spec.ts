@@ -4006,4 +4006,200 @@ describe('layer 5 — WhatsApp conversations and messages (Phase 5 step 1)', () 
       ).toBe(true);
     }
   });
+
+  // ── Phase 5 step 2 — templates and status receipts ───────────────────────
+
+  async function template(organizationId: string, over: Record<string, unknown> = {}) {
+    const own = await number(organizationId);
+    const id = newId();
+    await h.unscoped.whatsAppTemplate.create({
+      data: {
+        id,
+        organizationId,
+        accountId: own.accountId,
+        name: `order_update_${id.slice(-8)}`,
+        language: 'en',
+        category: 'utility',
+        components: { body: 'Hello {{1}}' },
+        ...over,
+      } as never,
+    });
+    return { id, accountId: own.accountId, numberId: own.numberId };
+  }
+
+  it('refuses a template name or language WhatsApp would refuse', async () => {
+    const own = await number(h.orgA.organizationId);
+    const create = (over: Record<string, unknown>) =>
+      h.unscoped.whatsAppTemplate.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          accountId: own.accountId,
+          name: 'order_update',
+          language: 'en',
+          category: 'utility',
+          components: { body: 'Hello' },
+          ...over,
+        } as never,
+      });
+    await expect(create({ name: 'Order Update' })).rejects.toThrow(
+      /whatsapp_templates_name_shape/i,
+    );
+    await expect(create({ name: 'ab' })).rejects.toThrow(/whatsapp_templates_name_shape/i);
+    await expect(create({ language: 'english' })).rejects.toThrow(
+      /whatsapp_templates_language_shape/i,
+    );
+    // The length is a `length()` test rather than `{3,512}`, because Postgres refuses a regex
+    // repetition count above 255 — so this, which is 300 characters, has to be accepted.
+    await expect(create({ name: 'a'.repeat(300) })).resolves.toBeTruthy();
+  });
+
+  it('insists a rejected template says why, and that anything Meta has seen has Meta’s id', async () => {
+    const own = await number(h.orgA.organizationId);
+    const create = (over: Record<string, unknown>) =>
+      h.unscoped.whatsAppTemplate.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          accountId: own.accountId,
+          name: `t_${newId().slice(-8)}`,
+          language: 'en',
+          category: 'utility',
+          components: { body: 'Hello' },
+          ...over,
+        } as never,
+      });
+    await expect(create({ status: 'rejected', providerTemplateId: 'meta-1' })).rejects.toThrow(
+      /whatsapp_templates_rejected_says_why/i,
+    );
+    await expect(create({ status: 'approved' })).rejects.toThrow(
+      /whatsapp_templates_submitted_has_provider_id/i,
+    );
+    // The honest state the mirror would have forbidden: a resubmitted template keeps the reason it
+    // was refused for last time, which is the thing the person editing it needs to read.
+    await expect(
+      create({ status: 'pending', providerTemplateId: 'meta-2', rejectionReason: 'Too promotional' }),
+    ).resolves.toBeTruthy();
+    await expect(create({ components: 'not an object' })).rejects.toThrow(
+      /components_is_an_object|invalid input/i,
+    );
+  });
+
+  it('refuses a template on another workspace’s account, and a message naming another’s template', async () => {
+    const theirs = await template(h.orgB.organizationId);
+    const mine = await number(h.orgA.organizationId);
+    await expect(
+      h.unscoped.whatsAppTemplate.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          accountId: theirs.accountId,
+          name: `t_${newId().slice(-8)}`,
+          language: 'en',
+          category: 'utility',
+          components: { body: 'Hello' },
+        } as never,
+      }),
+    ).rejects.toThrow(/whatsapp_templates_account_same_org_fk|foreign key/i);
+
+    const ours = await conversation(h.orgA.organizationId, mine.numberId);
+    await expect(
+      h.unscoped.message.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          conversationId: ours,
+          direction: 'outbound',
+          type: 'template',
+          templateId: theirs.id,
+        } as never,
+      }),
+    ).rejects.toThrow(/messages_template_same_org_fk|foreign key/i);
+  });
+
+  it('insists a message naming a template is a template, and that inbound is never sent', async () => {
+    const own = await template(h.orgA.organizationId);
+    const ours = await conversation(h.orgA.organizationId, own.numberId);
+    const message = (over: Record<string, unknown>) =>
+      h.unscoped.message.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          conversationId: ours,
+          direction: 'outbound',
+          type: 'text',
+          body: 'hello',
+          ...over,
+        } as never,
+      });
+    await expect(message({ templateId: own.id })).rejects.toThrow(
+      /messages_template_id_is_a_template/i,
+    );
+    await expect(message({ type: 'template', templateId: own.id })).resolves.toBeTruthy();
+    // The mirror is false and deliberately not asserted: a `template` message with no local
+    // template is one Meta reports for wording this product has never stored.
+    await expect(message({ type: 'template' })).resolves.toBeTruthy();
+
+    await expect(message({ direction: 'inbound', sendAttempts: 1 })).rejects.toThrow(
+      /messages_send_attempts_sane/i,
+    );
+    await expect(message({ sendAttempts: -1 })).rejects.toThrow(/messages_send_attempts_sane/i);
+  });
+
+  it('keeps one status receipt per message and status, with the parent’s own instant', async () => {
+    const own = await number(h.orgA.organizationId);
+    const ours = await conversation(h.orgA.organizationId, own.numberId);
+    const messageId = newId();
+    const created = await h.unscoped.message.create({
+      data: {
+        id: messageId,
+        organizationId: h.orgA.organizationId,
+        conversationId: ours,
+        direction: 'outbound',
+        type: 'text',
+        body: 'hello',
+        status: 'sent',
+      } as never,
+    });
+    const event = (over: Record<string, unknown> = {}) =>
+      h.unscoped.messageStatusEvent.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          messageId,
+          // Both halves of the parent's key: `messages` is partitioned by `created_at`.
+          messageCreatedAt: created.createdAt,
+          status: 'sent',
+          occurredAt: new Date(),
+          ...over,
+        } as never,
+      });
+    await expect(event()).resolves.toBeTruthy();
+    // The same fact twice would make the history read as two events.
+    await expect(event()).rejects.toThrow(/message_status_event_once_key|unique/i);
+    await expect(event({ status: 'delivered' })).resolves.toBeTruthy();
+    // A failure that says nothing is a failure nobody can act on.
+    await expect(event({ status: 'failed' })).rejects.toThrow(
+      /message_status_events_failed_says_why/i,
+    );
+    await expect(event({ status: 'failed', errorCode: '131047' })).resolves.toBeTruthy();
+    // The wrong instant is the wrong row: without the parent's `created_at` the FK cannot resolve.
+    await expect(
+      event({ status: 'read', messageCreatedAt: new Date(Date.now() - 86_400_000) }),
+    ).rejects.toThrow(/message_status_events_message_same_org_fk|foreign key/i);
+  });
+
+  it('shows one workspace nothing of another’s templates or receipts', async () => {
+    await template(h.orgA.organizationId);
+    const theirs = await tenantContext.run(h.orgB.principal, async () => ({
+      templates: await h.db.whatsAppTemplate.findMany({}),
+      events: await h.db.messageStatusEvent.findMany({}),
+    }));
+    for (const [label, rows] of Object.entries(theirs)) {
+      expect(
+        rows.every((row) => row.organizationId === h.orgB.organizationId),
+        label,
+      ).toBe(true);
+    }
+  });
 });

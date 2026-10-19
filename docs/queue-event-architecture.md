@@ -449,6 +449,32 @@ All schedules are working-hours/timezone aware where they touch humans — a fol
 >   sweep. A month with no partition is worse than an error: rows land in `messages_default`, work
 >   fine, and then block attaching the real partition until they are moved.
 
+> **Amendment, 2026-10-19 (implementation, Phase 5 step 2 — sending).** Four more jobs:
+>
+> | Schedule      | Job                                | Purpose                                                           |
+> | ------------- | ---------------------------------- | ----------------------------------------------------------------- |
+> | on demand     | `whatsapp.send-message`            | One queued message → Meta → `accepted`, or a reason on the row     |
+> | on demand     | `whatsapp.ingest-status`           | One status receipt → the message's own status and history          |
+> | every 2 min   | `maintenance.whatsapp-send-retry`  | Re-queue a message a worker never handed to Meta                   |
+> | every 6 hours | `whatsapp.sync-templates`          | Reconcile every workspace's templates against Meta                 |
+>
+> - **The send is a queue hop because the row is written first.** A message somebody typed must not
+>   be lost to a provider timeout, and per-number rate limiting is only possible where the sends are
+>   serialised. The job id is the message's own id, so the same message cannot be queued twice.
+> - **Over the rate limit is not a failure.** The job re-queues itself with a delay to the next
+>   second and the attempt is **not** counted against the message; a 429 from Meta *is* counted but
+>   leaves the message `queued`, and five attempts or any other refusal marks it `failed`.
+> - **A status receipt is its own job**, because it is about a message we sent rather than one that
+>   arrived — and its ledger key is `<wamid>:<status>`, since one message produces four receipts and
+>   a ledger keyed on the `wamid` alone would call the second a duplicate of the first.
+> - **The status moves by a conditional `UPDATE`, not a read-then-write.** These jobs run at the
+>   queue's concurrency and three receipts for one message arrive together; the read-then-write
+>   version let a late `delivered` overwrite `read` about one time in three, measured over real
+>   HTTP. The row count is what says whether it advanced.
+> - **The two-minute retry sweep is the shortest in the product after the notification release**,
+>   because what is waiting is a customer. Its read is an indexed scan of nothing
+>   (`messages_queued`) on almost every tick.
+
 ## 6. Retry, failure and DLQ
 
 Policy: exponential backoff with full jitter, per-queue attempt caps (§3). Errors are classified:

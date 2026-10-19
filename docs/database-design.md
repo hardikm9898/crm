@@ -868,6 +868,45 @@ RESTRICT`, like every other cross-table reference here: `SetNull` and `SetDefaul
 > plainly, because a column with no writer is otherwise indistinguishable from a feature somebody
 > forgot.
 
+> **Amendment, 2026-10-19 (implementation, Phase 5 step 2 — sending).** `whatsapp_templates` and
+> `message_status_events` are built, and `messages` gained two columns. The three tables still
+> waiting are `conversation_participants`, `message_media` and `canned_replies` — participants and
+> canned replies with the shared inbox, media with the download job. Six differences from the
+> sketch above:
+>
+> - **`messages.template_id`** is a composite FK into `whatsapp_templates`, `Restrict`: a template
+>   with messages is **archived** (`deleted_at`), never deleted, because its messages' history has
+>   to keep reading correctly. `messages_template_id_is_a_template` insists a message naming one is
+>   of type `template`; the mirror is false and deliberately unasserted — a `template` message may
+>   be one Meta reports for wording this product has never stored.
+> - **`messages.send_attempts`** is new: how many times the message has been handed to Meta.
+>   `FR-WA-9` asks for a retryable failure, and a count is what makes a retry visible rather than a
+>   quiet second try. `messages_send_attempts_sane` refuses a non-zero count on an **inbound** row —
+>   something trying to send a customer's own words back to them.
+> - **`message_status_events` carries `message_created_at`** as well as `message_id`, because the
+>   parent is partitioned and a composite FK needs the partition key: the `ingestion_errors` shape,
+>   for the same reason. Its unique is `(organization_id, message_id, status)` — one row per status
+>   per message — rather than the sketch's "dedup on provider event id", because Meta's status
+>   payloads carry no event id of their own: the id they carry is the **message's**.
+> - **The status on `messages` is a summary; the rows in `message_status_events` are the facts.**
+>   The summary only moves forward (`statusAdvances`), and it moves through a **conditional update**
+>   rather than a read-then-write, because these jobs run at the queue's concurrency. Every receipt
+>   writes its own timestamp column regardless, so a `delivered` that arrives after `read` still
+>   leaves `delivered_at` set.
+> - **Three CHECKs on `whatsapp_templates` are `CASE`s, each in the one direction that is a
+>   contradiction**: `rejected_says_why` (a rejection carries Meta's reason), and
+>   `submitted_has_provider_id` (anything Meta has seen has Meta's id). The mirror of the first is
+>   false — a resubmitted template keeps the reason it was refused for last time, which is the thing
+>   the person editing it needs to read.
+> - **`whatsapp_templates_name_shape` is a regex *and* a `length()` test**, not `{3,512}`: Postgres
+>   refuses a regex repetition count above **255**, and the quantifier form answered
+>   `invalid repetition count(s)` at insert time — a 500 on a feature whose unit tests all passed.
+>
+> Two partial indexes are new: `whatsapp_templates_sendable` (`WHERE status = 'approved' AND
+> deleted_at IS NULL`), which is what a composer's picker asks for, and `messages_queued`
+> (`WHERE status = 'queued'`), keyed on `created_at` alone because the sweep that re-queues an
+> unsent message runs across every tenant — as `calls_awaiting_outcome` already does.
+
 Indexes: `(organization_id, channel_account_id, status, last_message_at DESC)` for the inbox list;
 `(organization_id, assigned_user_id, status, last_message_at DESC)` for "my conversations";
 `(organization_id, conversation_id, created_at DESC)` for message paging;

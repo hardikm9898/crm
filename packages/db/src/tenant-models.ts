@@ -123,6 +123,10 @@ export const TENANT_MODELS = [
   'WhatsAppNumber',
   'Conversation',
   'Message',
+  // Phase 5, step 2 — sending. A template is a workspace's own wording, and a status receipt is a
+  // fact about one of its messages.
+  'WhatsAppTemplate',
+  'MessageStatusEvent',
 ] as const;
 
 export type TenantModel = (typeof TENANT_MODELS)[number];

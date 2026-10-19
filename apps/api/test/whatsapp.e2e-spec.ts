@@ -543,15 +543,26 @@ describe('an inbound message', () => {
   });
 
   it('acknowledges a delivery that carries only status receipts', async () => {
-    // Meta sends these for messages we sent. This step sends nothing, so there is nothing for them
-    // to be about — and a 4xx would teach Meta to disable the endpoint and stop delivering the
-    // messages we do want.
+    // Meta sends these for messages we sent. Step 1 had nothing for them to be about and dropped
+    // them, acknowledged; **step 2** reads them, so one is now an event of its own — keyed
+    // `<wamid>:<status>`, because one message produces four of them. What has not changed is the
+    // 200: a 4xx teaches Meta to disable the endpoint and stop delivering the messages we want.
     const response = await post(
-      delivery([], { messages: undefined, statuses: [{ id: 'wamid.ours', status: 'delivered' }] }),
+      delivery([], {
+        messages: undefined,
+        statuses: [
+          { id: 'wamid.ours', status: 'delivered', timestamp: String(Math.floor(Date.now() / 1000)) },
+        ],
+      }),
       { secret: APP_SECRET },
     );
     expect(response.statusCode).toBe(200);
-    expect(response.body.data.accepted).toBe(0);
+    expect(response.body.data.accepted).toBe(1);
+    const ledger = await ctx.db.providerEvent.findFirstOrThrow({
+      where: { organizationId: orgA.organizationId, externalEventId: 'wamid.ours:delivered' },
+      select: { eventType: true },
+    });
+    expect(ledger.eventType).toBe('status.delivered');
   });
 
   it('refuses a delivery naming a number this workspace does not have', async () => {

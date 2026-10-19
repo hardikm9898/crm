@@ -94,6 +94,11 @@ interface Tenant {
   // for the wrong reason, and on a freshly migrated database there is no conversation to find.
   whatsappNumberId: string;
   conversationId: string;
+  // Phase 5, step 2 — sending. An **outbound** message, because `POST …/retry` is about one we
+  // sent; a template in `draft`, because the submit route is the one a draft is for.
+  whatsappAccountId: string;
+  whatsappTemplateId: string;
+  outboundMessageId: string;
 }
 
 let orgA: Tenant;
@@ -516,6 +521,42 @@ async function createTenant(label: string): Promise<Tenant> {
       createdAt: new Date(),
     },
   });
+  // A **failed** outbound message, because the retry route refuses anything else: aimed at a row in
+  // the state the endpoint expects, which is what stops the sweep recording a refusal it never
+  // earned — the lesson `POST /calls/:id/outcome` paid for.
+  const outboundMessageId = newId();
+  await ctx.db.message.create({
+    data: {
+      id: outboundMessageId,
+      organizationId,
+      conversationId,
+      direction: 'outbound',
+      type: 'text',
+      body: `Swept reply ${label}`,
+      payload: { kind: 'text', text: `Swept reply ${label}` },
+      provider: 'whatsapp_cloud',
+      status: 'failed',
+      errorCode: '131047',
+      errorMessage: 'Swept failure',
+      failedAt: new Date(),
+      sendAttempts: 1,
+      createdAt: new Date(),
+    },
+  });
+  const whatsappTemplateId = newId();
+  await ctx.db.whatsAppTemplate.create({
+    data: {
+      id: whatsappTemplateId,
+      organizationId,
+      accountId: whatsappAccountId,
+      name: `swept_${label}_${SUFFIX}`,
+      language: 'en',
+      category: 'utility',
+      status: 'draft',
+      components: { body: 'Hello {{1}}' },
+      variableMap: { '1': 'lead.firstName' },
+    } as never,
+  });
 
   const slaClock = await ctx.db.slaClock.findFirstOrThrow({
     where: { organizationId, leadId: lead.body.data.id },
@@ -592,6 +633,9 @@ async function createTenant(label: string): Promise<Tenant> {
     integrationConnectionId: integrationConnection.body.data.id,
     whatsappNumberId,
     conversationId,
+    whatsappAccountId,
+    whatsappTemplateId,
+    outboundMessageId,
   };
 }
 
@@ -902,6 +946,11 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       '/conversations/:id/messages': `/conversations/${orgA.conversationId}/messages`,
       '/conversations/:id/read': `/conversations/${orgA.conversationId}/read`,
       '/whatsapp/numbers/:id': `/whatsapp/numbers/${orgA.whatsappNumberId}`,
+      // Phase 5, step 2 — sending
+      '/conversations/:id/messages/:messageId/retry': `/conversations/${orgA.conversationId}/messages/${orgA.outboundMessageId}/retry`,
+      '/whatsapp/templates/:id': `/whatsapp/templates/${orgA.whatsappTemplateId}`,
+      '/whatsapp/templates/:id/preview': `/whatsapp/templates/${orgA.whatsappTemplateId}/preview`,
+      '/whatsapp/templates/:id/submit': `/whatsapp/templates/${orgA.whatsappTemplateId}/submit`,
     };
 
     // An unmapped parameter would test nothing meaningful, so it is reported instead.
@@ -989,6 +1038,8 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       // the second-worst thing on this list to get wrong.
       ['conversationId', orgA.conversationId],
       ['whatsappNumberId', orgA.whatsappNumberId],
+      ['whatsappTemplateId', orgA.whatsappTemplateId],
+      ['outboundMessageId', orgA.outboundMessageId],
     ];
 
     const problems: string[] = [];
@@ -1297,6 +1348,24 @@ function bodyFor(
       // Org A's own member, so this request names something of theirs in the body as well as in
       // the path — which is what makes a 200 here a finding rather than a pass.
       return { userId: target.userId };
+    case '/conversations/:id/messages':
+      return { kind: 'text', body: 'A reply from another workspace' };
+    case '/conversations/:id/messages/:messageId/retry':
+    case '/whatsapp/templates/:id/submit':
+      return {};
+    case '/whatsapp/templates':
+      return {
+        accountId: target.whatsappAccountId,
+        name: `cross_tenant_${SUFFIX}`,
+        language: 'en',
+        category: 'utility',
+        components: { body: 'Hello {{1}}' },
+        variableMap: { '1': 'lead.firstName' },
+      };
+    case '/whatsapp/templates/:id':
+      return { components: { body: 'Renamed by another tenant' } };
+    case '/whatsapp/templates/sync':
+      return { accountId: target.whatsappAccountId };
     default:
       return undefined;
   }

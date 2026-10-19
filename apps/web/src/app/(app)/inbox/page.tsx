@@ -11,11 +11,15 @@ import {
   loadConversation,
   loadConversations,
   loadMessages,
+  loadSendableTemplates,
   messageStanding,
+  needsAttention,
+  previewTemplate,
+  templateVariables,
   type ConversationDetail,
   type ConversationMessage,
 } from '@/lib/whatsapp';
-import { MarkReadForm } from './_components/inbox-forms';
+import { Composer, MarkReadForm, RetryForm } from './_components/inbox-forms';
 
 /**
  * The WhatsApp inbox (`FR-WA-7`, `FR-WA-8`).
@@ -71,10 +75,36 @@ export default async function InboxPage({
   let conversation: ConversationDetail | null = null;
   let messages: ConversationMessage[] = [];
   let openError: string | null = null;
+  // The templates a composer may offer, each resolved against **this** lead: a picker that showed
+  // `{{1}}` would make an agent open another screen to find out what they are about to send.
+  let composerTemplates: ComposerTemplate[] = [];
   if (selected) {
     try {
       conversation = await loadConversation(selected, token);
       messages = (await loadMessages(selected, token)).items;
+      const approved = await loadSendableTemplates(token);
+      composerTemplates = await Promise.all(
+        approved.map(async (template) => {
+          const resolved = await previewTemplate(template.id, conversation?.lead?.id ?? null, token);
+          const variables = templateVariables(template.components.body ?? '');
+          return {
+            id: template.id,
+            name: template.name,
+            language: template.language,
+            category: template.category,
+            preview: resolved?.text ?? template.preview,
+            variables,
+            // Keyed by the variable's number, which is how the API's own map is keyed.
+            resolved: Object.fromEntries(
+              variables.map((index, position) => [
+                String(index),
+                resolved?.values[position] ?? '',
+              ]),
+            ),
+            missing: resolved?.missing ?? [],
+          };
+        }),
+      );
     } catch (error) {
       openError = describeError(error);
     }
@@ -226,7 +256,11 @@ export default async function InboxPage({
           )}
           {conversation !== null && (
             <>
-              <Thread conversation={conversation} messages={messages} />
+              <Thread
+                conversation={conversation}
+                messages={messages}
+                templates={composerTemplates}
+              />
               <LeadContext conversation={conversation} />
             </>
           )}
@@ -236,13 +270,27 @@ export default async function InboxPage({
   );
 }
 
+/** One approved template, resolved against the lead this conversation belongs to. */
+interface ComposerTemplate {
+  id: string;
+  name: string;
+  language: string;
+  category: string;
+  preview: string;
+  variables: number[];
+  resolved: Record<string, string>;
+  missing: string[];
+}
+
 /** The messages, oldest at the top — which is how a conversation reads. */
 function Thread({
   conversation,
   messages,
+  templates,
 }: {
   conversation: ConversationDetail;
   messages: ConversationMessage[];
+  templates: readonly ComposerTemplate[];
 }) {
   const ordered = [...messages].reverse();
   return (
@@ -290,11 +338,30 @@ function Thread({
                   · {formatDateTime(message.createdAt)}
                   {standing ? ` · ${standing}` : ''}
                 </p>
+                {/* WhatsApp's own reason, where the message is — and the retry beside it, because
+                    the thing somebody wants to try again is the thing they are looking at. */}
+                {needsAttention(message) && (
+                  <div data-message-failed={message.id}>
+                    <p className="mt-1 text-xs text-[var(--color-danger)]">
+                      {message.errorMessage ?? 'WhatsApp did not say why.'}
+                    </p>
+                    <RetryForm conversationId={conversation.id} messageId={message.id} />
+                  </div>
+                )}
               </li>
             );
           })}
         </ol>
       )}
+
+      <div className="mt-4 border-t border-[var(--color-border)] pt-3">
+        <Composer
+          conversationId={conversation.id}
+          windowIsOpen={conversation.windowIsOpen}
+          windowSummary={conversation.windowSummary}
+          templates={templates}
+        />
+      </div>
     </Card>
   );
 }

@@ -229,6 +229,29 @@ export const NOTIFICATION_TYPES: readonly NotificationTypeSpec[] = [
     respectsQuietHours: true,
     staleness: 'never',
   },
+  {
+    type: 'whatsapp.send_failed',
+    label: 'A WhatsApp message that did not send',
+    hint: 'When WhatsApp refuses a reply you sent — with its reason, so you can decide what to do.',
+    group: 'work',
+    defaultChannels: ['in_app'],
+    optOut: true,
+    /**
+     * **Not** held for quiet hours, unlike every other work notification. `FR-WA-9` asks for a
+     * failure that is never silent, and the cost of holding this one is paid by the customer rather
+     * than by us: a reply that did not send at 23:00 and is not noticed until 07:00 is eight hours
+     * of somebody waiting for an answer they will never get. The agent chose to send at that hour;
+     * the failure is part of what they chose.
+     */
+    respectsQuietHours: false,
+    /**
+     * No staleness kind, deliberately. A send that failed still failed after a retry succeeds — the
+     * customer got the message late, and "was I ever told?" has to stay answerable. The registry's
+     * own rule is that a type with no entry is never stale, which is the right answer here rather
+     * than an omission.
+     */
+    staleness: 'never',
+  },
 ];
 
 export function notificationType(type: string): NotificationTypeSpec | undefined {

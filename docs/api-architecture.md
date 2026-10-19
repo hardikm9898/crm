@@ -453,6 +453,41 @@ POST /whatsapp/campaigns                     consent-checked bulk (FR-WA-10)
 >   Meta rather than created by hand — a number somebody mistyped would silently receive nothing —
 >   so the only thing a person does to one is say who answers it.
 
+> **Amendment, 2026-10-19 (implementation, Phase 5 step 2 — sending).** Seven more, and the rest
+> still wait for the steps that can honestly answer them:
+>
+> ```
+> POST  /conversations/{id}/messages                  { kind: 'text', body } | { kind: 'template', templateId, variables? }
+> POST  /conversations/{id}/messages/{messageId}/retry a failed message, on the same row
+> GET   /whatsapp/templates                            ?status=&accountId=&limit=
+> POST  /whatsapp/templates                            a draft, validated against Meta's own rules
+> GET   /whatsapp/templates/{id} · PATCH · DELETE      read, edit a draft, archive
+> GET   /whatsapp/templates/{id}/preview               ?leadId= — what this person will read
+> POST  /whatsapp/templates/{id}/submit                sends it to Meta for review
+> POST  /whatsapp/templates/sync                       { accountId } — reconciles against Meta
+> ```
+>
+> - **The send answers `202` with a `queued` message**, not a sent one: the send is a queue hop, so
+>   nothing has reached Meta when the request answers
+>   ([ADR-0037](./decisions/ADR-0037-a-send-is-a-queued-write-whose-status-only-moves-forward.md)).
+>   The body is a **discriminated union** on `kind`, because the two kinds are refused for different
+>   reasons and a `{ body?, templateId? }` with both set has no honest meaning.
+> - **Outside the 24-hour window a free-form send is `422 BUSINESS_RULE_VIOLATION`** with the
+>   sentence that names the way through. The same function the composer greys its text box with
+>   decides it, so the screen and the write path cannot disagree.
+> - **A template that is not approved is refused with Meta's own standing** ("WhatsApp is still
+>   reviewing this template"), and a variable nothing can fill is a `400` naming the variable —
+>   never a message Meta would happily deliver reading "Hi  , your order…".
+> - **A marketing template needs the recipient's WhatsApp consent**; `utility` and
+>   `authentication` do not, because those are things the customer asked for.
+> - **`PATCH` works on a draft only.** Meta has no edit for a submitted template, so the honest
+>   options are "submit a new one" or "a local copy that disagrees with what is sent".
+> - **`/whatsapp/templates/{id}/preview` is a `GET`.** Rendering a page must never run a mutation,
+>   and a preview that was a POST would be a state transition driven by the browser's reload button.
+> - **`/whatsapp/templates` is behind `whatsapp:manage`, and sending behind `conversation:reply`.**
+>   A template is the business's own wording, submitted for review, and changing one changes what
+>   every agent sends; sending one is a reply.
+
 ### Capture, integrations, developer platform
 
 ```

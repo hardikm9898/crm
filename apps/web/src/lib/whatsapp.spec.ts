@@ -1,12 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import {
   CONVERSATION_STATUSES as API_CONVERSATION_STATUSES,
+  WHATSAPP_TEMPLATE_CATEGORIES as API_TEMPLATE_CATEGORIES,
+  WHATSAPP_TEMPLATE_STATUSES as API_TEMPLATE_STATUSES,
+  TEMPLATE_VARIABLE_SOURCES as API_VARIABLE_SOURCES,
   MESSAGE_DIRECTIONS as API_MESSAGE_DIRECTIONS,
   MESSAGE_STATUSES as API_MESSAGE_STATUSES,
   MESSAGE_TYPES as API_MESSAGE_TYPES,
 } from '@leados/shared';
 import {
   CONVERSATION_STATUSES,
+  TEMPLATE_CATEGORY_LABELS,
+  TEMPLATE_STATUS_LABELS,
+  TEMPLATE_STATUS_TONES,
+  TEMPLATE_VARIABLE_SOURCES,
+  WHATSAPP_TEMPLATE_CATEGORIES,
+  WHATSAPP_TEMPLATE_STATUSES,
+  needsAttention,
+  templateVariables,
   MESSAGE_DIRECTIONS,
   MESSAGE_STATUSES,
   MESSAGE_TYPES,
@@ -71,6 +82,12 @@ describe('the WhatsApp vocabulary', () => {
     expect([...MESSAGE_DIRECTIONS]).toEqual([...API_MESSAGE_DIRECTIONS]);
     expect([...MESSAGE_STATUSES]).toEqual([...API_MESSAGE_STATUSES]);
     expect([...MESSAGE_TYPES]).toEqual([...API_MESSAGE_TYPES]);
+    // Phase 5 step 2's half of the same vocabulary.
+    expect([...WHATSAPP_TEMPLATE_CATEGORIES]).toEqual([...API_TEMPLATE_CATEGORIES]);
+    expect([...WHATSAPP_TEMPLATE_STATUSES]).toEqual([...API_TEMPLATE_STATUSES]);
+    expect(TEMPLATE_VARIABLE_SOURCES.map((source) => source.key)).toEqual(
+      API_VARIABLE_SOURCES.map((source) => source.key),
+    );
   });
 
   it('has a word for every status, and none of them is a column name', () => {
@@ -140,5 +157,39 @@ describe('what a row says', () => {
     ).toBe('More than 24 hours since the customer last replied');
     // A failure Meta did not explain still has to read as a failure.
     expect(messageStanding(message({ status: 'failed' }))).toBe('Not delivered');
+  });
+});
+
+describe('what a template screen says', () => {
+  it('has a word and a colour for every standing, and none of them is a column name', () => {
+    for (const status of WHATSAPP_TEMPLATE_STATUSES) {
+      expect(TEMPLATE_STATUS_LABELS[status], status).toBeTruthy();
+      expect(TEMPLATE_STATUS_LABELS[status], status).not.toMatch(/_/);
+      expect(TEMPLATE_STATUS_TONES[status], status).toBeTruthy();
+    }
+    // Only `approved` reads as good news, because only an approved template can be sent.
+    expect(TEMPLATE_STATUS_TONES.approved).toBe('success');
+    expect(TEMPLATE_STATUS_TONES.rejected).toBe('danger');
+  });
+
+  it('says what each category means, rather than naming it', () => {
+    for (const category of WHATSAPP_TEMPLATE_CATEGORIES) {
+      expect(TEMPLATE_CATEGORY_LABELS[category], category).toContain('—');
+    }
+    // The one that needs consent says so where somebody chooses it.
+    expect(TEMPLATE_CATEGORY_LABELS.marketing).toMatch(/consent/i);
+  });
+
+  it('finds the variables a body asks for, in order', () => {
+    expect(templateVariables('Hello {{1}}, your {{2}} is ready')).toEqual([1, 2]);
+    expect(templateVariables('{{2}} before {{1}}')).toEqual([1, 2]);
+    expect(templateVariables('nothing here')).toEqual([]);
+  });
+
+  it('marks only a failed outbound message as needing attention', () => {
+    expect(needsAttention(message({ status: 'failed' }))).toBe(true);
+    expect(needsAttention(message({ status: 'queued' }))).toBe(false);
+    // A message they sent is not ours to retry.
+    expect(needsAttention(message({ direction: 'inbound', status: 'failed' }))).toBe(false);
   });
 });

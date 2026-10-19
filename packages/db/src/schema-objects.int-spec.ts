@@ -188,6 +188,11 @@ const REQUIRED_INDEXES = [
   'messages_body_search',
   'conversations_unread',
   'conversations_window_closing',
+  // Phase 5, step 2 — sending. `whatsapp_templates_sendable` is what a composer's picker asks
+  // for; `messages_queued` has no `organization_id` prefix because the sweep that re-queues an
+  // unsent message runs across every tenant, as the call-nudge index already does.
+  'whatsapp_templates_sendable',
+  'messages_queued',
 ];
 
 /**
@@ -616,6 +621,23 @@ const REQUIRED_CONSTRAINTS = [
   'conversations_lead_same_org_fk',
   'conversations_assignee_same_org_fk',
   'messages_conversation_same_org_fk',
+  // Phase 5, step 2 — sending: eight CHECKs and four composite FKs. Each of the three `CASE`s is
+  // written in the one direction that is a contradiction; the mirrors are false, and the comments
+  // in the migration say why for each.
+  'whatsapp_templates_name_shape',
+  'whatsapp_templates_language_shape',
+  'whatsapp_templates_rejected_says_why',
+  'whatsapp_templates_submitted_has_provider_id',
+  'whatsapp_templates_components_is_an_object',
+  'whatsapp_templates_variable_map_is_an_object',
+  'message_status_events_failed_says_why',
+  'message_status_events_raw_is_an_object',
+  'messages_send_attempts_sane',
+  'messages_template_id_is_a_template',
+  'whatsapp_templates_account_same_org_fk',
+  'whatsapp_templates_author_same_org_fk',
+  'messages_template_same_org_fk',
+  'message_status_events_message_same_org_fk',
 ];
 
 describe('hand-written indexes survive every generated migration', () => {

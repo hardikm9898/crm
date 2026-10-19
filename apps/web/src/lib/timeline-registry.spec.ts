@@ -97,11 +97,14 @@ describe('an unknown type degrades to a sentence, which is the whole point', () 
   it('describes a type this build has never heard of', () => {
     // A backend release that starts writing a new activity type before the frontend knows about it
     // must produce a readable line, not a blank row or an error boundary (FR-TL-1).
+    // A type that really is unknown: `whatsapp.template_sent` used to stand here and now has a
+    // describer, which is exactly the trap "a test that names a model as a hypothetical" warns
+    // about — so this names something no phase will ever write.
     const rendered = describeEntry(
-      entry({ type: 'whatsapp.template_sent', module: 'whatsapp', known: false }),
+      entry({ type: 'whatsapp.carrier_pigeon', module: 'whatsapp', known: false }),
     );
     expect(rendered.label).toBe('Whatsapp');
-    expect(rendered.description).toBe('Whatsapp template sent.');
+    expect(rendered.description).toBe('Whatsapp carrier pigeon.');
   });
 
   it('handles a type with no dot at all', () => {
@@ -121,7 +124,9 @@ describe('an unknown type degrades to a sentence, which is the whole point', () 
 
   it('knows which types it can phrase itself, so coverage is measurable', () => {
     expect(hasDescriber('lead.created')).toBe(true);
-    expect(hasDescriber('whatsapp.template_sent')).toBe(false);
+    // Described as of Phase 5 step 2, which is what the deferred list above now records.
+    expect(hasDescriber('whatsapp.template_sent')).toBe(true);
+    expect(hasDescriber('whatsapp.read')).toBe(false);
   });
 
   it('prints what somebody typed into a capture form, which is the point of the entry', () => {
@@ -585,12 +590,15 @@ describe('every activity type the product writes has a describer', () => {
     // An *inbound* call nobody answered. Only a telephony provider can report one — the manual
     // driver never learns that a call came in at all — so nothing writes it until Phase 4.
     'call.missed': 4,
-    // Outbound WhatsApp: Phase 5 step 2 sends the messages these describe. `whatsapp.received` is
-    // written by step 1 and is therefore described.
-    'whatsapp.sent': 5,
-    'whatsapp.template_sent': 5,
+    /**
+     * The one WhatsApp type nothing writes to the timeline, and deliberately.
+     *
+     * A read receipt is on the message in the thread, where somebody looking at that message is
+     * already looking; a timeline with four rows per message — queued, sent, delivered, read — is
+     * a timeline a business owner scrolls past. Step 2 writes `sent`, `template_sent` and `failed`,
+     * which are the three a person would want to see on a lead.
+     */
     'whatsapp.read': 5,
-    'whatsapp.failed': 5,
   };
 
   // Phase 3 step 1 added `task`, and took the five task types off the deferred list above as part
@@ -740,5 +748,61 @@ describe('a call on the timeline (`FR-CALL-1..3`)', () => {
   it('still reads when the payload is empty', () => {
     const rendered = describeEntry(entry({ type: 'call.logged', module: 'call', payload: {} }));
     expect(rendered.description).toBe('A call.');
+  });
+});
+
+describe('a reply, a template and a refusal on the timeline (`FR-WA-4`, `FR-WA-9`)', () => {
+  it('reads a reply as what was said, not as a type', () => {
+    const rendered = describeEntry(
+      entry({
+        type: 'whatsapp.sent',
+        module: 'whatsapp',
+        payload: {
+          conversationId: 'c1',
+          messageId: 'm1',
+          preview: 'It is — would Saturday suit?',
+          messageType: 'text',
+        },
+      }),
+    );
+    expect(rendered.label).toBe('Replied');
+    expect(rendered.description).toContain('It is — would Saturday suit?');
+  });
+
+  it('tells a template apart from a reply somebody typed', () => {
+    const rendered = describeEntry(
+      entry({
+        type: 'whatsapp.template_sent',
+        module: 'whatsapp',
+        payload: { messageId: 'm2', preview: 'Hello Asha, your visit is confirmed.', messageType: 'template' },
+      }),
+    );
+    expect(rendered.label).toBe('Template sent');
+    expect(rendered.description).toMatch(/template/i);
+    expect(rendered.description).toContain('Hello Asha');
+  });
+
+  it('carries WhatsApp’s own reason for a refusal, in red', () => {
+    const rendered = describeEntry(
+      entry({
+        type: 'whatsapp.failed',
+        module: 'whatsapp',
+        payload: {
+          messageId: 'm3',
+          errorCode: '131047',
+          reason: 'More than 24 hours have passed since the recipient last replied to this number.',
+        },
+      }),
+    );
+    expect(rendered.label).toBe('Not delivered');
+    expect(rendered.description).toContain('More than 24 hours');
+    expect(rendered.tone).toBe('danger');
+  });
+
+  it('still reads as a sentence when WhatsApp said nothing', () => {
+    const rendered = describeEntry(
+      entry({ type: 'whatsapp.failed', module: 'whatsapp', payload: { messageId: 'm4' } }),
+    );
+    expect(rendered.description).toMatch(/did not say why/i);
   });
 });

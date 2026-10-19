@@ -817,6 +817,49 @@ prisma migrate deploy` after generating a migration.
   WhatsApp default-agent picker is the payment-method lesson again. `key={`agent-${echoed}`}` with
   `defaultValue={echoed}` remounts the select exactly when the echoed value changes and leaves it
   alone while somebody is choosing.
+- **Postgres refuses a regex repetition count above 255.** A CHECK written
+  `name ~ '^[a-z0-9_]{3,512}$'` — Meta's own limit for a template name — installs happily and then
+  answers `invalid regular expression: invalid repetition count(s)` on every insert: a 500 on a
+  feature whose unit tests all passed, because the rule they tested was the TypeScript one. Write
+  the shape as a regex and the length as a `length()` test.
+- **A read-then-write on a status column loses the race at queue concurrency, and a conditional
+  `UPDATE` is cheaper than the row lock.** Meta sends `sent`, `delivered` and `read` for one
+  message within a second, the three jobs run together, and the version that read `status`, decided
+  with `statusAdvances` and then wrote it let a late `delivered` overwrite `read` about one time in
+  three — found by running the HTTP check twice, not by the e2e suite, which drives the jobs one
+  after another. `UPDATE … WHERE status IN (statusesBeatenBy(next))` is atomic, needs no
+  transaction, and its row count is the answer to "did it advance". The scoring queue paid for the
+  same lesson with `SELECT … FOR UPDATE`; this is the cheaper shape when the decision is expressible
+  as a predicate.
+- **A status is a summary; a timestamp is a fact.** The same receipt ordering that must not move
+  `messages.status` backwards must still write `delivered_at`: a `delivered` receipt that arrives
+  after `read` means the message *was* delivered at 11:02, and skipping the stamp because the
+  summary had been overtaken left the column null on a message everybody could see was delivered.
+  Two writes, one unconditional and one conditional.
+- **A row with two presenters is a row whose two readings diverge.** The thread's message list and
+  the send endpoint's own answer were two inline mappings of `messages`, and only the second carried
+  `sendAttempts` — so "tried twice" was true in the database, true in the send's response and absent
+  from the list the screen renders. Found by asserting the HTTP list rather than the row.
+  `whatsapp-presenters.ts` is the one mapping both use, in its own file because an import between
+  two Nest services is the ESM cycle that is a `ReferenceError` at boot.
+- **`text(form, 'field')` answers `undefined` for a field the form does not have**, and a branch
+  written for `null` or `''` takes the wrong side. The composer's template picker is absent entirely
+  when a workspace has no approved template, so `templateId === null || templateId === ''` chose the
+  **template** branch with no template and the API rightly refused it — a Send button that did
+  nothing but print "some details need correcting". Normalise with `?? ''` before branching.
+- **WhatsApp's profile name is a display name, not a first name.** Storing "Asha Rao" in
+  `first_name` makes every template greet her "Hello Asha Rao" — invisible until a template
+  renders, because the lead list shows the full name either way. Split on the first space, which is
+  as much as a display name can honestly be read for.
+- **`@leados/shared` is one barrel, so a generic type name is a collision.** A second
+  `TemplateStatus` (the WhatsApp one, beside `industry-templates.ts`'s) turns the whole package into
+  a `TS2308` whose message names neither file's author. Prefix a vocabulary that is one provider's
+  (`WHATSAPP_TEMPLATE_STATUSES`).
+- **A notification type that must not be held needs `respectsQuietHours: false`, and the reason
+  written beside it.** A WhatsApp reply that failed at 23:00 and is not noticed until 07:00 is eight
+  hours of a customer waiting for an answer that never came — the cost of holding it is paid by
+  somebody who is not the person being spared the ping. It is the only work notification in this
+  product with that flag, which is why it says so in the registry.
 - **A `message` key returned inside a handler's payload is not the envelope's `message`.** Three
   assertions read `body.message` and got `undefined`, because the envelope only lifts what
   `withMessage()` sets. The public lead API's family of endpoints deliberately carries its sentence

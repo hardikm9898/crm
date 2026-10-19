@@ -946,3 +946,44 @@ word somebody wrote and nothing by a word nobody did, the connected number print
 callback URL beside it, a default agent saved with the select still showing them, the lead's timeline
 reading "messaged on WhatsApp" rather than `whatsapp.received`, and both screens at 375 px with
 **0 px** of sideways scroll.
+
+### 10.14 As built — Phase 5, step 2 (the composer, and the templates behind it)
+
+The inbox gained a composer and the settings gained `/settings/whatsapp/templates`. What the
+composer is, exactly: **the API's own decision, rendered**. Inside the 24-hour window there is a
+text box; outside it the box is disabled, the API's sentence says why, and the template picker is
+the only way through. The function that greys the box is the function that would refuse the
+send — `sendingAllowed` in `@leados/shared`, mirrored in `lib/whatsapp.ts` and reconciled by a
+spec — so "the button was enabled and the send was refused" cannot happen.
+
+Four more decisions:
+
+- **A queued message appears in the thread immediately**, reading "On its way", and its standing
+  advances under it as Meta's receipts arrive. A chat whose message appears only once the provider
+  has accepted it makes the agent wonder whether they pressed the button.
+- **A refused message carries WhatsApp's own sentence and a "try again" on its own row**, not a
+  toast and not a banner at the bottom: the thing somebody wants to retry is the thing they are
+  looking at. The retry writes to the **same** row, because a second one would read as the customer
+  having been messaged twice.
+- **The template picker shows what this person will read.** Each option's preview is resolved
+  against the conversation's own lead through `GET /whatsapp/templates/{id}/preview`, and a variable
+  the record cannot fill becomes a box the agent can type into — the difference between a template
+  that can be sent and one that is stuck.
+- **The template editor's variable boxes appear as the body is typed.** `{{1}}` in the message
+  produces a row with a picker of the fields this workspace can fill it from, because a variable
+  with nothing behind it is a template that looks complete, passes Meta's review, and then refuses
+  at send time in front of somebody mid-conversation.
+
+The three new activity types gained describers — "Answered on WhatsApp: …", "Sent an approved
+WhatsApp template: …", "WhatsApp did not deliver this message — …" — and `whatsapp.read` is
+deliberately **not** one: a timeline with four rows per message is a timeline a business owner
+scrolls past, and the status is on the message in the thread.
+
+**One suite, 23 checks**, all green: the text box offered and enabled inside the window, a reply
+appearing in the thread and reading as accepted rather than as a code, a variable box appearing as
+the body is typed, a draft saved and listed with its standing in words, submitted and then approved
+by the sync, the text box **disabled** once the window has closed with the API's sentence beside it,
+the picker resolving the lead's own name into the preview, a template reaching somebody outside the
+window, a refusal showing WhatsApp's words with a retry beside it that clears the failure, the
+lead's timeline reading "Answered on WhatsApp" rather than `whatsapp.sent`, and both screens at
+375 px with **0 px** of sideways scroll.

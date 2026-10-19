@@ -1,10 +1,9 @@
-# `whatsapp` — a connected number, and the messages it receives
+# `whatsapp` — a connected number, the messages it receives, and the replies it sends
 
-Phase 5 step 1. The inbound half of WhatsApp: a WABA and its numbers, the deliveries Meta posts, and
-the conversations, messages, leads and timeline entries they become. Sending, templates, media and
-the shared inbox's own machinery (assignment, the ownership lock, transfer, notes, canned replies)
-are later steps and are deliberately absent — a route that accepted a message nothing could deliver
-would be worse than its absence.
+Phase 5 steps 1 and 2. A WABA and its numbers, the deliveries Meta posts, the conversations,
+messages, leads and timeline entries they become — and the replies, templates and status receipts
+that go the other way. Media and the shared inbox's own machinery (assignment, the ownership lock,
+transfer, notes, canned replies) are later steps and are deliberately absent.
 
 The credential is **not** here. It belongs to the integration framework next door, which stores it,
 rotates it, probes it and owns the door Meta posts to (`POST /wh/whatsapp_cloud/{connectionId}`).
@@ -19,6 +18,14 @@ This module is what a WhatsApp delivery becomes once that door has verified it.
 | `conversations.service.ts` | The inbox, read: the list, one conversation with its lead context, its messages, mark-read, search. |
 | `whatsapp-accounts.service.ts` | Connecting a WABA, discovering its numbers, and who answers each. |
 | `whatsapp.controller.ts` | `/conversations` behind `conversation:read`; `/whatsapp/*` behind `whatsapp:manage`. |
+| `whatsapp-send.service.ts` | Sending: the window rule, the template's variables, and the row written before the send. |
+| `whatsapp-send.processor.ts` | `whatsapp.send-message`, and the sweep that re-queues one a worker never sent. |
+| `whatsapp-status.service.ts` | What Meta says became of a message: the summary, the history, and the shout. |
+| `whatsapp-status.processor.ts` | `whatsapp.ingest-status` and `whatsapp.sync-templates`. |
+| `whatsapp-templates.service.ts` | Templates: authored here, reviewed by Meta, reconciled by a sweep. |
+| `whatsapp-rate-limiter.service.ts` | One second's worth of sends per number, in Redis. |
+| `whatsapp-presenters.ts` | The one presenter every screen reads a message through. |
+| `whatsapp-ids.ts` | A stable timeline event id from a provider's own id, in its own file to break a cycle. |
 | `whatsapp.dto.ts` | The request shapes, and the one schema that makes "nobody by default" expressible. |
 
 The adapter (`../integrations/adapters/whatsapp-cloud.adapter.ts`) and the registry entry
@@ -73,10 +80,29 @@ registry reconciliation that `inboundVerification` goes through.
 sentence the screen shows ("Sent a photo") is computed by `describeMessagePreview`. `[image]` in the
 body column would be indistinguishable from somebody typing it, and would be indexed as if they had.
 
+## Sending, in five sentences (step 2)
+
+**The row is written before the send, and the send is a job**, so a message somebody typed is never
+lost to a provider timeout and per-number rate limiting is possible at all
+([ADR-0037](../../../../../docs/decisions/ADR-0037-a-send-is-a-queued-write-whose-status-only-moves-forward.md)).
+**One function owns the window**: `sendingAllowed` is called by the write path and by the composer,
+so the screen cannot offer what the API would refuse. **`accepted` is not `sent`** — Meta taking the
+message means it is queued at Meta. **The status is a summary that only moves forward, through a
+conditional `UPDATE`**, because the receipt jobs run at the queue's concurrency and three receipts
+for one message arrive together; every receipt still writes its own timestamp and its own
+`message_status_events` row. **A failure is said three times** — on the message with a retry beside
+it, on the lead's timeline, and to whoever sent it, as the one work notification quiet hours do not
+hold.
+
+Templates are **authored here, reviewed by Meta and reconciled by a sweep**, never remembered: a
+draft is editable, anything Meta has seen is not (Meta has no edit), and a template Meta holds that
+this workspace has never seen is adopted rather than hidden.
+
 ## What is unbuilt, said plainly
 
-Sending (`POST /conversations/{id}/messages`), templates, media download, the opt-out keyword, usage
-metering, the ownership lock, transfer, close/reopen, notes, mentions, canned replies and realtime.
-`conversations.lock_user_id`, `lock_expires_at`, `priority`, `snoozed_until`, `first_response_at` and
-`customer_id` are columns with no writer yet, which is said here because a column with no writer is
-otherwise indistinguishable from a feature somebody forgot.
+Media download, the opt-out keyword (`FR-WA-10`), usage metering, bulk sending, the ownership lock,
+transfer, close/reopen, notes, mentions, canned replies and realtime.
+`conversations.lock_user_id`, `lock_expires_at`, `priority` and `snoozed_until` are columns with no
+writer yet, which is said here because a column with no writer is otherwise indistinguishable from a
+feature somebody forgot. `first_response_at` **is** written now, from the `sent` receipt rather than
+from the queueing — a figure about the business's answer must not be flattered by the queue.

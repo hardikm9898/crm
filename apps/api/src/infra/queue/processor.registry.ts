@@ -51,6 +51,14 @@ import {
   WebhookRetrySweepProcessor,
 } from '../../modules/webhooks/webhooks.processor.js';
 import { WhatsAppIngestMessageProcessor } from '../../modules/whatsapp/whatsapp.processor.js';
+import {
+  WhatsAppIngestStatusProcessor,
+  WhatsAppSyncTemplatesProcessor,
+} from '../../modules/whatsapp/whatsapp-status.processor.js';
+import {
+  WhatsAppSendMessageProcessor,
+  WhatsAppSendRetryProcessor,
+} from '../../modules/whatsapp/whatsapp-send.processor.js';
 import type { JobProcessor } from './job-processor.js';
 
 /**
@@ -107,6 +115,10 @@ export const PROCESSOR_TYPES: readonly Type<JobProcessor>[] = [
   IntegrationRetrySweepProcessor,
   // whatsapp
   WhatsAppIngestMessageProcessor,
+  WhatsAppIngestStatusProcessor,
+  WhatsAppSendMessageProcessor,
+  WhatsAppSendRetryProcessor,
+  WhatsAppSyncTemplatesProcessor,
   // outbound webhooks
   WebhookFanoutProcessor,
   WebhookDeliverProcessor,

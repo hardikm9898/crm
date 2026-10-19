@@ -11,6 +11,7 @@ import type { Logger } from 'pino';
 import { DataScopeService, applyScopeFilter } from '../../infra/authz/data-scope.service.js';
 import { DbService } from '../../infra/db/db.service.js';
 import { LOGGER } from '../../infra/observability/logger.module.js';
+import { presentMessage } from './whatsapp-presenters.js';
 import type { ListConversationsQuery, ListMessagesQuery } from './whatsapp.dto.js';
 
 /**
@@ -188,21 +189,10 @@ export class ConversationsService {
     });
     const page = rows.slice(0, query.limit);
     return {
-      items: page.map((row) => ({
-        id: row.id,
-        direction: row.direction,
-        type: row.type,
-        body: row.body,
-        preview: describeMessagePreview(row.type as MessageType, row.body),
-        status: row.status,
-        errorCode: row.errorCode,
-        errorMessage: row.errorMessage,
-        providerMessageId: row.providerMessageId,
-        replyToProviderId: row.replyToProviderId,
-        sender: row.sender ? { id: row.sender.userId, name: row.sender.user.name } : null,
-        payload: row.payload,
-        createdAt: row.createdAt,
-      })),
+      // Through the one presenter both this and the send path use: two readings of one row are two
+      // readings that diverge, which is how `sendAttempts` came to be absent from the list the
+      // screen renders while being present everywhere else.
+      items: page.map((row) => presentMessage(row)),
       pagination: {
         limit: query.limit,
         nextCursor: rows.length > query.limit ? (page.at(-1)?.id ?? null) : null,

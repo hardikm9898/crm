@@ -244,6 +244,10 @@ describe('what a new member starts with', () => {
       // Phase 4 step 3: an endpoint the product stopped posting to. Like `trial.expired`, it
       // cannot be switched off — an integration disabled silently is one nobody can diagnose.
       'webhook.disabled',
+      // Phase 5 step 2: a WhatsApp reply WhatsApp refused. The only work notification that is
+      // **not** held for quiet hours — the cost of holding one is paid by a customer waiting for
+      // an answer that never came.
+      'whatsapp.send_failed',
     ].sort());
     for (const entry of settings.types) {
       // A switch with no sentence under it is a switch somebody turns off to find out what it does.

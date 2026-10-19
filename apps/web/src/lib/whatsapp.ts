@@ -142,6 +142,96 @@ export interface WhatsAppAccount {
   numbers: WhatsAppNumber[];
 }
 
+export const WHATSAPP_TEMPLATE_CATEGORIES = ['marketing', 'utility', 'authentication'] as const;
+export type WhatsAppTemplateCategory = (typeof WHATSAPP_TEMPLATE_CATEGORIES)[number];
+
+export const WHATSAPP_TEMPLATE_STATUSES = [
+  'draft',
+  'pending',
+  'approved',
+  'rejected',
+  'paused',
+  'disabled',
+] as const;
+export type WhatsAppTemplateStatus = (typeof WHATSAPP_TEMPLATE_STATUSES)[number];
+
+/** What a template's standing is called on the screen. Never the column's own word. */
+export const TEMPLATE_STATUS_LABELS: Readonly<Record<WhatsAppTemplateStatus, string>> = {
+  draft: 'Draft',
+  pending: 'With WhatsApp',
+  approved: 'Approved',
+  rejected: 'Rejected',
+  paused: 'Paused by WhatsApp',
+  disabled: 'Disabled by WhatsApp',
+};
+
+export const TEMPLATE_STATUS_TONES: Readonly<
+  Record<WhatsAppTemplateStatus, 'neutral' | 'success' | 'warning' | 'danger'>
+> = {
+  draft: 'neutral',
+  pending: 'warning',
+  approved: 'success',
+  rejected: 'danger',
+  paused: 'warning',
+  disabled: 'danger',
+};
+
+export const TEMPLATE_CATEGORY_LABELS: Readonly<Record<WhatsAppTemplateCategory, string>> = {
+  marketing: 'Marketing — needs their consent',
+  utility: 'Utility — about something they asked for',
+  authentication: 'Authentication — a code or a sign-in',
+};
+
+export interface TemplateComponents {
+  header?: string;
+  body: string;
+  footer?: string;
+  buttons?: string[];
+}
+
+export interface WhatsAppTemplate {
+  id: string;
+  accountId: string;
+  name: string;
+  language: string;
+  category: WhatsAppTemplateCategory;
+  status: WhatsAppTemplateStatus;
+  rejectionReason: string | null;
+  components: TemplateComponents;
+  variableMap: Record<string, string>;
+  providerTemplateId: string | null;
+  submittedAt: string | null;
+  syncedAt: string | null;
+  createdAt: string;
+  /** Both, for the same reason the window is: one greys a button, the other is read. */
+  sendable: boolean;
+  blockedReason: string | null;
+  /** The body with its placeholders still in it, for a list to show at a glance. */
+  preview: string;
+}
+
+/** Where a template's variables may be filled from. Declared, so the picker is not a text box. */
+export const TEMPLATE_VARIABLE_SOURCES = [
+  { key: 'lead.fullName', label: 'Their full name' },
+  { key: 'lead.firstName', label: 'Their first name' },
+  { key: 'lead.phone', label: 'Their phone number' },
+  { key: 'lead.email', label: 'Their email address' },
+  { key: 'lead.city', label: 'Their city' },
+  { key: 'lead.status', label: 'Their status in this workspace' },
+  { key: 'lead.owner', label: 'Whoever owns the lead' },
+  { key: 'organization.name', label: 'This workspace’s name' },
+] as const;
+
+/** The `{{1}}`, `{{2}}` … a body asks for, in order and without repeats. */
+export function templateVariables(text: string): number[] {
+  const found = new Set<number>();
+  for (const match of text.matchAll(/\{\{\s*(\d+)\s*\}\}/g)) {
+    const index = Number(match[1]);
+    if (Number.isInteger(index) && index > 0) found.add(index);
+  }
+  return [...found].sort((left, right) => left - right);
+}
+
 /** A page of conversations, with the whole filter's totals rather than the page's. */
 export async function loadConversations(
   query: string,
@@ -266,4 +356,65 @@ export function messageStanding(message: ConversationMessage): string | null {
     return message.errorMessage ?? STATUS_WORDS.failed;
   }
   return STATUS_WORDS[message.status] ?? null;
+}
+
+/**
+ * The templates this workspace has.
+ *
+ * Throwing, with no swallowing twin: on a screen whose whole job is to list them, "none" is
+ * information somebody acts on, and a caught failure would tell a workspace with ten approved
+ * templates to go and write their first.
+ */
+export async function loadTemplates(
+  token: string | null,
+  query = '',
+): Promise<{ items: WhatsAppTemplate[]; approved: number }> {
+  const response = await request<WhatsAppTemplate[]>(`/whatsapp/templates${query}`, { token });
+  const meta = response.meta as { approved?: number } | undefined;
+  return { items: response.data, approved: meta?.approved ?? 0 };
+}
+
+/**
+ * The ones a composer may actually offer.
+ *
+ * Swallowing, because this sits beside a conversation: an agent whose template list failed to load
+ * can still type a reply, and a thread that will not open because of it is worse.
+ */
+export async function loadSendableTemplates(token: string | null): Promise<WhatsAppTemplate[]> {
+  try {
+    // Twenty-five, because each one is previewed against this conversation's lead and a picker with
+    // more than that needs a search box rather than a longer list — which is a later step's
+    // problem, not a reason to make opening a conversation cost a hundred requests.
+    return (await loadTemplates(token, '?status=approved&limit=25')).items;
+  } catch {
+    return [];
+  }
+}
+
+export interface TemplatePreview {
+  text: string;
+  values: string[];
+  missing: string[];
+  blockedReason: string | null;
+}
+
+/** What this template will say to this person — the whole point of a preview. */
+export async function previewTemplate(
+  id: string,
+  leadId: string | null,
+  token: string | null,
+): Promise<TemplatePreview | null> {
+  try {
+    const query = leadId === null ? '' : `?leadId=${leadId}`;
+    return (await request<TemplatePreview>(`/whatsapp/templates/${id}/preview${query}`, { token }))
+      .data;
+  } catch {
+    // A preview that cannot be rendered must not stop the screen it sits on.
+    return null;
+  }
+}
+
+/** Whether this message is one an agent can do something about. */
+export function needsAttention(message: ConversationMessage): boolean {
+  return message.direction === 'outbound' && message.status === 'failed';
 }

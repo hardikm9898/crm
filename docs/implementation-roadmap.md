@@ -2552,6 +2552,99 @@ does not update until somebody reloads it. And the p95 exit criterion is unmeasu
 100 k-message fixture yet, so the inbox's performance is untested at scale and the index set behind
 it is a prediction rather than a measurement.
 
+### Step 2 — sending: the window, the template, and a failure nobody can miss ✅ _(landed 2026-10-19)_
+
+Phase 5's **second and fourth exit criteria**, in their own words: "Out-of-window free-form send is
+blocked with a clear reason; template send succeeds" and "A failed send shows the provider reason to
+the agent and appears on the timeline; nothing fails silently."
+
+**The window is one function, called twice.** `sendingAllowed({ windowExpiresAt, kind })` decides
+the write path's refusal **and** whether the composer renders a text box at all. That is the whole
+design: a screen that computes its own answer is how "the button was enabled and the send was
+refused" happens, and the refusal names the way through ("only an approved template can reach them
+now") rather than only saying no.
+
+**The row is written before the send, and the send is a job**
+([ADR-0037](./decisions/ADR-0037-a-send-is-a-queued-write-whose-status-only-moves-forward.md)). A
+message somebody typed is never lost to a provider timeout; it exists as `queued` the moment they
+press send, appears in the thread immediately, and advances under itself. `accepted` is **not**
+`sent`: Meta taking the message means it is queued at Meta, and writing `sent` on acceptance would
+make every message look delivered to an agent whose customer has a flat battery.
+
+**The status is a summary that only moves forward; the timestamps are facts.** Meta's receipts
+arrive out of order — `read` before `delivered` is routine — so `messages.status` moves only when
+the new status is further along, and it moves through a **conditional `UPDATE … WHERE status IN
+(…)`** rather than a read, a decision and a write: the receipt jobs run at the queue's concurrency
+and three receipts for one message arrive together, which the read-then-write version lost about one
+time in three. Every receipt still writes its own timestamp column and its own
+`message_status_events` row, because "it says delivered and she never got it" is answerable only if
+the instants are kept.
+
+**A failure is said three times.** Meta's own sentence on the message in the thread with a "try
+again" beside it, an entry on the lead's timeline, and a notification to whoever sent it — the only
+work notification in this product that quiet hours do **not** hold, because the cost of holding it
+is paid by a customer waiting for an answer. A retryable failure (a 429, a 5xx) is not a failure at
+all: the message stays `queued` with the attempt counted, and a two-minute sweep re-queues anything
+a worker never handed over.
+
+**Templates are authored here, reviewed by Meta and reconciled by a sweep.** A draft is editable;
+anything Meta has seen is not, because Meta has no edit and a local copy that disagrees with what is
+sent is the quiet divergence this codebase keeps paying for. The variable map is validated when it
+is **saved** — a map naming a field nothing can fill is a template that looks complete and refuses
+mid-conversation — and the preview resolves against a real lead, because a preview reading `{{1}}`
+proves nothing. A template Meta holds that this workspace has never seen is **adopted** rather than
+hidden: a template they can send is one the picker should offer.
+
+**Marketing is the one category consent governs.** A `utility` message is something the customer
+asked for, and refusing a delivery notification because nobody ticked a marketing box would be the
+wrong rule in the other direction.
+
+**Two screens** (`frontend-architecture.md` §10.14): the inbox's composer — text box inside the
+window, template picker outside it, each option previewed against this lead, a variable the record
+cannot fill becoming a box the agent types into — and `/settings/whatsapp/templates`, where the
+variable rows appear as the body is typed and each row carries WhatsApp's standing and its reason.
+
+**Verified.** **2 609 tests green** — 1 141 unit (631 shared, 338 web, 168 api, 4 db) and 1 468 integration
+(826 api e2e, 642 across the schema-object and tenant-isolation suites) — with **69 new**:
+
+- **14 in `@leados/shared`**, over the window rule, the template validator (a name, a language and
+  a variable gap Meta would refuse hours later), the renderer that refuses a blank rather than
+  sending "Hi  ,", the status ordering, and the `statusesBeatenBy` list that makes the ordering an
+  atomic `UPDATE`.
+- **8 on the web side**, reconciling the template vocabulary with the API's and covering the four
+  describers — including the one that reads WhatsApp's own reason for a refusal in red.
+- **25 api e2e** in a new suite against a real in-process Graph API: the window refusing free text
+  and accepting a template, three receipts arriving out of order, a redelivered receipt that is one
+  row, a template submitted and then approved by the sync, a preview resolved against the lead, a
+  marketing template refused for want of consent, a failed send carrying Meta's sentence to the
+  message, the timeline and a notification, a retry that goes through on the same row, a 429 that
+  leaves the message queued, the per-number limiter refusing and recovering, and the sweep that
+  re-queues a message a worker never sent.
+- **22 schema-object and tenant-isolation cases** over the two new tables and the two new columns:
+  the name and language shapes (including the 300-character name the `{3,512}` regex could not
+  express), the three `CASE` constraints with the honest state each mirror would have forbidden,
+  one receipt per message **and** status, and four composite FKs refusing another workspace's
+  template, account or message.
+
+Then **32 HTTP checks** against a live API, **worker** and scheduler with a fake Graph API on
+another port — the whole path through a real queue hop — and **23 browser checks** in Chromium
+across the composer, the templates screen and a phone-width viewport.
+
+Two of those failures were only visible over real HTTP: the status race (the e2e drives the jobs one
+after another, and a worker does not) and `sendAttempts` missing from the list the screen renders
+while being present in the send's own answer.
+
+**Carried forward, named rather than assumed:** **media** is still unbuilt in both directions, and
+with it `message_media` and the download job — an inbound image keeps its payload and a caption and
+nothing else. The **opt-out keyword** (`FR-WA-10`) and bulk sending are the next step's, so consent
+is checked at send time but a `STOP` from a customer does nothing yet. **Usage metering**
+(`FR-BIL-4`) has no meter: `messages.billable` and `conversation_category` are written from Meta's
+receipts and nothing reads them. Rate limiting is a **floor we keep, not a limit we discover** —
+Meta's real ceiling depends on the number's messaging tier and is not readable from the API — and
+`WHATSAPP_SENDS_PER_SECOND` therefore defaults to ten, far under every tier. The inbox still has
+**no realtime**: a reply appears because the server action re-renders the page, and a colleague's
+reply appears when somebody reloads. And the p95-with-100 k-messages criterion is still unmeasured.
+
 ---
 
 ## Phase 6 — Automation
@@ -2707,43 +2800,41 @@ partially landed, with the specific gaps named.
 ## Immediate next step
 
 _This section names the next step only; what each landed step actually did is in the step entries
-above. Last reviewed 2026-10-19, after Phase 5 step 1._
+above. Last reviewed 2026-10-19, after Phase 5 step 2._
 
-**Phase 4 is finished and all six of its exit criteria are met** — the table that recorded where
-each one is tested is in its own section above, step by step. Phase 5 has begun: step 1 built the
-inbound half of WhatsApp, and of the phase's seven exit criteria **one and a half** are now met:
+**Phase 4 is finished and all six of its exit criteria are met** — the table recording where each
+one is tested is in its own section above. **Phase 5 is two steps in**, and of its eight exit
+criteria **four** are now met:
 
 | Exit criterion                                                               | Status                                                            |
 | ---------------------------------------------------------------------------- | ----------------------------------------------------------------- |
 | A retried delivery ⇒ one message, one activity, one automation trigger        | **Message and activity: done** (`whatsapp.e2e-spec.ts`). No automation exists to trigger until Phase 6. |
-| Conversation events on the lead timeline                                      | **Done** — `whatsapp.received`, with a describer, asserted as a sentence rather than a type. |
-| Out-of-window free-form send blocked; template send succeeds                  | Not started — nothing sends.                                       |
+| Conversation events on the lead timeline                                      | **Done** — `whatsapp.received`, `whatsapp.sent`, `whatsapp.template_sent`, `whatsapp.failed`, each with a describer. |
+| Out-of-window free-form send blocked; template send succeeds                  | **Done** — `whatsapp-sending.e2e-spec.ts`, and the browser check that finds the text box disabled. |
+| A failed send shows the provider's reason and reaches the timeline            | **Done** — on the message, on the timeline, and as a notification quiet hours do not hold. |
 | Two agents see the ownership lock; transfer is audited                        | Not started — the columns exist with no writer.                    |
-| A failed send shows the provider's reason and reaches the timeline            | Not started.                                                       |
 | Media round-trip with type/size validation and signed-URL delivery            | Not started — an inbound image keeps its payload and nothing else. |
-| Opt-out keyword suppresses marketing sends immediately                        | Not started.                                                       |
+| Opt-out keyword suppresses marketing sends immediately                        | Not started — consent is checked at send time; a `STOP` does nothing yet. |
 | Inbox p95 < 500 ms with 100 k messages                                       | **Unmeasured** — there is no message fixture at that size yet.      |
 
-**The next step is Phase 5 step 2 — sending**: `POST /conversations/{id}/messages`, the per-number
-outbound queue, the 24-hour window enforced on the write path, the status webhook advancing
-`sent → delivered → read`, and a failure that reaches the agent and the timeline with Meta's own
-reason. Four things from step 1 decide how it starts:
+**The next step is Phase 5 step 3 — media, and the shared inbox's own machinery**: the inbound
+download to object storage with type and size validation, outbound upload, signed-URL delivery, and
+then assignment, the ownership lock, transfer, close/reopen, notes and @mentions. Four things from
+step 2 decide how it starts:
 
-- **The window's arithmetic already exists and is already enforced on reads.**
-  `windowIsOpen`/`describeWindow` in `@leados/shared` and `conversations.window_expires_at` are
-  written from the customer's own `sent_at`, deliberately conservative, so the send path has one
-  definition to call rather than one to write.
-- **A status receipt is already acknowledged and dropped.** `parseDelivery` returns no events for a
-  `statuses` delivery and the door answers 200, which is right while nothing sends — and step 2 has
-  to turn exactly that payload into `message_status_events` and the `sent → delivered → read`
-  transitions. The `deliveryShape` branch is where that becomes visible.
-- **`messages` is partitioned and its unique is partial on `provider_message_id`**, so an outbound
-  row exists before Meta gives it an id and gains one when Meta accepts it. That is what the partial
-  index is for, and the one thing a send path must not do is invent an id to fill it.
-- **Media is the first thing in this product that needs a file from somebody else.** The storage
-  port takes a `Buffer`, which is why exports are capped at 100 k rows; an inbound image is the
-  point at which streaming into storage stops being a Phase 12 nicety — named here because it is a
-  port change, not a feature.
+- **The storage port takes a `Buffer`**, which is why exports are capped at 100 000 rows. An inbound
+  image is the point at which streaming an object into storage stops being a Phase 12 nicety: it is
+  a port change, named here because it is not a feature to be written around.
+- **`message_media` is the one sketched table the inbound path already needs**, and its parent is
+  partitioned — so it carries `message_created_at` beside `message_id`, as `message_status_events`
+  now does.
+- **The ownership lock has its columns and no writer** (`lock_user_id`, `lock_expires_at`), which is
+  deliberate: a soft lock whose expiry nothing sweeps is a conversation nobody can answer, so the
+  sweep arrives with the lock rather than after it.
+- **Realtime is still absent and still not needed for a lock to be honest.** Two agents on one
+  conversation see each other through a re-read, not a socket; `FR-WA-7`'s "typing/read state" is
+  the first thing in this product that genuinely needs a push channel, and it should arrive as its
+  own decision rather than as a side effect of the lock.
 
 Carried forward from Phase 4, still true: `sync_cursors` is built and has **no user** (the ads
 insight pulls are Phase 9); `integration_health_checks` and `provider_events` are pruned by nothing
