@@ -13,6 +13,7 @@ import { MfaService } from '../application/mfa.service.js';
 import { PasswordService } from '../application/password.service.js';
 import { SessionService } from '../application/session.service.js';
 import { Public } from '../guards/public.decorator.js';
+import { SessionOnly } from '../guards/session-only.decorator.js';
 import { NoPermissionRequired } from '../../../infra/authz/permission.decorator.js';
 import {
   CurrentSession,
@@ -44,6 +45,7 @@ import {
  */
 const REFRESH_COOKIE = 'leados_rt';
 
+@SessionOnly()
 @Controller('auth')
 export class AuthController {
   constructor(

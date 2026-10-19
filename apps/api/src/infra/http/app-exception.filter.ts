@@ -11,6 +11,7 @@ import { CrossTenantAccessError, Prisma } from '@leados/db';
 import { TenantContextMissingError } from '@leados/shared';
 import type { Logger } from 'pino';
 import { requestStore } from './request-store.js';
+import { markErrorCode } from '../../modules/api-keys/api-log.hook.js';
 
 /**
  * Maps every thrown value onto the API's error contract
@@ -29,6 +30,11 @@ export class AppExceptionFilter implements ExceptionFilter {
     const reply = host.switchToHttp().getResponse<FastifyReply>();
     const request = requestStore.get();
     const mapped = this.map(exception);
+
+    // The request log reads this back in Fastify's `onResponse` hook: the status alone cannot say
+    // *why* a call was refused, and this filter is the only thing that knows the code it answered
+    // with. Set on the Fastify request because the async context the hook runs in is not this one.
+    markErrorCode(host.switchToHttp().getRequest(), mapped.code);
 
     const logPayload = {
       requestId: request?.requestId,

@@ -4,6 +4,7 @@ import { AppError } from '@leados/shared';
 import { Public } from '../auth/guards/public.decorator.js';
 import type { WithRawBody } from '../../infra/http/empty-json-body.js';
 import { zodBody } from '../../infra/http/zod-validation.pipe.js';
+import { markApiRequest } from '../api-keys/api-log.hook.js';
 import { IngestAuthService } from './ingest-auth.service.js';
 import { IngestionService } from './ingestion.service.js';
 import { publicLeadSchema, type PublicLeadInput } from './ingestion.dto.js';
@@ -63,6 +64,17 @@ export class PublicIngestController {
       signatureHeader: signature,
       rawBody,
       ip: request.ip,
+    });
+
+    // Both surfaces write to one request log, so an integrator reads "my capture was refused and
+    // then my dashboard poll was rate limited" as one story rather than in two places. Marked
+    // after authentication because that is when the workspace is known; a refusal before it has no
+    // workspace to file a row under (`api_logs` keeps `organization_id` NOT NULL, ADR-0030).
+    markApiRequest(request, {
+      organizationId: caller.organizationId,
+      apiKeyId: caller.apiKeyRowId,
+      surface: 'public_ingest',
+      ip: request.ip ?? null,
     });
 
     const result = await this.ingestion.capture(caller, body as PublicLeadInput, {

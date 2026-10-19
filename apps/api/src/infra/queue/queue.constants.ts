@@ -77,6 +77,12 @@ export const JOBS = {
    */
   IDEMPOTENCY_PRUNE: 'maintenance.idempotency-prune',
   /**
+   * `api_logs`, kept a week ahead and pruned at thirty days (`FR-SA-4`). Its own job rather than a
+   * fourth table in the monthly sweep, because these partitions are **days** and this is the only
+   * one of them that deletes.
+   */
+  API_LOG_PARTITIONS: 'maintenance.api-log-partitions',
+  /**
    * One event, fanned out to the endpoints that asked for it (`FR-API-4`). Reads the subscribed
    * endpoints and writes a `webhook_deliveries` row per endpoint — the store that makes a delivery
    * survive a worker restart, exactly as `inbound_payloads` does inbound.

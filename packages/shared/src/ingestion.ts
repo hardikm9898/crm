@@ -52,14 +52,14 @@ export const INGESTION_STAGES = [
 export type IngestionStage = (typeof INGESTION_STAGES)[number];
 
 /**
- * What a key may do.
+ * What a key may do: see `api-surface.ts`.
  *
- * Deliberately two, both of which this step actually uses: writing a capture, and reading back what
- * the key itself has sent. The authenticated REST surface (`FR-API-1`) arrives with its own step and
- * will add the scopes it needs; inventing them now would be a list nothing enforces.
+ * This file owned `API_KEY_SCOPES` while the ingestion endpoint was the only surface a key could
+ * reach. Step 4 gave keys the authenticated REST surface as well, where a scope is a **permission
+ * key** enforced by the guard every route already declares — so the list and its grammar moved next
+ * to the credential parser that reads them, and `INGESTION_SCOPES` there are the two this file's
+ * endpoint checks.
  */
-export const API_KEY_SCOPES = ['ingest:write', 'ingest:read'] as const;
-export type ApiKeyScope = (typeof API_KEY_SCOPES)[number];
 
 /** How long a signed request stays valid. Five minutes each way, the usual webhook tolerance. */
 export const SIGNATURE_TOLERANCE_SECONDS = 300;

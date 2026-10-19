@@ -3,13 +3,15 @@
 import { useActionState } from 'react';
 import { IDLE, type ActionState } from '@/lib/action-state';
 import { Badge, Button, ErrorNotice, Field, controlClassName } from '@/components/ui';
+import { describeKeyUse, keyStanding, type ApiKeyRecord } from '@/lib/ingestion';
 import {
-  API_KEY_SCOPES,
+  SCOPE_GROUPS,
   SCOPE_LABELS,
-  describeKeyUse,
-  keyStanding,
-  type ApiKeyRecord,
-} from '@/lib/ingestion';
+  WITHHELD_FROM_KEYS,
+  describeKeyUsage,
+  type ApiKeyScope,
+  type ApiKeyUsage,
+} from '@/lib/api-surface';
 import { createApiKey, revokeApiKey, rotateApiKey, updateApiKey } from '../actions';
 
 function errorOf(state: ActionState, key: string): string | undefined {
@@ -55,7 +57,64 @@ function ShownOnceSecret({ keyId, secret, name }: { keyId: string; secret: strin
   );
 }
 
-export function NewApiKeyForm() {
+/**
+ * The scope picker.
+ *
+ * It offers only the scopes **this** person holds, which is the same rule the one-click custom
+ * field follows: a tick box that is certain to be refused is worse than one that is not there, and
+ * the API refuses a key a permission its creator does not have. What is missing is explained in a
+ * sentence underneath rather than left as an absence somebody has to notice.
+ */
+function ScopePicker({
+  grantable,
+  granted,
+  error,
+}: {
+  grantable: readonly ApiKeyScope[];
+  granted: readonly string[];
+  error?: string;
+}) {
+  const offered = new Set(grantable);
+  return (
+    <fieldset className="flex flex-col gap-3" data-scope-picker>
+      <legend className="text-sm font-medium">What may it do?</legend>
+      {SCOPE_GROUPS.map((group) => {
+        const scopes = group.scopes.filter((scope) => offered.has(scope));
+        if (scopes.length === 0) return null;
+        return (
+          <div key={group.label} className="flex flex-col gap-1">
+            <p className="text-xs font-medium" data-scope-group={group.label}>
+              {group.label}
+            </p>
+            <p className="text-xs text-[var(--color-text-muted)]">{group.hint}</p>
+            {scopes.map((scope) => (
+              <label key={scope} className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  name="scopes"
+                  value={scope}
+                  defaultChecked={
+                    granted.length > 0 ? granted.includes(scope) : scope === 'ingest:write'
+                  }
+                />
+                <span>
+                  {SCOPE_LABELS[scope]}{' '}
+                  <code className="text-xs text-[var(--color-text-muted)]">{scope}</code>
+                </span>
+              </label>
+            ))}
+          </div>
+        );
+      })}
+      <p className="text-xs text-[var(--color-text-muted)]" data-scopes-withheld>
+        {WITHHELD_FROM_KEYS}
+      </p>
+      {error && <span className="text-xs text-[var(--color-danger)]">{error}</span>}
+    </fieldset>
+  );
+}
+
+export function NewApiKeyForm({ grantable }: { grantable: readonly ApiKeyScope[] }) {
   const [state, action, pending] = useActionState(createApiKey, IDLE);
   const granted =
     state.status === 'error' ? (state.values?.['scopes'] ?? '').split(',').filter(Boolean) : [];
@@ -84,27 +143,11 @@ export function NewApiKeyForm() {
         />
       </Field>
 
-      <fieldset className="flex flex-col gap-1.5">
-        <legend className="text-sm font-medium">What may it do?</legend>
-        {API_KEY_SCOPES.map((scope) => (
-          <label key={scope} className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              name="scopes"
-              value={scope}
-              defaultChecked={
-                granted.length > 0 ? granted.includes(scope) : scope === 'ingest:write'
-              }
-            />
-            <span>
-              {SCOPE_LABELS[scope]} <code className="text-xs text-[var(--color-text-muted)]">{scope}</code>
-            </span>
-          </label>
-        ))}
-        {errorOf(state, 'scopes') && (
-          <span className="text-xs text-[var(--color-danger)]">{errorOf(state, 'scopes')}</span>
-        )}
-      </fieldset>
+      <ScopePicker
+        grantable={grantable}
+        granted={granted}
+        {...(errorOf(state, 'scopes') ? { error: errorOf(state, 'scopes') } : {})}
+      />
 
       <Field
         label="Only from these addresses"
@@ -163,7 +206,7 @@ export function NewApiKeyForm() {
  * whose values live only in inputs is unreadable at a glance and unassertable by a browser check —
  * the lesson the payment-method rows paid for.
  */
-export function ApiKeyRow({ apiKey }: { apiKey: ApiKeyRecord }) {
+export function ApiKeyRow({ apiKey, usage }: { apiKey: ApiKeyRecord; usage?: ApiKeyUsage }) {
   const [rotateState, rotate, rotating] = useActionState(rotateApiKey, IDLE);
   const [revokeState, revoke, revoking] = useActionState(revokeApiKey, IDLE);
   const [editState, edit, editing] = useActionState(updateApiKey, IDLE);
@@ -186,6 +229,10 @@ export function ApiKeyRow({ apiKey }: { apiKey: ApiKeyRecord }) {
         </div>
         <Badge tone={standing.tone}>{standing.label}</Badge>
       </div>
+
+      <p className="text-xs text-[var(--color-text-muted)]" data-api-key-usage={apiKey.id}>
+        {describeKeyUsage(usage)}
+      </p>
 
       <p className="text-xs text-[var(--color-text-muted)]" data-api-key-scopes={apiKey.id}>
         {apiKey.scopes.join(', ')}

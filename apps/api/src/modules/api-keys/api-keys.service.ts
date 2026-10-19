@@ -3,8 +3,10 @@ import {
   AppError,
   generateApiKey,
   newId,
+  restPermissionsOf,
   tenantContext,
   type ApiKeyScope,
+  type TenantPrincipal,
 } from '@leados/shared';
 import { DbService } from '../../infra/db/db.service.js';
 import { AuditService } from '../../infra/audit/audit.service.js';
@@ -27,6 +29,13 @@ import type { CreateApiKeyInput, ListApiKeysQuery, UpdateApiKeyInput } from './a
  *  * **Rotation keeps the row.** A rotated key is the same key with a new secret: its usage history,
  *    its scopes and its allowlist survive, and only the credential changes. Replacing the row would
  *    make a rotation look like a revocation plus a new integration in every log.
+ *
+ * Step 4 added a fourth: **a key cannot be given a permission its creator does not hold.** Without
+ * that rule `api_key:manage` is an escalation to everything — mint a key with `lead:delete`, use
+ * it, and the permission system has been routed around with a button. The check here is the early,
+ * clear refusal; the enforcement that matters is at request time, where a key's permissions are
+ * the intersection of its scopes with its creator's **current** grants (`ApiKeyAuthService`), so a
+ * role taken away narrows every key that member made.
  */
 @Injectable()
 export class ApiKeysService {
@@ -59,6 +68,7 @@ export class ApiKeysService {
   /** Answers the pair **once**. Everything after this call can only see the public half. */
   async create(input: CreateApiKeyInput) {
     const principal = tenantContext.require('apiKeys.create');
+    this.assertGrantable(principal, input.scopes);
     const generated = generateApiKey();
     const id = newId();
 
@@ -106,6 +116,10 @@ export class ApiKeysService {
       throw AppError.businessRule(
         'That key has been revoked. Create a new one — a revoked key cannot be brought back, which is the point of revoking it.',
       );
+    }
+
+    if (input.scopes !== undefined) {
+      this.assertGrantable(tenantContext.require('apiKeys.update'), input.scopes);
     }
 
     await this.db.client.$transaction(async (tx) => {
@@ -189,6 +203,27 @@ export class ApiKeysService {
       });
     });
     return this.findOne(id);
+  }
+
+  /**
+   * Refuses a scope the person creating the key does not hold themselves.
+   *
+   * The `ingest:*` scopes are exempt: they are not permission keys, nothing in the catalogue
+   * describes them, and `api_key:manage` is already the permission that says who may let a program
+   * post leads into this workspace.
+   */
+  private assertGrantable(principal: TenantPrincipal, scopes: readonly string[]): void {
+    const beyond = restPermissionsOf(scopes).filter(
+      (permission) => !principal.permissions.has(permission),
+    );
+    if (beyond.length > 0) {
+      throw new AppError(
+        'PERMISSION_DENIED',
+        `You cannot give a key a permission you do not have yourself: ${beyond.join(', ')}. Ask somebody who holds it to create the key, or have your own role widened.`,
+        403,
+        { scopes: beyond },
+      );
+    }
   }
 
   private present(row: {

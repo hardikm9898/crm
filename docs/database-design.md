@@ -968,6 +968,44 @@ message search (`FR-VIEW-1`).
 > unbuilt; `inbound_payloads` is still the request log for the one public endpoint, and
 > `webhook_deliveries` is the equivalent for everything the product sends.
 
+> **Amendment, 2026-10-18 (implementation, Phase 4 step 4 — the key-authenticated REST surface).**
+> `api_logs` is built as specified above, with four changes
+> ([ADR-0032](./decisions/ADR-0032-a-key-acts-as-the-member-who-created-it.md)):
+>
+> - **`organization_id` is NOT NULL**, where §8 wrote `org?`, and that decides what the table does
+>   **not** hold: a request whose key id resolves to no workspace has no workspace to file it under,
+>   so it stays in the process log rather than becoming a row with a null — the same reasoning as
+>   `inbound_payloads`, and the same reason `email_messages` is a platform table instead. Every
+>   refusal a _real_ key earns is here, because the authenticator marks the request the moment the
+>   key resolves, before the allowlist, the rate limit, the secret and the scopes are checked.
+> - **It is partitioned by day, not by month**, which makes its primary key `(id, created_at)` and
+>   its per-workspace unique `(organization_id, id, created_at)`. Retention is thirty days, so a
+>   month-sized partition would be the whole table and "drop the oldest partition" would mean
+>   dropping everything or nothing. `ensure_api_log_partition` creates a day; a dated name
+>   (`api_logs_20261018`) is what lets `maintenance.api-log-partitions` decide from the catalogue
+>   rather than by reading rows, and `api_logs_default` cannot match that pattern, so the sweep
+>   cannot drop the partition that catches what nothing else would accept.
+> - **It gained `surface` and `error_code`, and did not gain a body.** `surface` says which door the
+>   request came through (`rest` or `public_ingest`), because both write here and an integrator
+>   reads "my capture was refused and then my dashboard poll was rate limited" as one story.
+>   `error_code` is the envelope's own code, which is the difference between "it was refused" and
+>   "here is what to change". What is deliberately absent is any request or response body **and the
+>   query string**: the filter DSL carries names, phone numbers and amounts, and this table is read
+>   by somebody holding `api_key:manage` rather than `lead:read`. `api_logs_path_is_a_path` refuses
+>   a value containing `?`, so "something other than `logPath` wrote this row" is unrepresentable.
+> - **Five CHECKs, and the last is one-directional.** The verb is one this API answers, the path is
+>   a path, the status is HTTP, the measurements are non-negative — and
+>   `api_logs_success_has_no_error_code` says only that an answer below 400 carried no code. The
+>   mirror ("every refusal has a code") reads just as sensibly and is **false**: a 404 from a path
+>   Fastify never routed has no envelope, so it has no code, and forbidding that honest state would
+>   make the writer lie. The same lesson as `webhook_deliveries_pending_is_untried`.
+>
+> `api_keys` is unchanged except in what its `scopes` column holds: the two `ingest:*` tokens, and
+> otherwise **permission keys** from `API_GRANTABLE_PERMISSIONS`. There is no new column for "what
+> this key may do across the product", because the permission catalogue already is that column's
+> vocabulary — and no column for whose authority it carries, because a key acts as
+> `created_by_id`'s member with that member's _current_ grants, resolved per request.
+
 ---
 
 ## 9. Automation

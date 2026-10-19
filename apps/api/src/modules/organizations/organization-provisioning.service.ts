@@ -59,6 +59,20 @@ export interface ProvisionResult {
   readonly trialEndsAt: Date | null;
 }
 
+/**
+ * Provisioning writes a whole workspace in one transaction — the organization, the owner's
+ * membership and role, every status, pipeline, stage, task type, outcome, score band, duplicate
+ * rule and working-hours row the product needs before anybody can do anything — and Prisma's
+ * interactive transactions time out after **five seconds**.
+ *
+ * A cold process answering its first registration took 5.04 s and the sign-up failed with a 500,
+ * having created nothing: exactly the shape of the capture-transaction defect, in the one place
+ * where the cost is a customer who cannot get in at all. The seed catalogue is not divisible — a
+ * workspace with half its statuses is worse than no workspace — so the honest fix is a timeout that
+ * matches the work, with the reason written beside it.
+ */
+const PROVISIONING_TRANSACTION = { timeout: 30_000, maxWait: 10_000 } as const;
+
 @Injectable()
 export class OrganizationProvisioningService {
   constructor(
@@ -229,7 +243,7 @@ export class OrganizationProvisioningService {
         );
 
         return resolvedOwnerRoleId;
-      }),
+      }, PROVISIONING_TRANSACTION),
     );
 
     return {

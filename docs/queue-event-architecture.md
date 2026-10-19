@@ -360,6 +360,23 @@ All schedules are working-hours/timezone aware where they touch humans — a fol
 > failure as mail and reminders and the reason both sweeps are per-minute. It runs platform-scoped
 > and enters each delivery's own tenant context to send.
 
+> **Amendment, 2026-10-18 (implementation, Phase 4 step 4).** `maintenance.api-log-partitions` is
+> new, daily at 02:13 — before the activity-partition job, because tomorrow's day partition has to
+> exist before midnight.
+>
+> It is a separate job from `maintenance.activity-partitions`, which already keeps three tables'
+> months ahead, and the cadence is why: `api_logs` is partitioned by **day**, and this is the only
+> partition job in the product that **deletes**. It keeps a week of days ahead (from yesterday, so a
+> row written as the clock crosses midnight has somewhere to go) and drops the day partitions wholly
+> older than the thirty-day retention window.
+>
+> A drop rather than a `DELETE`, which is the reason the table is partitioned by day at all:
+> `DELETE FROM api_logs WHERE created_at < …` on a busy workspace holds a lock for minutes and
+> leaves the space behind, while `DROP TABLE` on one day's partition is instant. The decision is
+> made from the catalogue — the partition's name carries its date — and `api_logs_default` cannot
+> match that pattern, so the sweep cannot drop the partition that catches rows nothing else would
+> accept. Stranded rows in the default partition are reported, as the monthly job reports them.
+
 ---
 
 ## 6. Retry, failure and DLQ

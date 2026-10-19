@@ -2024,6 +2024,109 @@ diff check, the integration framework and the two ad-platform connectors are the
 
 ---
 
+### Step 4 — the API a program can call, and the log that says what it did ✅ _(landed 2026-10-18)_
+
+`FR-API-1`, `FR-SA-4`. Steps 2 and 3 built one door in and one door out. This step makes the
+**whole product** reachable by a program: the same routes the web app calls, answered to a caller
+that sends a key instead of signing in, with a request log an integrator can debug from outside.
+
+**There is no second API, and that is the point.** `AuthGuard` accepts an access token **or**
+`Authorization: Bearer <key id>.<secret>`, told apart by the key id's `pk_` prefix — by shape, not
+by trying one and falling back to the other, so a mistyped key is refused as a bad key rather than
+as an expired session. Everything after the guard works from the `TenantPrincipal`: the permission
+guard, the data scope, the tenant-scoped client. A route added next year is reachable by an
+integration without a line of key-specific code, and no permission is checked twice in two places.
+
+**A key acts as the member who created it, narrowed to its scopes**
+([ADR-0032](./decisions/ADR-0032-a-key-acts-as-the-member-who-created-it.md)). Its creator's
+**current** grants are resolved on every request through `PrincipalService` — the path the import
+and export processors already take — and the key's permissions are the intersection, each at the
+data scope the creator holds. The two alternatives are both escalations performed with a button: an
+organization-wide scope would let a branch manager mint a credential that reads the whole workspace,
+and freezing the creator's grants into the row would leave a key working with permissions its
+creator lost months ago. The cost is stated rather than hidden: narrowing somebody's role narrows
+their keys, and deactivating them stops them, with a refusal that says which.
+
+**A key's scopes are permission keys**, from a curated list, and what the list leaves out is the
+decision: no key can manage roles, members, billing, other keys, webhooks, the workspace's identity
+or privacy requests, and none can export personal details. A key lives in a config file on somebody
+else's server. The creation-time check ("you cannot grant a permission you do not hold") is the
+early, clear error; the intersection at request time is the enforcement. And **nothing is signed on
+this surface** — the capture endpoint signs an HMAC because a capture is a replayable write and the
+_body_ is what must be bound; a signature that covers only the timestamp and the body would let a
+captured `GET` be replayed as a `DELETE`, so a signed REST surface needs a second construction every
+client library then implements by hand, for a property TLS already gives.
+
+**`api_logs`, specified since Phase 0, is built** — and partitioned by **day**, the first table here
+that is: retention is thirty days, so a month-sized partition would be the whole table and "drop the
+oldest" would mean dropping everything or nothing. One row per request a key made: method, path,
+status, error code, duration, bytes, request id, address. Five CHECKs, and the last is
+one-directional for the reason step 3 paid for — an answer below 400 carried no error code, while
+the mirror ("every refusal has one") is false, because a 404 from a path Fastify never routed has no
+envelope. The 15 spurious `DROP`s Prisma generated again
+were removed, and everything hand-written here is in the schema guard: the six constraints, the
+`PARTITION BY RANGE`, the default partition and `ensure_api_log_partition` — which the guard also
+calls twice, because the maintenance job, the harness and a backfill all call it without checking
+first.
+
+**It is the integration's log, not an access log**, and four things follow. No bodies and **no query
+string** (the filter DSL carries names and numbers, and this screen sits behind `api_key:manage`
+rather than `lead:read`); no session traffic (a hundred times the rows for the one caller that can
+already see everything); nothing for a key id that resolves to no workspace, because
+`organization_id` is NOT NULL and there would be nothing to file it under; and every refusal a
+_real_ key earns, because the authenticator marks the request the moment the key resolves — before
+the allowlist, the rate limit, the secret and the scopes. It is written from Fastify's `onResponse`
+hook, because the 401, 403 and 429 an integrator most needs never reach a Nest interceptor, and
+**buffered** (a hundred rows or a second), because a recorder of what happened must not be able to
+change what happened.
+
+**One screen and two changes** (§10.10 of `frontend-architecture.md`): `/settings/api-activity`
+leads with the refusals, carries three figures that total the filter rather than the page, and says
+in a card what is deliberately not on it. `/settings/api-keys` grew a grouped scope picker that
+offers only what the person looking at it holds — a tick box certain to be refused is worse than one
+that is not there — and now says what each key has been doing.
+
+**A key carries its creator's id, which closed one hole and opened another.** Every
+person-reference in this product is written from `principal.actorId` — `created_by_id`,
+`changed_by_id`, a saved view's owner — so the person has to be the actor, with `apiKeyId` beside
+it for provenance and the audit label. The first draft used the key's own id and wrote three leads
+claiming a member who does not exist, which no constraint objected to. The other direction then
+needed closing: a key carrying a real person's id would be answered by `/auth/me` with that
+person's profile, sessions and **the other workspaces they belong to**. `@SessionOnly()` marks those
+routes, and the permission guard refuses a key on them **above** the permission exemption — the
+first placement was below it and did nothing, because a route about the caller is exactly the kind
+that declares `@NoPermissionRequired`.
+
+**Three defects worth the note, two of them found by this step's own verification.** The log
+recorded nothing in the e2e suite while the product recorded everything, because the hook was
+installed from `main.ts`: **a hook registered in one bootstrap path is absent from every other
+application built from the same modules**, including the harness's, and the feature would have
+looked built and been untested. The IP allowlist passed its first assertion for the wrong reason:
+the harness does not set `trustProxy`, so `request.ip` is the socket address — the client's address
+now comes from the request context, which is where this product reads the proxy chain. And
+**registration itself was failing with a 500 on a cold process**: provisioning writes a whole
+workspace catalogue in one transaction and took 5.04 s against Prisma's five-second default, so a
+sign-up created nothing and said "Something went wrong" — the capture-transaction defect again, in
+the one place where the cost is a customer who cannot get in at all. It now has an explicit 30 s
+timeout with the reason beside it.
+
+**Verified.** 2 297 tests green — 1 028 unit and 1 269 integration — with about 90 of them new: a
+**23-case** suite driving real product routes (`/leads`, `/tasks`, `/deals`) with a credential
+instead of a token, 17 shared-vocabulary cases, 10 in the web app's reconciliation spec, 8 new
+assertions in the schema-objects guard and 4 cross-tenant database guarantees. Then **43 HTTP checks**
+against a live API, worker and scheduler, and **39 browser checks** driving both screens.
+
+**Carried forward, named rather than assumed:** OpenAPI and the published docs (`FR-API-3`) are the
+next step, and the `/docs` row of §1 stays unbuilt until then. There is no cursor pagination on
+`GET /api-logs` — it is a bounded window with a limit, because a request log is read by filtering
+rather than by walking. The log has no per-endpoint rollup, so "which endpoint is slowest" is a
+question somebody answers by filtering; a rollup belongs with the platform console's usage views.
+`industry-templates.service.ts` writes a similar catalogue in one transaction and has not been seen
+to exceed five seconds, so it was left alone and is named here as the next place to look if a
+template application ever answers a 500.
+
+---
+
 ## Phase 5 — WhatsApp
 
 **Scope:** Cloud API adapter; WABA/number connection + health; webhook verify + inbound pipeline with
@@ -2199,52 +2302,45 @@ partially landed, with the specific gaps named.
 ## Immediate next step
 
 _This section names the next step only; what each landed step actually did is in the step entries
-above. Last reviewed 2026-10-18, after Phase 4 step 3._
+above. Last reviewed 2026-10-18, after Phase 4 step 4._
 
-**Phase 3 is finished, exit criteria included.** Every item of scope is built — tasks, reminders,
-reschedule with a mandatory reason, complete-with-next-follow-up, "no next action", the overdue
-sweeps, SLA policies and working-hours-aware clocks, escalation, the manager board, the notification
-centre with preferences and quiet hours, the Today workspace, oversight, calls with click-to-call,
-and the email adapter with bounce → suppression — and step 8 closed the two criteria that were
-outstanding: the clock is now asserted across both clock changes and in three timezones as a
-**stored** `due_at`, and the zero-training journey is a scripted walk-through that types no URL
-after the sign-in link. The other four were already met and tested: `/my/today` in one request
-(p95 110 ms on the 100 k fixture), a reschedule that cannot complete without date, time and reason,
-overdue and near-breach escalating exactly once, and Today usable one-handed at 375 px with queued
-actions.
+**Phase 3 is finished, exit criteria included** — tasks, reminders, reschedule with a mandatory
+reason, the overdue sweeps, SLA policies and working-hours-aware clocks, escalation, the manager
+board, the notification centre with quiet hours, the Today workspace, oversight, calls with
+click-to-call, and the email adapter with bounce → suppression. Step 8 closed the last two criteria:
+the clock asserted across both clock changes in three timezones as a **stored** `due_at`, and a
+zero-training journey that types no URL after the sign-in link.
 
-**Phase 4 is three steps in, and four of its six exit criteria are met and tested.** Step 1 built
-capture forms: the builder, the public renderer at `/f/[key]`, the embed snippet, and a submission
-store that keeps every payload whether or not a lead came out of it. Step 2 built the **public lead
-API** — a public key and an HMAC signature instead of a session, `inbound_payloads` as the
-never-lose store for every channel after this one, `ingestion_errors` naming the stage, a
-stored-response idempotency window, a replay, a self-serve test tool, API keys with
-scopes/rotation/allowlist, and `FR-CAP-5`'s one click, which creates the custom field **and** is
-matched by the mapper so the next payload fills it in. Step 3 built **outbound webhooks**: signed
-deliveries fanned out from the outbox to the endpoints that subscribed, a retry schedule that lives
-on the delivery row rather than in Redis, a log per attempt with what the receiving server answered,
-manual retry, auto-disable after fifteen consecutive failures with a notification nobody can opt out
-of, and SSRF refused twice — statically when the URL is saved and against the resolved addresses on
-every attempt, with redirects never followed.
+**Phase 4 is four steps in, and four of its six exit criteria are met and tested.** Step 1 built
+capture forms; step 2 the **public lead API** (a public key and an HMAC instead of a session,
+`inbound_payloads` as the never-lose store, a replay, a test tool, and `FR-CAP-5`'s one click, which
+the mapper then fills in); step 3 **outbound webhooks** (signed deliveries from the outbox, a retry
+schedule on the delivery row, a log per attempt, auto-disable after fifteen failures, SSRF refused
+twice and redirects never followed); step 4 the **key-authenticated REST surface** — the whole
+product reachable with `Authorization: Bearer <key id>.<secret>`, a key acting as the member who
+created it with their current grants, scopes that are permission keys from a curated list, and
+`api_logs` as the integration's own request log, partitioned by day and kept for thirty.
 
-**The next step is the authenticated REST surface and `api_logs`** (`FR-API-1`, `FR-API-3`,
-`FR-SA-4`). It is the one remaining piece the rest of this phase stands on: OpenAPI with a diff
-check needs a documented surface to diff, published copy-paste examples need endpoints to call, and
-`api_logs` only earns its daily partitions once there is a request volume worth logging per
-endpoint — today `inbound_payloads` is the whole request record for the one public endpoint, and
-`webhook_deliveries` is its equivalent for everything we send. The pieces are already in place: the
-API key, its scopes and its rate limit exist and are enforced; `idempotency_keys` already stores a
-first response; and every service beneath the web app's server actions is already permission-checked
-and tenant-scoped, so the surface is a declaration and a log, not new business logic.
+**The next step is OpenAPI and the published docs** (`FR-API-3`), the phase's sixth exit criterion:
+a 3.1 document generated from the code rather than written beside it, committed as an artifact and
+**diffed in CI** so an unintended breaking change fails the build, served at `/docs` with
+copy-paste `curl` per endpoint and an errors page listing every code. It is the step that follows
+step 4 and could not have come before it: there was no credential a reader of the docs could use,
+and "try it" against a surface only a session could reach would have been a page for the team that
+wrote it. The pieces are in place — every route declares its permission (the route-authorization
+sweep enumerates them already), every DTO is a Zod schema that can be rendered to JSON Schema, and
+the envelope and error catalogue are single definitions in `@leados/shared`.
 
 Then the rest of **Phase 4**: the integration framework (provider registry, credential vault, health
 checks, generic mapping templates) and the two ad-platform connectors — Meta Lead Ads and Google Ads
 lead forms — which are the phase's fifth exit criterion and the first consumers of
 `provider_events`, `integration_connections` and `sync_cursors`.
 
-Carried forward from Phase 4 step 3: there is no circuit breaker and no per-endpoint bulk replay,
-both deliberately (an endpoint is disabled by the attempt that earns it, and a thousand replays of
-an unfixed cause would be a thousand more failures); `webhook.reap-exhausted` from §5 of
-`queue-event-architecture.md` is not built because nothing is left for it to reap; and a delivery's
-retries stop at about 33 hours, so an endpoint down for two days loses what it missed — which is what the
-delivery log and the `webhook.disabled` notification exist to make visible rather than silent.
+Carried forward from Phase 4 step 4: `GET /api-logs` is a bounded window with a limit rather than a
+cursor, and has no per-endpoint rollup — "which endpoint is slowest" is answered by filtering, and a
+rollup belongs with the platform console's usage views. A key's authority stops with its creator's,
+which will surprise somebody the first time an employee leaves and a nightly sync fails; the refusal
+names the cause. And `industry-templates.service.ts` writes a workspace-sized catalogue in one
+transaction, as provisioning did before step 4 gave provisioning an explicit timeout — it has not
+been seen to exceed Prisma's five-second default, and it is the next place to look if applying a
+template ever answers a 500.

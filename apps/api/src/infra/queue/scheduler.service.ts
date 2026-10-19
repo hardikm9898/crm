@@ -63,6 +63,15 @@ export const SCHEDULES: readonly ScheduleDefinition[] = [
   },
   {
     queue: QUEUES.MAINTENANCE,
+    jobName: JOBS.API_LOG_PARTITIONS,
+    // Early, and before the activity partitions: tomorrow's day partition has to exist before
+    // midnight, and the retention drop is the one scheduled statement in this product that deletes
+    // a million rows — which is also why it is a partition drop and not a `DELETE`.
+    cron: '13 2 * * *',
+    description: 'Pre-create upcoming api-log day partitions and drop the ones past retention',
+  },
+  {
+    queue: QUEUES.MAINTENANCE,
     jobName: JOBS.IDEMPOTENCY_PRUNE,
     // Hourly, not daily: the window is 48 hours, so an hourly sweep keeps the table within an
     // hour of the truth and each run deletes a small set rather than a day's worth.

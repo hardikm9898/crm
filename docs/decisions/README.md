@@ -36,3 +36,4 @@ A decision is changed by writing a **new** ADR that supersedes the old one, neve
 | [0029](./ADR-0029-a-public-form-is-identified-by-its-own-key.md)                                   | A public form is identified by its own key, not by its slug                     | Accepted |
 | [0030](./ADR-0030-the-public-lead-api-verifies-a-signature-and-never-loses-a-payload.md)           | The public lead API verifies a signature, and never loses a payload             | Accepted |
 | [0031](./ADR-0031-an-outbound-webhook-is-retried-from-its-own-row-and-never-follows-a-redirect.md) | An outbound webhook is retried from its own row, and never follows a redirect   | Accepted |
+| [0032](./ADR-0032-a-key-acts-as-the-member-who-created-it.md)                                      | A key acts as the member who created it, and its requests are logged by the day | Accepted |

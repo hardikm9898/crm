@@ -16,6 +16,27 @@ Traces to: `FR-API-*`, `FR-CAP-6`, `NFR-PERF-3`, `NFR-SEC-*`
 | Realtime         | `/socket.io`             | JWT handshake                                   | Web app                                   | Rooms are org-scoped                                        |
 | Docs             | `/docs`, `/openapi.json` | Public spec, auth'd "try it"                    | Developers                                | Generated from code (`FR-API-3`)                            |
 
+> **Amendment, 2026-10-18 (implementation, Phase 4 step 4).** The tenant API's "Bearer JWT **or**
+> API key" is built. A key is presented as one header — `Authorization: Bearer <key id>.<secret>` —
+> and is told apart from an access token by the key id's `pk_` prefix, by shape rather than by
+> trying one and falling back to the other, so a mistyped key is refused as a bad key and not as an
+> expired session. Nothing about a route changes: the permission guard checks a key's principal the
+> way it checks a person's, so the whole surface is reachable by an integration without a second
+> implementation of any of it.
+>
+> **Requests are not signed on this surface**, and that is deliberate rather than an omission. The
+> public ingestion endpoint signs an HMAC over the raw body because a capture is a replayable write
+> from a position we do not trust; a signature that covers only the timestamp and the body does not
+> bind the method or the path, so on a general REST surface a captured `GET` signature could be
+> replayed as a `DELETE` within the tolerance window. Making that safe needs a _second_ signing
+> construction, which every client library then implements by hand, for a property TLS already
+> gives ([ADR-0032](./decisions/ADR-0032-a-key-acts-as-the-member-who-created-it.md)).
+>
+> **A key acts as the member who created it, narrowed to its scopes**, with that member's _current_
+> grants and data scopes resolved per request. Its scopes are permission keys from a curated list
+> that deliberately excludes everything administering access, money, credentials or privacy. The
+> `/docs` row remains unbuilt: OpenAPI and the published docs are `FR-API-3` and the next step.
+
 ---
 
 ## 2. Response envelope
@@ -410,7 +431,7 @@ POST /whatsapp/campaigns                     consent-checked bulk (FR-WA-10)
 CRUD /forms | PUT /forms/{id}/fields   POST /forms/{id}/rotate-key
 GET  /forms/submissions?formId=       GET /forms/builder-options
 CRUD /api-keys                      POST /api-keys/{id}/rotate | /revoke
-GET  /api-logs                      GET /ingestion/payloads | /ingestion/errors | /ingestion/unmapped
+GET  /api-logs | /api-logs/usage    GET /ingestion/payloads | /ingestion/errors | /ingestion/unmapped
 POST /ingestion/payloads/{id}/replay   POST /ingestion/test   (dry run, 200, persists nothing)
 CRUD /webhooks (endpoints)          POST /webhooks/{id}/test | /{id}/rotate-secret
 GET  /webhooks/{id}/deliveries      POST /webhooks/deliveries/{id}/retry
@@ -845,9 +866,9 @@ Other public endpoints: `POST /api/public/v1/forms/{formSlug}/submit`,
 > `POST /ingestion/errors`-adjacent replay as `POST /ingestion/payloads/{id}/replay` (the payload is
 > the unit a person replays, not the error), the self-serve test tool as `POST /ingestion/test`
 > (a POST that answers **200**, because it persists nothing), and `GET /ingestion/unmapped` for
-> `FR-CAP-5`'s surfacing. All of it behind `api_key:manage`. `GET /api-logs` waits for the
-> authenticated REST surface, which is the first thing with a request volume worth logging per
-> endpoint.
+> `FR-CAP-5`'s surfacing. All of it behind `api_key:manage`. `GET /api-logs` arrived with the
+> authenticated REST surface in step 4, which is the first thing with a request volume worth logging
+> per endpoint — and it logs this endpoint too, under `surface: public_ingest`.
 >
 > **The dry run answers a verdict, not only a preview.** `POST /ingestion/test` returns
 > `wouldCreate`, `normalized` (including `phone` as it would be **stored** and `phoneAsSent` beside

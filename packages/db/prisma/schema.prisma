@@ -793,6 +793,7 @@ model Organization {
   industryTemplate    IndustryTemplate? @relation(fields: [industryTemplateKey], references: [key], onDelete: SetNull)
   industryTemplateKey String?           @map("industry_template_key")
   apiKeys             ApiKey[]
+  apiLogs             ApiLog[]
   inboundPayloads     InboundPayload[]
   webhookEndpoints    WebhookEndpoint[]
   webhookDeliveries   WebhookDelivery[]
@@ -3754,6 +3755,14 @@ model FormSubmission {
 // Phase 4, step 2 — the public lead API (docs/database-design.md §8)
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// Which door a request came through. Two, because two exist.
+enum ApiSurface {
+  rest
+  public_ingest
+
+  @@map("api_surface")
+}
+
 enum IngestChannel {
   public_api
   webhook
@@ -3821,6 +3830,7 @@ model ApiKey {
   creator      Membership?  @relation("api_key_creator", fields: [organizationId, createdById], references: [organizationId, userId], onDelete: Restrict, map: "api_keys_creator_same_org_fk")
 
   payloads InboundPayload[]
+  logs     ApiLog[]
 
   @@unique([organizationId, id], name: "api_key_tenant_key")
   /// Global: the key id is the caller's identity, and two workspaces must never mint the same one.
@@ -3922,6 +3932,59 @@ model IngestionError {
   @@index([organizationId, payloadId])
   @@index([organizationId, stage, createdAt(sort: Desc)])
   @@map("ingestion_errors")
+}
+
+/// One row per request a **key** made to this workspace's API (`FR-API-1`, `FR-SA-4`).
+///
+/// This is the integration's log, not an access log: it answers "what did my integration send, and
+/// what did you say to it" for somebody debugging from the outside, which is the question no
+/// server-side log can answer for them. The web app's own session traffic is deliberately absent —
+/// it would be the same rows in a hundred times the volume, and it is already in the request log.
+///
+/// Partitioned **daily** by `created_at`, with a thirty-day retention: a request log is a debugging
+/// tool, and dropping a whole day's partition is the only way to delete a million rows for nothing.
+/// `organization_id` is NOT NULL for ADR-0030's reason, which also decides what is *not* here: a
+/// request whose key id resolves to no workspace has no workspace to file it under, so it stays in
+/// the process log. Every refusal a real key earns — a wrong scope, an address off the allowlist, a
+/// rate limit, an expired or revoked key — resolves its row first and is therefore recorded.
+model ApiLog {
+  id             String @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  /// Null only while a request is refused before its key is known, which this table does not store.
+  apiKeyId String?    @map("api_key_id") @db.Uuid
+  /// Which surface answered: the authenticated REST API, or the public ingestion endpoint.
+  surface  ApiSurface
+
+  method     String
+  /// The path **without its query string**: the filter DSL carries names and numbers, and this log
+  /// is read by somebody holding `api_key:manage` rather than `lead:read` (`logPath`).
+  path       String
+  statusCode Int     @map("status_code")
+  /// The envelope's `error.code`, when the answer was a refusal that had one.
+  errorCode  String? @map("error_code")
+
+  durationMs Int @map("duration_ms")
+  bytesIn    Int @default(0) @map("bytes_in")
+  bytesOut   Int @default(0) @map("bytes_out")
+
+  /// The same id the response carried, so a client's bug report can be found here.
+  requestId String  @map("request_id")
+  ip        String?
+  userAgent String? @map("user_agent")
+
+  /// The partition key, and the only instant this table is pruned by.
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  apiKey       ApiKey?      @relation(fields: [organizationId, apiKeyId], references: [organizationId, id], onDelete: Restrict, map: "api_logs_api_key_same_org_fk")
+
+  @@id([id, createdAt])
+  @@unique([organizationId, id, createdAt], name: "api_log_tenant_key")
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([organizationId, apiKeyId, createdAt(sort: Desc)])
+  @@index([organizationId, statusCode, createdAt(sort: Desc)])
+  @@map("api_logs")
 }
 
 /// `Idempotency-Key` for a mutating endpoint (`FR-API-5`).

@@ -543,6 +543,16 @@ const REQUIRED_CONSTRAINTS = [
   'webhook_endpoints_creator_same_org_fk',
   // The second three-column composite FK into a partitioned parent.
   'webhook_attempts_delivery_same_org_fk',
+  // The request log (`FR-API-1`, `FR-SA-4`). Each of these says what belongs in the table, and the
+  // last one is written as a `CASE` in the one direction that is a contradiction — a refusal
+  // Fastify answered before any envelope existed has no error code, and forbidding that honest
+  // state would make the writer lie.
+  'api_logs_method_is_a_verb',
+  'api_logs_path_is_a_path',
+  'api_logs_status_is_http',
+  'api_logs_measurements_sane',
+  'api_logs_success_has_no_error_code',
+  'api_logs_api_key_same_org_fk',
 ];
 
 describe('hand-written indexes survive every generated migration', () => {
@@ -632,6 +642,43 @@ describe('the objects Prisma cannot describe at all', () => {
       { count: bigint }[]
     >`SELECT count(*) AS count FROM pg_proc WHERE proname = 'ensure_webhook_delivery_partition'`;
     expect(Number(rows[0]?.count ?? 0)).toBe(1);
+  });
+
+  it('keeps api_logs partitioned by range — by the day, not the month', async () => {
+    // The one partitioned table in the product whose partitions are days: retention is thirty
+    // days, so a month-sized partition would be the whole table and "drop the oldest" would mean
+    // dropping everything or nothing.
+    const rows = await h.unscoped.$queryRaw<
+      { partition_strategy: string | null; partitions: bigint }[]
+    >`
+      SELECT (SELECT partstrat::text FROM pg_partitioned_table WHERE partrelid = 'api_logs'::regclass)
+               AS partition_strategy,
+             (SELECT count(*) FROM pg_inherits WHERE inhparent = 'api_logs'::regclass)
+               AS partitions
+    `;
+    expect(rows[0]?.partition_strategy).toBe('r');
+    // Nine days of them (yesterday through a week ahead) plus the default, so a count that has
+    // collapsed to the default alone fails here rather than on the day somebody reads the log.
+    expect(Number(rows[0]?.partitions ?? 0)).toBeGreaterThan(2);
+    expect(await indexExists('api_logs_default_pkey')).toBe(true);
+  });
+
+  it('keeps the api-log partition function, and it is idempotent', async () => {
+    const rows = await h.unscoped.$queryRaw<
+      { count: bigint }[]
+    >`SELECT count(*) AS count FROM pg_proc WHERE proname = 'ensure_api_log_partition'`;
+    expect(Number(rows[0]?.count ?? 0)).toBe(1);
+
+    // Called twice for the same day on purpose: the maintenance job, the test harness and a
+    // backfill all call it without checking first, so a second call must be a no-op rather than a
+    // `relation already exists`.
+    const first = await h.unscoped.$queryRaw<
+      { ensure_api_log_partition: string }[]
+    >`SELECT ensure_api_log_partition(now())`;
+    const second = await h.unscoped.$queryRaw<
+      { ensure_api_log_partition: string }[]
+    >`SELECT ensure_api_log_partition(now())`;
+    expect(first[0]?.ensure_api_log_partition).toBe(second[0]?.ensure_api_log_partition);
   });
 
   it('keeps the search-vector trigger, without which search silently returns nothing', async () => {

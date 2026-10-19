@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  API_KEY_SCOPES as SHARED_SCOPES,
   INBOUND_STATUSES as SHARED_STATUSES,
   INGESTION_STAGES as SHARED_STAGES,
   INGEST_CHANNELS as SHARED_CHANNELS,
@@ -9,7 +8,6 @@ import {
   CUSTOM_FIELD_TYPES,
 } from '@leados/shared';
 import {
-  API_KEY_SCOPES,
   FIELD_TYPE_CHOICES,
   CHANNEL_LABELS,
   INBOUND_STATUSES,
@@ -17,7 +15,6 @@ import {
   INGEST_CHANNELS,
   PAYLOAD_STATUS_CLASSES,
   PAYLOAD_STATUS_LABELS,
-  SCOPE_LABELS,
   STAGE_LABELS,
   curlSnippet,
   describeIngestion,
@@ -43,7 +40,6 @@ describe('the ingestion vocabulary matches the API', () => {
     expect([...INGEST_CHANNELS]).toEqual([...SHARED_CHANNELS]);
     expect([...INBOUND_STATUSES]).toEqual([...SHARED_STATUSES]);
     expect([...INGESTION_STAGES]).toEqual([...SHARED_STAGES]);
-    expect([...API_KEY_SCOPES]).toEqual([...SHARED_SCOPES]);
   });
 
   it('has a label for every value, so nothing renders as a blank chip', () => {
@@ -53,7 +49,6 @@ describe('the ingestion vocabulary matches the API', () => {
       expect(PAYLOAD_STATUS_CLASSES[status]).toBeTruthy();
     }
     for (const stage of SHARED_STAGES) expect(STAGE_LABELS[stage]).toBeTruthy();
-    for (const scope of SHARED_SCOPES) expect(SCOPE_LABELS[scope]).toBeTruthy();
   });
 
   it('never labels a stage with the stage name itself', () => {

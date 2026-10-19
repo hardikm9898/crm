@@ -3358,3 +3358,92 @@ describe('layer 3 — an outbound webhook cannot be stitched to another tenant (
     );
   });
 });
+
+describe('layer 3 — the request log (FR-API-1, FR-SA-4)', () => {
+  /** A key in whichever workspace is asked for, so a log row has something to point at. */
+  async function apiKey(organizationId: string) {
+    const id = newId();
+    await h.unscoped.apiKey.create({
+      data: {
+        id,
+        organizationId,
+        name: `Key ${id.slice(-8)}`,
+        keyId: `pk_live_${id.replace(/-/g, '').slice(0, 20)}`,
+        keyPrefix: `pk_live_${id.slice(0, 8)}`,
+        secretEncrypted: `v1.1.${id.slice(-8)}.${id.slice(-8)}.${id.slice(-8)}`,
+        scopes: ['lead:read'],
+      },
+    });
+    return id;
+  }
+
+  async function logRow(organizationId: string, over: Record<string, unknown> = {}) {
+    const id = newId();
+    const createdAt = new Date();
+    await h.unscoped.apiLog.create({
+      data: {
+        id,
+        organizationId,
+        surface: 'rest',
+        method: 'GET',
+        path: '/api/v1/leads',
+        statusCode: 200,
+        durationMs: 12,
+        requestId: `req_${id}`,
+        createdAt,
+        ...over,
+      } as never,
+    });
+    return { id, createdAt };
+  }
+
+  it('refuses a row naming another workspace’s key', async () => {
+    const theirKey = await apiKey(h.orgB.organizationId);
+    // The composite FK, not an application check: a log row that claims somebody else's
+    // credential made the request would be a lie about who did what.
+    await expect(
+      logRow(h.orgA.organizationId, { apiKeyId: theirKey }),
+    ).rejects.toThrow(/api_logs_api_key_same_org_fk|foreign key/i);
+  });
+
+  it('refuses a verb this API does not answer, and a URL instead of a path', async () => {
+    await expect(logRow(h.orgA.organizationId, { method: 'TRACE' })).rejects.toThrow(
+      /api_logs_method_is_a_verb/i,
+    );
+    await expect(
+      logRow(h.orgA.organizationId, { path: 'https://leados.test/api/v1/leads' }),
+    ).rejects.toThrow(/api_logs_path_is_a_path/i);
+    // The query string is dropped by `logPath` before the row is written; the constraint is what
+    // makes "something else wrote this row" impossible rather than merely unlikely.
+    await expect(
+      logRow(h.orgA.organizationId, { path: '/api/v1/leads?search=asha' }),
+    ).rejects.toThrow(/api_logs_path_is_a_path/i);
+  });
+
+  it('refuses a measurement that cannot be true, and an answer that succeeded with an error code', async () => {
+    await expect(logRow(h.orgA.organizationId, { durationMs: -1 })).rejects.toThrow(
+      /api_logs_measurements_sane/i,
+    );
+    await expect(logRow(h.orgA.organizationId, { statusCode: 99 })).rejects.toThrow(
+      /api_logs_status_is_http/i,
+    );
+    await expect(
+      logRow(h.orgA.organizationId, { statusCode: 200, errorCode: 'NOT_FOUND' }),
+    ).rejects.toThrow(/api_logs_success_has_no_error_code/i);
+    // The honest state the mirror of that CHECK would have forbidden: a refusal Fastify answered
+    // before any envelope existed, and therefore without a code.
+    await expect(
+      logRow(h.orgA.organizationId, { statusCode: 404, errorCode: null }),
+    ).resolves.toBeTruthy();
+  });
+
+  it('shows each workspace only its own requests', async () => {
+    const mine = await logRow(h.orgA.organizationId);
+    const theirs = await tenantContext.run(h.orgB.principal, async () => ({
+      row: await h.db.apiLog.findFirst({ where: { id: mine.id } }),
+      all: await h.db.apiLog.findMany({}),
+    }));
+    expect(theirs.row).toBeNull();
+    expect(theirs.all.every((entry) => entry.organizationId === h.orgB.organizationId)).toBe(true);
+  });
+});

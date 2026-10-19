@@ -44,8 +44,13 @@ export const INGESTION_STAGES = [
 ] as const;
 export type IngestionStage = (typeof INGESTION_STAGES)[number];
 
-export const API_KEY_SCOPES = ['ingest:write', 'ingest:read'] as const;
-export type ApiKeyScope = (typeof API_KEY_SCOPES)[number];
+/**
+ * A key's scopes moved to `api-surface.ts` in step 4, when a key stopped being a credential for
+ * the public endpoint alone: the list is now the two ingestion scopes plus the permission keys the
+ * REST surface enforces, and it belongs beside the screens that read the request log.
+ */
+export type { ApiKeyScope } from './api-surface';
+import type { ApiKeyScope } from './api-surface';
 
 /** Where a payload came from, as somebody who did not build the integration would say it. */
 export const CHANNEL_LABELS: Record<IngestChannel, string> = {
@@ -92,10 +97,6 @@ export const STAGE_LABELS: Record<IngestionStage, string> = {
   notify: 'Telling somebody failed',
 };
 
-export const SCOPE_LABELS: Record<ApiKeyScope, string> = {
-  'ingest:write': 'Post leads into this workspace',
-  'ingest:read': 'Read back what it has sent',
-};
 
 // ── What the API answers ────────────────────────────────────────────────────
 

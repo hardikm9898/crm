@@ -108,8 +108,15 @@ export const NAV_SECTIONS: readonly NavSection[] = [
       // is a credential, and the log behind it is read by whoever built the integration — not by
       // the person running the campaign the leads came from.
       {
-        label: 'Lead API keys',
+        // No longer only the lead API's: step 4 made a key a credential for the whole REST
+        // surface, so the label says what it is rather than what it was first used for.
+        label: 'API keys',
         href: '/settings/api-keys',
+        permissions: ['api_key:manage'],
+      },
+      {
+        label: 'API activity',
+        href: '/settings/api-activity',
         permissions: ['api_key:manage'],
       },
       {

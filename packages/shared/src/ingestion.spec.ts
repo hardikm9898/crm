@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { isValidCustomFieldKey } from './custom-fields.js';
+import { INGESTION_SCOPES } from './api-surface.js';
 import {
-  API_KEY_SCOPES,
   INBOUND_STATUSES,
   INGEST_CHANNELS,
   INGESTION_STAGES,
@@ -161,7 +161,7 @@ describe('the vocabulary', () => {
     // `received` first: it is the state the row is written in.
     expect(INBOUND_STATUSES[0]).toBe('received');
     expect(INGESTION_STAGES).toContain('normalize');
-    expect(API_KEY_SCOPES).toEqual(['ingest:write', 'ingest:read']);
+    expect(INGESTION_SCOPES).toEqual(['ingest:write', 'ingest:read']);
   });
 });
 

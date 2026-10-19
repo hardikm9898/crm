@@ -104,6 +104,11 @@ export const TENANT_MODELS = [
   'WebhookEndpoint',
   'WebhookDelivery',
   'WebhookAttempt',
+  // Phase 4, step 4 — the key-authenticated REST surface. `ApiLog` is the integration's request
+  // log, one row per request a key made, and it is tenant-scoped for the same reason
+  // `inbound_payloads` is: a request whose key resolves to no workspace has no workspace to file it
+  // under, so it is never written here at all rather than written with a null.
+  'ApiLog',
 ] as const;
 
 export type TenantModel = (typeof TENANT_MODELS)[number];

@@ -759,3 +759,43 @@ not, a 500 from the receiver producing a failed row with the next attempt stated
 delivering it once the receiver answers 200, `410 Gone` switching the endpoint off with its reason
 on the screen, the attempt list reading HTTP code and duration per attempt, and the verification
 snippet containing this workspace's own header names.
+
+### 10.10 As built — Phase 4, step 4 (the key-authenticated API, and its activity)
+
+One new screen, `/settings/api-activity`, and two changes to `/settings/api-keys`. Both behind
+`api_key:manage`, and in Workspace rather than Grow for the reason the other developer screens give:
+a key is a credential, and the person who creates one is the person who finds out why it is being
+refused.
+
+- **Two screens, not one, because they are read at different moments.** A key is made once; the
+  activity screen is opened every time an integration stops working. The keys screen now says what
+  each key has been doing (`data-api-key-usage`) and links to the log; the activity screen lists the
+  keys with their counts and links back.
+- **The activity screen leads with the refusals.** A screen that led with the whole log would bury
+  the handful of rows somebody has to act on under the hundreds that worked — the argument
+  `/ingestion` and the forms screen both make. Three figures, each totalling the **filter** rather
+  than the page (the API answers the summary in `meta` of the same read, so the number above the
+  list cannot disagree with the list), and the headline sentence carries a plural per clause and
+  omits what is zero.
+- **Three outcomes, not two.** "Answered", "Refused" and "Failed": refused is something the caller
+  can fix — a wrong secret, a missing scope, a rate limit — and failed is ours. Colouring them alike
+  would hide the only rows on the screen that are our fault.
+- **The screen says what is deliberately not on it**: no request or response bodies, no query
+  string, no session traffic, thirty days. An absence somebody has to notice is an absence they
+  assume is a bug; a card that names it is one sentence.
+- **The scope picker offers only what the person looking at it holds.** The API refuses a key a
+  permission its creator does not have, so a tick box for anything else is certain to fail — the
+  same rule the one-click custom field follows. Twenty-three scopes are grouped into six decisions
+  with a sentence each, and what a key can **never** hold is printed underneath rather than left as
+  a gap in the list.
+- **The `curl` to copy reads both halves of the credential from shell variables**
+  (`$LEADOS_KEY_ID`, `$LEADOS_SECRET`), exactly as the capture snippet does: a snippet with a secret
+  pasted into it is a secret in a browser's history, in a screenshot and in a support ticket.
+
+**One suite, 39 checks**, all green: a key created from the grouped picker with the REST scopes, its
+secret read out of the card and then absent after a refresh, that credential creating a lead over
+HTTP and being refused a resource nobody ticked, the request log showing both with their status
+chips and no query string, a wrong secret appearing among the refusals with its code, the per-key
+sentence agreeing with what was sent, the "refused only" filter narrowing the list **and** the
+figure above it to the same number, and the picker offering none of the twenty-three scopes that
+administer access or money.

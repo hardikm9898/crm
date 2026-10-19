@@ -27,8 +27,20 @@ export type ActorType = 'user' | 'system' | 'automation' | 'api_key' | 'platform
 export interface TenantPrincipal {
   readonly organizationId: string;
   readonly actorType: ActorType;
-  /** User id for `user`/`platform` actors; api key id for `api_key`; undefined for system/automation. */
+  /**
+   * The **person** this request acts as: a user id for `user`, `platform` and `api_key` actors,
+   * and undefined for `system`/`automation`.
+   *
+   * For a key that is the member who created it, which is what makes `created_by_id`,
+   * `changed_by_id`, `assigned_by_id` and every other person-reference in this product correct
+   * without a single writer having to know a key was involved. It was the key's own id for one
+   * afternoon, and three leads were written claiming to have been created by a member who does not
+   * exist — no foreign key catches it, because these columns reference a `Membership` by
+   * convention in some tables and not at all in others.
+   */
   readonly actorId?: string;
+  /** Which credential, when the actor is an `api_key`. Provenance, never authority. */
+  readonly apiKeyId?: string;
   readonly permissions: ReadonlySet<string>;
   /** Widest data scope granted across the actor's roles, per permission. */
   readonly scopes: ReadonlyMap<string, DataScope>;

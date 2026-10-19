@@ -70,7 +70,14 @@ export class AuditService {
       organizationId,
       actorType: entry.actorType ?? principal?.actorType ?? 'system',
       actorId: entry.actorId ?? principal?.actorId ?? null,
-      actorLabel: entry.actorLabel ?? null,
+      // For a key, the actor is the person it acts as, so the label is what says a credential did
+      // it: without this the trail cannot distinguish "Meera changed this" from "the Zapier key
+      // Meera created changed this", which is the first question somebody asks.
+      actorLabel:
+        entry.actorLabel ??
+        (principal?.actorType === 'api_key' && principal.apiKeyId
+          ? `api_key:${principal.apiKeyId}`
+          : null),
       action: entry.action,
       resourceType: entry.resourceType,
       resourceId: entry.resourceId ?? null,

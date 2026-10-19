@@ -705,3 +705,43 @@ report something as done that is not done.
   symptom is a feature that worked a minute ago answering as though the queue were empty. Capture
   each pid when starting it, or match on the full command line including the env the process was
   started with (`ps -eo pid,args` plus `/proc/<pid>/environ`), and restart all three after any kill.
+- **A Fastify hook installed from `main.ts` is absent from every application the tests build.**
+  The request-log `onResponse` hook was registered in the HTTP bootstrap, so the running product
+  recorded every request and the e2e harness — which builds its own application from the same
+  modules — recorded none: the suite whose job was to prove requests are logged passed on
+  everything except that, and the feature would have looked built and been untested. Anything that
+  must be true of every application built from these modules belongs **in the modules**
+  (`ApiLogHookInstaller`, on `onApplicationBootstrap`, which Nest runs inside `app.init()` and
+  therefore before Fastify's `ready`).
+- **`request.ip` is the socket address unless Fastify is told to trust the proxy, and the test
+  harness does not.** An IP allowlist checked against it refused a request from an address that
+  _was_ on the list, and the test's other half — "a request from elsewhere is refused" — passed for
+  the wrong reason. This product reads the proxy chain in exactly one place, the request-context
+  middleware, so the client's address comes from `requestStore.get()?.ip`; anything else is a second
+  answer to one question, and in production (`trustProxy: true`) the two agree, which is what makes
+  the bug invisible until a test runs.
+- **Provisioning a workspace does not fit in Prisma's five-second transaction.** A cold process
+  answering its first registration took 5.04 s writing the organization, the owner's role, and every
+  status, pipeline, stage, task type, outcome, score band and working-hours row — and the sign-up
+  failed with a 500 having created nothing. The same defect as the capture transaction, in the one
+  place where the cost is a customer who cannot get in at all, and the same fix:
+  `PROVISIONING_TRANSACTION` (30 s) with the reason written beside it. Any transaction that writes a
+  **catalogue** rather than a record needs an explicit timeout;
+  `industry-templates.service.ts` is the next one of that shape.
+- **A log row read by one permission must not carry data another permission guards.** `api_logs` is
+  read by whoever holds `api_key:manage`, which is not `lead:read` — so `logPath` drops the query
+  string (the filter DSL carries names, phone numbers and amounts) and no body is stored at all.
+  `api_logs_path_is_a_path` refuses a value containing `?`, which makes "something other than
+  `logPath` wrote this row" unrepresentable rather than merely unlikely.
+- **`principal.actorId` is a **person**, including for an API key.** Every person-reference in this
+  product is written from it — `created_by_id`, `changed_by_id`, `assigned_by_id`, a saved view's
+  owner — so a key whose `actorId` was its own id wrote three leads claiming to have been created by
+  a member who does not exist, and nothing objected: some of those columns carry a composite FK into
+  `Membership` and some carry none at all. A key acts as the member who created it, and `apiKeyId`
+  on the principal is how the audit row still says a credential did it.
+- **A credential that carries a person's id must be refused on the routes about that person.**
+  Once a key acts as its creator, `/auth/me` hands it their profile, their sessions, their MFA state
+  and **the other workspaces they belong to** — a cross-workspace leak through a credential scoped
+  to one. `@SessionOnly()` marks those routes, and the check belongs **above** the
+  `@NoPermissionRequired` early return in `PermissionGuard`: a route about the caller is exactly the
+  kind that declares it, so a check placed below that return never runs and the endpoint answers 200.

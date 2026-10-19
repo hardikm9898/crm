@@ -1,8 +1,10 @@
 import { Injectable, type CanActivate, type ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { AppError, tenantContext } from '@leados/shared';
+import { AppError, looksLikeApiCredential, tenantContext } from '@leados/shared';
 import type { FastifyRequest } from 'fastify';
 import { requestStore } from '../../../infra/http/request-store.js';
+import { ApiKeyAuthService } from '../../api-keys/api-key-auth.service.js';
+import { markApiRequest } from '../../api-keys/api-log.hook.js';
 import { PrincipalService } from '../application/principal.service.js';
 import { SessionService } from '../application/session.service.js';
 import { TokenService } from '../application/token.service.js';
@@ -26,6 +28,14 @@ import { IS_PUBLIC_KEY } from './public.decorator.js';
  * Authorization (permissions, data scopes, entitlements) is layered on top of this by the
  * guards in Phase 1 step 3; this guard establishes *who* the caller is, not *what* they
  * may do.
+ *
+ * **Two credentials reach the same surface** (`FR-API-1`, docs/api-architecture.md §1): a session's
+ * access token, and an API key presented as `Authorization: Bearer <key id>.<secret>`. They are
+ * told apart by the key id's `pk_` prefix rather than by trying one and falling back to the other,
+ * so a mistyped key is refused as a bad key instead of as an expired session. Everything after
+ * this guard — the permission guard, the data scope, the tenant-scoped client — works from the
+ * principal and cannot tell which credential produced it, which is the property that makes the
+ * whole product's routes available to an integration without a second implementation of any of it.
  */
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -34,6 +44,7 @@ export class AuthGuard implements CanActivate {
     private readonly tokens: TokenService,
     private readonly sessions: SessionService,
     private readonly principals: PrincipalService,
+    private readonly apiKeys: ApiKeyAuthService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -49,7 +60,34 @@ export class AuthGuard implements CanActivate {
       }
     >();
 
-    const token = extractBearerToken(request.headers.authorization);
+    const authorization = request.headers.authorization;
+
+    if (looksLikeApiCredential(authorization)) {
+      // The client's address comes from the request context, which is where this product reads the
+      // proxy chain: `request.ip` is the socket address unless Fastify is told to trust the proxy,
+      // and an allowlist that silently fell back to it would refuse every request behind a load
+      // balancer — while passing a test whose other half checks that a stranger is refused.
+      const ip = requestStore.get()?.ip ?? request.ip;
+      const authenticated = await this.apiKeys.authenticate({
+        authorization,
+        ip,
+        requestId: requestStore.requestId() ?? '',
+        // Marks the request as soon as the key resolves to a workspace, so a refusal from the
+        // allowlist, the rate limiter, the secret or the scopes is in the request log too — those
+        // are the four an integrator opens the log to understand.
+        identify: ({ organizationId, apiKeyId }) =>
+          markApiRequest(request, {
+            organizationId,
+            apiKeyId,
+            surface: 'rest',
+            ip: ip ?? null,
+          }),
+      });
+      tenantContext.setPrincipal(authenticated.principal);
+      return true;
+    }
+
+    const token = extractBearerToken(authorization);
     if (!token) throw AppError.unauthenticated();
 
     const claims = await this.tokens.verifyAccessToken(token);
