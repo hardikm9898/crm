@@ -11,7 +11,11 @@ import type { ZodType } from 'zod';
  */
 @Injectable()
 export class ZodBody<T> implements PipeTransform<unknown, T> {
-  constructor(private readonly schema: ZodType<T>) {}
+  /**
+   * Public, because the OpenAPI generator reads it: the document is built from the validators
+   * that actually run, so an endpoint cannot be documented differently from how it behaves.
+   */
+  constructor(readonly schema: ZodType<T>) {}
 
   transform(value: unknown): T {
     const result = this.schema.safeParse(value ?? {});

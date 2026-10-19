@@ -13,7 +13,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src test",
     "test": "vitest run --exclude '**/*.int-spec.ts' --exclude '**/*.e2e-spec.ts'",
-    "test:int": "vitest run int-spec e2e-spec"
+    "test:int": "vitest run int-spec e2e-spec",
+    "openapi:write": "node --import @swc-node/register/esm-register scripts/write-openapi.ts"
   },
   "dependencies": {
     "@leados/db": "workspace:*",

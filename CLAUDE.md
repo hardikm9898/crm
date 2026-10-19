@@ -745,3 +745,21 @@ report something as done that is not done.
   to one. `@SessionOnly()` marks those routes, and the check belongs **above** the
   `@NoPermissionRequired` early return in `PermissionGuard`: a route about the caller is exactly the
   kind that declares it, so a check placed below that return never runs and the endpoint answers 200.
+- **A backtick inside the CSS of a server-rendered page ends the template literal it lives in.**
+  A comment reading "a `curl` line wraps" in the docs page's inline stylesheet turned the rest of
+  the file into TypeScript, and the error pointed at the CSS rather than at the quote — while the
+  dev API, mid-reload, simply stopped answering (`fetch failed` in a browser check, which reads as
+  a network problem). Keep backticks out of anything inside a template literal, comments included.
+- **A page with no `<link rel="icon">` makes every browser fetch `/favicon.ico`.** On an API that
+  serves no static assets that is a 404 in the console of the first page a developer reads, and a
+  404 in our own request log. `href="data:,"` costs nothing and asks for nothing.
+- **A `<table>` cannot reflow, so it widens the page instead.** The API reference took 91 px of
+  sideways scroll at 375 px, which no amount of reading the stylesheet would have shown — a browser
+  check at phone width did. Wrap each table in an `overflow-x: auto` box and let long paths wrap
+  (`overflow-wrap: anywhere`); the page scrolls inside the table, not the other way round.
+- **The document that describes an endpoint should be the validator that guards it.** `ZodBody`
+  exposes its schema and the OpenAPI generator reads it off the route's own argument metadata, so
+  "documented" and "accepted" cannot drift. The alternative — `@ApiBody()` beside
+  `@Body(zodBody(...))` — is two descriptions of one contract across 289 routes, and the one that
+  is wrong is always the one nothing runs. The same reasoning makes the **routing table** the list
+  of endpoints: a document assembled from decorators omits whatever nobody decorated.

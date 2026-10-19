@@ -1,9 +1,18 @@
 import { Inject, Injectable, type OnApplicationBootstrap } from '@nestjs/common';
-import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants.js';
+import {
+  HTTP_CODE_METADATA,
+  METHOD_METADATA,
+  PATH_METADATA,
+  ROUTE_ARGS_METADATA,
+} from '@nestjs/common/constants.js';
 import { DiscoveryService, MetadataScanner, Reflector } from '@nestjs/core';
+import type { ZodType } from 'zod';
 import type { Logger } from 'pino';
 import { LOGGER } from '../observability/logger.module.js';
 import { IS_PUBLIC_KEY } from '../../modules/auth/guards/public.decorator.js';
+import { REQUIRED_FEATURE_KEY } from '../entitlements/feature.decorator.js';
+import { SESSION_ONLY_KEY } from '../../modules/auth/guards/session-only.decorator.js';
+import { ZodBody } from '../http/zod-validation.pipe.js';
 import { PERMISSION_EXEMPT_KEY, REQUIRED_PERMISSION_KEY } from './permission.decorator.js';
 
 /**
@@ -29,6 +38,23 @@ export interface RouteDeclaration {
   readonly declaration: 'public' | 'permission' | 'exempt' | 'missing';
   readonly permission?: string;
   readonly exemptReason?: string;
+  /** From `@RequireFeature`: the plan feature this route needs, if any. */
+  readonly feature?: string;
+  /** From `@SessionOnly`: a route about the signed-in person, which an API key cannot reach. */
+  readonly sessionOnly?: boolean;
+  /** `@HttpCode`, or the convention: 201 for a POST, 200 for everything else. */
+  readonly successStatus: number;
+  /**
+   * The Zod schemas the route's **own pipes** validate with, read off the pipe instances in
+   * Nest's argument metadata.
+   *
+   * This is what makes the published document impossible to drift from the product: the thing
+   * that documents an endpoint is the thing that refuses a bad request to it. The alternative —
+   * `@ApiBody()` beside `@Body(zodBody(...))` — is two descriptions of one contract, and the
+   * one that is wrong is always the one nobody runs.
+   */
+  readonly bodySchema?: ZodType;
+  readonly querySchema?: ZodType;
 }
 
 const HTTP_METHOD_NAMES: Record<number, string> = {
@@ -107,10 +133,19 @@ export class RouteAuditService implements OnApplicationBootstrap {
           [...targets],
         );
 
+        const httpMethod = HTTP_METHOD_NAMES[httpMethodCode ?? 0] ?? 'GET';
+        const feature = this.reflector.getAllAndOverride<string>(REQUIRED_FEATURE_KEY, [
+          ...targets,
+        ]);
+        const sessionOnly =
+          this.reflector.getAllAndOverride<boolean>(SESSION_ONLY_KEY, [...targets]) === true;
+        const httpCode = Reflect.getMetadata(HTTP_CODE_METADATA, handler) as number | undefined;
+        const schemas = zodSchemasOf(prototype, methodName);
+
         routes.push({
           controller: wrapper.metatype.name,
           method: methodName,
-          httpMethod: HTTP_METHOD_NAMES[httpMethodCode ?? 0] ?? 'GET',
+          httpMethod,
           path: joinPaths(controllerPath, this.pathOf(routePath)),
           declaration: isPublic
             ? 'public'
@@ -121,6 +156,10 @@ export class RouteAuditService implements OnApplicationBootstrap {
                 : 'missing',
           ...(required ? { permission: required.permission } : {}),
           ...(exemptReason ? { exemptReason } : {}),
+          ...(feature ? { feature } : {}),
+          ...(sessionOnly ? { sessionOnly: true } : {}),
+          successStatus: httpCode ?? (httpMethod === 'POST' ? 201 : 200),
+          ...schemas,
         });
       }
     }
@@ -140,4 +179,37 @@ function joinPaths(controllerPath: string, routePath: string): string {
     .map((segment) => segment.replace(/^\/+|\/+$/g, ''))
     .filter((segment) => segment.length > 0);
   return `/${segments.join('/')}`;
+}
+
+/**
+ * The Zod schemas attached to a handler's `@Body()` / `@Query()` pipes.
+ *
+ * Nest stores one entry per parameter under `ROUTE_ARGS_METADATA`, keyed `"<paramtype>:<index>"`,
+ * each carrying the pipe instances the parameter was decorated with. A `ZodBody` pipe holds the
+ * schema it validates against, so reading it here means the document and the validator cannot
+ * disagree.
+ */
+function zodSchemasOf(
+  prototype: object,
+  methodName: string,
+): { bodySchema?: ZodType; querySchema?: ZodType } {
+  const metadata = Reflect.getMetadata(ROUTE_ARGS_METADATA, prototype.constructor, methodName) as
+    | Record<string, { pipes?: unknown[] }>
+    | undefined;
+  if (!metadata) return {};
+
+  const found: { bodySchema?: ZodType; querySchema?: ZodType } = {};
+  for (const [key, entry] of Object.entries(metadata)) {
+    const paramType = Number(key.split(':')[0]);
+    // 3 = BODY, 4 = QUERY in Nest's `RouteParamtypes`. Written as numbers because the enum is
+    // not exported from the public entry point, and named here so the next reader knows why.
+    if (paramType !== 3 && paramType !== 4) continue;
+    const pipe = (entry.pipes ?? []).find((candidate): candidate is ZodBody<unknown> =>
+      candidate instanceof ZodBody,
+    );
+    if (!pipe) continue;
+    if (paramType === 3) found.bodySchema = pipe.schema;
+    else found.querySchema = pipe.schema;
+  }
+  return found;
 }

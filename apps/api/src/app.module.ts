@@ -38,6 +38,7 @@ import { PaymentsModule } from './modules/payments/payments.module.js';
 import { TasksModule } from './modules/tasks/tasks.module.js';
 import { CallsModule } from './modules/calls/calls.module.js';
 import { FormsModule } from './modules/forms/forms.module.js';
+import { OpenApiModule } from './infra/openapi/openapi.module.js';
 import { ApiKeysModule } from './modules/api-keys/api-keys.module.js';
 import { IngestionModule } from './modules/ingestion/ingestion.module.js';
 import { WebhooksModule } from './modules/webhooks/webhooks.module.js';
@@ -70,6 +71,7 @@ import { HealthModule } from './modules/health/health.module.js';
     TimelineModule,
     QueueModule,
     AuthzModule,
+    OpenApiModule,
     EntitlementsModule,
     AuthModule,
     OrganizationsModule,

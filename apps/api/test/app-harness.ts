@@ -37,7 +37,17 @@ export async function bootTestApp(): Promise<TestApp> {
   });
 
   const logger = app.get<Logger>(LOGGER);
-  app.setGlobalPrefix('api/v1', { exclude: ['health/live', 'health/ready', 'health/deep'] });
+  app.setGlobalPrefix('api/v1', { exclude: [
+      'health/live',
+      'health/ready',
+      'health/deep',
+      // `/openapi.json` and `/docs` are the developer surface, and §1 of the API contract puts
+      // them outside the version: a document whose own URL moved with the version would be a
+      // link every integrator has bookmarked and nobody can find.
+      'openapi.json',
+      'docs',
+      'docs/errors',
+    ] });
   installValidationCopy();
   allowEmptyJsonBody(app, 256 * 1024);
   allowCsvUpload(app, 20 * 1024 * 1024, ['/api/v1/imports']);

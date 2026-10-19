@@ -2127,6 +2127,81 @@ template application ever answers a 500.
 
 ---
 
+### Step 5 — the published contract, generated from the validators that run ✅ _(landed 2026-10-19)_
+
+`FR-API-3`. Step 4 made the whole product reachable with a key. This publishes what is reachable:
+an OpenAPI 3.1 document, a reference and an errors page a developer can read without signing in,
+and a committed copy that **fails the build** when the API changes under it. It is the phase's
+sixth exit criterion, and five of six are now met.
+
+**Nothing is annotated.** The document is generated from the routing table — the same enumeration
+that fails startup when a route declares no authorization — and the request and query schemas are
+read off each route's own `ZodBody` **pipes**
+([ADR-0033](./decisions/ADR-0033-the-published-contract-is-generated-from-the-validators-that-run.md)).
+Two properties follow, and they are the whole argument: **every one of the 289 routes is in it**,
+whether or not anybody remembered, and the schema a client reads **is** the object that refuses its
+bad request. The sketch in §11 called for `@nestjs/swagger` decorators; 289 routes × three
+decorators is a second description of every endpoint maintained beside the first, and this codebase
+has learned twice which of the two is wrong — the one nothing executes. The authorization model
+travels as extensions (`x-leados-permission`, `x-leados-feature`, `x-leados-session-only`), so a
+reader is told which permission an endpoint needs, which plan feature gates it, and whether a key
+may use it at all.
+
+**What the generator cannot know, it does not invent.** A summary is the handler's name said as a
+sentence. A body example carries the schema's **required** fields with placeholder values, because
+a fabricated example with plausible names in it reads as real data and gets copied into production.
+Each endpoint's `curl` reads the credential from shell variables, as every snippet in this product
+does.
+
+**`/docs` is rendered on the server — no Scalar, no Redoc, no CDN, no JavaScript.** A docs page
+that needs an external request is blank on exactly the deployment whose operator most needs to read
+it, and a spinner is a poor first impression of an API. It is one function over the document the API
+just built: endpoints grouped by resource, what each needs in words, its parameters and body fields
+with types, and the request to copy. `/docs/errors` lists every code with its status, what it means,
+what to do and whether to retry — from `ERROR_CATALOGUE`, a `Record<ErrorCode, …>`, so a code
+cannot be added to the union without describing it. All three are **public** and sit outside the
+version: a spec behind a credential is a spec nobody evaluating the product can read, and it
+discloses nothing a caller could not learn by trying every path.
+
+**The committed `docs/openapi.json` is the check, not the source.** The server always builds from
+the live routing table; the artifact is what `openapi.e2e-spec.ts` compares against, and when they
+differ the failure is a **classified** diff rather than a byte diff: a removed operation, a changed
+permission, a newly required field or plan feature, a route closed to keys, a success status no
+longer answered — breaking. A new path, a new operation, a new optional parameter — additive. The
+classifier is conservative on purpose: a false alarm is a sentence in a commit message, and a missed
+one is somebody's integration failing on a release that was green. `pnpm --filter @leados/api
+openapi:write` regenerates it.
+
+**Two defects, both found by driving the page in a browser rather than by reading the CSS.** At
+375 px the reference took **91 px of sideways scroll**, because a table cannot reflow — each one now
+scrolls inside its own box, and long paths wrap. And the page made the browser fetch a
+`/favicon.ico` this API does not have: a 404 in the console of the first page a developer reads, and
+a 404 in our own request log. Both are now asserted in the page's spec.
+
+**Verified.** 2 335 tests green — 1 055 unit and 1 280 integration — with 38 of them new: an
+**11-case** suite that asserts the document against the routing table itself (every route present,
+every permission real, a body wherever a route validates one, a query schema rendered as the
+strings a client actually sends, a `curl` per endpoint and no secret in any of them), the committed
+artifact compared and the three URLs served; **11 cases** over the breaking-change classifier,
+where "the diff is small" and "the change is safe" come apart; **11** over the rendered pages; and
+**5** over the error catalogue. Then **30 HTTP checks** that read something out of `/openapi.json` and
+then call the endpoint it describes — the permission it names, the status it promises, the key it
+says may or may not be used, the parameter it does not list being refused, and a real refusal
+matching the published error schema — and **22 browser checks** reading the reference from the app's
+own link, jumping to a section, copying a request, looking a code up on the errors page, and reading
+it at phone width.
+
+**Carried forward, named rather than assumed:** the "try it" sandbox and the generated TypeScript
+client in `packages/contracts` (§11) are **not** built. A client generated from a document that
+changes every release is a package to version, publish and consume, and the web app does not need
+one — it calls the API through its own typed loaders with a spec reconciling its vocabulary against
+`@leados/shared`. There is no hand-written prose per endpoint, by design: the document says what an
+endpoint needs and accepts, and the module READMEs say why it exists. And the document describes
+this application only — the platform admin surface (`/api/admin/v1`) is a Phase 10 application and
+is deliberately absent rather than listed as unimplemented.
+
+---
+
 ## Phase 5 — WhatsApp
 
 **Scope:** Cloud API adapter; WABA/number connection + health; webhook verify + inbound pipeline with
@@ -2302,45 +2377,36 @@ partially landed, with the specific gaps named.
 ## Immediate next step
 
 _This section names the next step only; what each landed step actually did is in the step entries
-above. Last reviewed 2026-10-18, after Phase 4 step 4._
+above. Last reviewed 2026-10-19, after Phase 4 step 5._
 
-**Phase 3 is finished, exit criteria included** — tasks, reminders, reschedule with a mandatory
-reason, the overdue sweeps, SLA policies and working-hours-aware clocks, escalation, the manager
-board, the notification centre with quiet hours, the Today workspace, oversight, calls with
-click-to-call, and the email adapter with bounce → suppression. Step 8 closed the last two criteria:
-the clock asserted across both clock changes in three timezones as a **stored** `due_at`, and a
-zero-training journey that types no URL after the sign-in link.
+**Phase 3 is finished, exit criteria included** — tasks, reminders, the overdue sweeps, SLA
+policies and working-hours-aware clocks, escalation, the manager board, the notification centre
+with quiet hours, the Today workspace, oversight, calls with click-to-call, and the email adapter
+with bounce → suppression.
 
-**Phase 4 is four steps in, and four of its six exit criteria are met and tested.** Step 1 built
-capture forms; step 2 the **public lead API** (a public key and an HMAC instead of a session,
-`inbound_payloads` as the never-lose store, a replay, a test tool, and `FR-CAP-5`'s one click, which
-the mapper then fills in); step 3 **outbound webhooks** (signed deliveries from the outbox, a retry
-schedule on the delivery row, a log per attempt, auto-disable after fifteen failures, SSRF refused
-twice and redirects never followed); step 4 the **key-authenticated REST surface** — the whole
-product reachable with `Authorization: Bearer <key id>.<secret>`, a key acting as the member who
-created it with their current grants, scopes that are permission keys from a curated list, and
-`api_logs` as the integration's own request log, partitioned by day and kept for thirty.
+**Phase 4 is five steps in, and five of its six exit criteria are met and tested.** Capture forms;
+the public lead API with its never-lose payload store, replay, test tool and one-click custom
+field; outbound webhooks retried from their own row with SSRF refused twice; the key-authenticated
+REST surface where a key acts as the member who created it, with `api_logs` as the integration's
+own request log; and now the published contract — an OpenAPI 3.1 document generated from the
+routing table and the validators that run, a server-rendered reference and errors page, and a
+committed artifact whose diff is classified so an unintended breaking change fails the build.
 
-**The next step is OpenAPI and the published docs** (`FR-API-3`), the phase's sixth exit criterion:
-a 3.1 document generated from the code rather than written beside it, committed as an artifact and
-**diffed in CI** so an unintended breaking change fails the build, served at `/docs` with
-copy-paste `curl` per endpoint and an errors page listing every code. It is the step that follows
-step 4 and could not have come before it: there was no credential a reader of the docs could use,
-and "try it" against a surface only a session could reach would have been a page for the team that
-wrote it. The pieces are in place — every route declares its permission (the route-authorization
-sweep enumerates them already), every DTO is a Zod schema that can be rendered to JSON Schema, and
-the envelope and error catalogue are single definitions in `@leados/shared`.
+**The next step is the integration framework** (`FR-INT-1`…`FR-INT-4`): the provider registry, the
+credential vault, per-connection health checks and the generic mapping templates, which is what
+`integration_connections`, `sync_cursors`, `integration_health_checks` and `provider_events` were
+designed for in Phase 0 and what the two ad-platform connectors then sit on. It comes before Meta
+Lead Ads and Google Ads deliberately: both need a stored credential that refreshes, a cursor that
+resumes, a health check that surfaces a revoked token as a reconnect prompt, and a mapping from
+somebody else's field names to ours — and building the first connector without that framework is
+how the second one becomes a copy of the first.
 
-Then the rest of **Phase 4**: the integration framework (provider registry, credential vault, health
-checks, generic mapping templates) and the two ad-platform connectors — Meta Lead Ads and Google Ads
-lead forms — which are the phase's fifth exit criterion and the first consumers of
-`provider_events`, `integration_connections` and `sync_cursors`.
+Then the phase's **fifth exit criterion**: Meta Lead Ads and Google Ads lead forms, where a
+duplicate webhook delivery must produce one lead (the inbound idempotency ledger is already built)
+and a revoked token must surface as a reconnect prompt rather than as silence.
 
-Carried forward from Phase 4 step 4: `GET /api-logs` is a bounded window with a limit rather than a
-cursor, and has no per-endpoint rollup — "which endpoint is slowest" is answered by filtering, and a
-rollup belongs with the platform console's usage views. A key's authority stops with its creator's,
-which will surprise somebody the first time an employee leaves and a nightly sync fails; the refusal
-names the cause. And `industry-templates.service.ts` writes a workspace-sized catalogue in one
-transaction, as provisioning did before step 4 gave provisioning an explicit timeout — it has not
-been seen to exceed Prisma's five-second default, and it is the next place to look if applying a
-template ever answers a 500.
+Carried forward from Phase 4 step 5: there is no "try it" sandbox and no generated client package
+(`packages/contracts`), both named in §11 of `api-architecture.md` and both deliberately absent —
+the web app calls the API through its own typed loaders, reconciled by a spec. There is no
+hand-written description per endpoint: the document says what each one needs and accepts, and the
+module READMEs say why it exists.

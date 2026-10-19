@@ -1059,6 +1059,38 @@ tenant for "try it", and an errors page listing every code. A generated TypeScri
 published to `packages/contracts` and consumed by the web app, so the frontend cannot drift from the
 API (`FR-API-3`).
 
+> **Amendment, 2026-10-19 (implementation, Phase 4 step 5).** Built, with three changes to the
+> sketch above
+> ([ADR-0033](./decisions/ADR-0033-the-published-contract-is-generated-from-the-validators-that-run.md)):
+>
+> - **No `@nestjs/swagger` decorators.** The document is generated from the **routing table** —
+>   the same enumeration that fails startup when a route declares no authorization — and the
+>   request and query schemas are read off each route's own `ZodBody` **pipes**. So every one of
+>   the 289 routes is in the document whether or not anybody remembered it, and the schema a client
+>   reads is the object that refuses its bad request. Annotating 289 routes by hand would be a
+>   second description of every endpoint maintained beside the first, and the one that is wrong is
+>   always the one nothing executes. The authorization model travels as extensions:
+>   `x-leados-permission`, `x-leados-feature`, `x-leados-session-only`.
+> - **`/docs` is rendered on the server — no Scalar, no Redoc, no CDN, no JavaScript.** A docs page
+>   that needs an external request is blank on exactly the deployment whose operator most needs to
+>   read it. `/docs/errors` lists every code with its status, what it means, what to do and whether
+>   to retry, from `ERROR_CATALOGUE` — a `Record<ErrorCode, …>`, so a new code cannot be added
+>   without describing it. Both pages and `/openapi.json` are **public** and sit outside the
+>   version: a spec behind a credential is a spec nobody evaluating the product can read, and it
+>   discloses nothing a caller could not learn by trying every path.
+> - **The committed `docs/openapi.json` is the diff check, not the source.** The server always
+>   builds the document from the live routing table; the artifact is what an integration test
+>   compares against, and it fails with a **classified** diff — a removed operation, a changed
+>   permission, a newly required field or plan feature, a route closed to keys are breaking; a new
+>   path or optional parameter is additive. Regenerate with
+>   `pnpm --filter @leados/api openapi:write`.
+>
+> The "try it" sandbox and the generated TypeScript client in `packages/contracts` are **not**
+> built. A client generated from a document that changes with every release is a package to version,
+> publish and consume, and the web app does not need one: it calls the API through its own typed
+> loaders, with a spec reconciling its vocabulary against `@leados/shared`. Named as outstanding
+> rather than quietly dropped.
+
 ---
 
 ## 12. Testing the API

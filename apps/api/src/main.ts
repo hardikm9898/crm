@@ -71,7 +71,17 @@ async function bootstrapHttp(): Promise<void> {
   // /api/v1/* for the product API; /health/* stays unversioned so orchestrator and load
   // balancer probes never move (docs/api-architecture.md §1).
   app.setGlobalPrefix(API_PREFIX.slice(1), {
-    exclude: ['health/live', 'health/ready', 'health/deep'],
+    exclude: [
+      'health/live',
+      'health/ready',
+      'health/deep',
+      // `/openapi.json` and `/docs` are the developer surface, and §1 of the API contract puts
+      // them outside the version: a document whose own URL moved with the version would be a
+      // link every integrator has bookmarked and nobody can find.
+      'openapi.json',
+      'docs',
+      'docs/errors',
+    ],
   });
 
   allowEmptyJsonBody(app, BODY_LIMIT_BYTES);

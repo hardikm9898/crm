@@ -158,6 +158,30 @@ export default async function ApiKeysPage() {
               </Link>
               .
             </p>
+            <p className="mt-2 text-sm text-[var(--color-text-muted)]">
+              {/* The reference is served by the API itself, so it is readable by whoever is
+                  writing the integration — who may not have a login here at all. */}
+              Every endpoint, what it needs and a request to copy:{' '}
+              <a
+                href={`${apiBaseUrl()}/docs`}
+                className="underline"
+                target="_blank"
+                rel="noreferrer"
+                data-api-reference
+              >
+                the API reference
+              </a>
+              , and{' '}
+              <a
+                href={`${apiBaseUrl()}/docs/errors`}
+                className="underline"
+                target="_blank"
+                rel="noreferrer"
+              >
+                every error it can answer
+              </a>
+              .
+            </p>
           </Card>
         </div>
 
