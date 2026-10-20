@@ -999,3 +999,60 @@ report something as done that is not done.
   written into the tree after the run began. The suite had never seen it. A green result is only
   evidence about the tree the run actually read, so a change made during a run means the run is
   spent: start it again, or name exactly which suites were re-run against the final tree.
+- **A shared inbox whose scope is "own" is a shared inbox nobody can read.** `conversations` has no
+  branch or team column, so every data scope narrower than the workspace resolves to
+  `assigned_user_id = me` — and a seeded **sales executive** holds `conversation:read` and
+  `conversation:reply` at `own` scope, in a workspace where nothing assigns conversations. A new
+  customer's first WhatsApp message was therefore visible to nobody but an owner or an admin: the
+  conversations most at risk of never being answered were the ones the inbox hid. The same shape as
+  `/my/today` filtering on `assigned_user_id = me`, one module later, and the file's own comment had
+  already claimed the right behaviour while the code did the other thing. `conversationScopeWhere`
+  adds `OR assigned_user_id IS NULL` for every service that touches a conversation. Found by an e2e
+  test driving a **second real member** — a lock, a scope and a transfer are all invisible to a
+  suite with one caller.
+- **A `dedupeKey` with anything random in it is not a dedupe key.** The first draft of the
+  conversation-assigned notification built one from the type, the conversation and
+  `newId().slice(0, 8)` — which can never match, so it was a key that read as a guarantee and
+  provided none. Either the event has an id to key on (a note's own id does) or it does not, in
+  which case the honest answer is **no key** plus a guard where the duplicate would come from:
+  `assign` returns early when the assignee has not changed, and the sweep's conditional `UPDATE`
+  row count is what stops two wakes.
+- **A biconditional CHECK is right exactly when both directions are contradictions.** This file
+  distrusts them for good reason — the two payments constraints that together made a refund
+  impossible — but `conversations_lock_is_whole` as
+  `(lock_user_id IS NULL) = (lock_expires_at IS NULL)` is correct: a holder with no expiry is a lock
+  that never lapses, which is the one failure the five-minute TTL exists to prevent, and an expiry
+  with no holder is an expiry for nobody. The test is not "does it sound symmetrical" but "is the
+  mirror a state anything could honestly be in".
+- **An opt-out keyword list is a list of ways to silence a customer invisibly.** `no`, `cancel`,
+  `end` and `quit` each appear on somebody's published `STOP` list, and each is a word a customer
+  writes mid-conversation: "no" answers "would Saturday suit?" and "cancel" is about an appointment
+  far more often than about marketing. A false positive leaves nothing on any screen to explain why
+  somebody stopped getting messages, and the only person who could explain it is the customer. Match
+  the **whole** message, keep the list short, and keep a test per word that is deliberately not on
+  it.
+- **A column a doc says exists, and does not, is worse than one it admits is missing.** The step-1
+  amendment in `database-design.md` listed `conversations.lock_user_id`, `lock_expires_at` and
+  `snoozed_until` as "columns with no writer" — they had never been created. Two steps later the
+  work that needed them started by planning around columns that were not there. When a doc says a
+  column exists, `grep` the schema before believing it, and when a step adds the column the doc
+  claimed, correct the old amendment rather than only writing a new one.
+- **`prisma migrate dev --create-only` puts the `ADD COLUMN` among the spurious drops, every time.**
+  Fifteen drops again this step — two composite FKs, four GIN, four trigram, two expression, a
+  partial unique and a partial index. Delete the `-- DropForeignKey` and `-- DropIndex` sections
+  **only**; the `-- AlterTable … ADD COLUMN` block sits in the same region and cutting "everything
+  before the first CreateTable" once removed two of them.
+- **An entry added to a list that a lint rule and a registry both read can land in the wrong one.**
+  Appending `ConversationSweepProcessor` to `processor.registry.ts` by matching two adjacent
+  processor names put it in the **import** block, where those same two names also appear together —
+  so lint reported an unused import and the processor was absent from `PROCESSOR_TYPES`. The
+  integration suite would have caught it (every schedule must have a processor), but lint was
+  cheaper. When two blocks in one file share a shape, anchor on something only one of them has.
+- **"Own scope" makes a colleague's conversation invisible, and a browser check aimed at one reads
+  as a missing feature.** The two-agent lock check timed out waiting for the banner, because the
+  conversation had been assigned to the owner and the colleague is a `sales_executive` with
+  `conversation:read` at `own` scope — a 404, which is the scope working exactly as it should. The
+  case the lock exists for is the **unassigned** conversation both agents can see, so that is what
+  the fixture has to use. The general shape: when a permission check and a feature meet, a check
+  aimed at the wrong fixture fails in a way that looks like the feature, and the only clue is the
+  status code.

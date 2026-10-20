@@ -956,6 +956,14 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       // refusal it never earned.
       '/conversations/:id/attachments': `/conversations/${orgA.conversationId}/attachments?fileName=sweep.pdf`,
       '/conversations/:id/messages/:messageId/media': `/conversations/${orgA.conversationId}/messages/${orgA.outboundMessageId}/media`,
+      // Phase 5, step 4 — the shared inbox
+      '/conversations/:id/claim': `/conversations/${orgA.conversationId}/claim`,
+      '/conversations/:id/assign': `/conversations/${orgA.conversationId}/assign`,
+      '/conversations/:id/transfer': `/conversations/${orgA.conversationId}/transfer`,
+      '/conversations/:id/close': `/conversations/${orgA.conversationId}/close`,
+      '/conversations/:id/reopen': `/conversations/${orgA.conversationId}/reopen`,
+      '/conversations/:id/snooze': `/conversations/${orgA.conversationId}/snooze`,
+      '/conversations/:id/notes': `/conversations/${orgA.conversationId}/notes`,
     };
 
     // An unmapped parameter would test nothing meaningful, so it is reported instead.
@@ -1362,6 +1370,22 @@ function bodyFor(
     // the body, so another workspace's id answers 404 whatever arrives with it.
     case '/conversations/:id/attachments':
       return {};
+    // Phase 5, step 4. Each body names org A's **own** member, so a 200 here would be a finding
+    // rather than a pass: the request references this workspace's person in the body as well as in
+    // the path.
+    case '/conversations/:id/assign':
+      return { assignedUserId: target.userId };
+    case '/conversations/:id/transfer':
+      return { toUserId: target.userId, note: 'Taken by another workspace' };
+    case '/conversations/:id/close':
+      return { note: 'Closed by another workspace' };
+    case '/conversations/:id/reopen':
+      return {};
+    case '/conversations/:id/snooze':
+      // A real instant in the future, so the schema cannot refuse this before the scope check does.
+      return { until: new Date(Date.now() + 3_600_000).toISOString() };
+    case '/conversations/:id/notes':
+      return { body: 'A note from another workspace' };
     case '/whatsapp/templates':
       return {
         accountId: target.whatsappAccountId,

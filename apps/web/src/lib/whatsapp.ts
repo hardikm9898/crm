@@ -80,6 +80,10 @@ export interface ConversationSummary {
   /** Both, because they answer different questions: one disables a button, one is read. */
   windowIsOpen: boolean;
   windowSummary: string;
+  /** Who holds the soft lock, and what this viewer should be told about it (`FR-WA-7`). */
+  lockedBy: { id: string; name: string } | null;
+  lock: ConversationLock;
+  snoozedUntil: string | null;
   tags: string[];
   lastMessage: {
     direction: MessageDirection;
@@ -101,6 +105,24 @@ export interface ConversationDetail extends ConversationSummary {
         owner: { id: string; name: string } | null;
       })
     | null;
+}
+
+/** The soft lock, as the API answers it: a state and a sentence, never two raw columns. */
+export interface ConversationLock {
+  held: boolean;
+  mine: boolean;
+  expiresAt: string | null;
+  /** What this viewer should be told, or null when there is nothing to say. */
+  message: string | null;
+}
+
+export interface ConversationNote {
+  id: string;
+  body: string;
+  author: { id: string; name: string };
+  /** The people it names, with their names resolved — never a raw id on the screen. */
+  mentions: { id: string; name: string }[];
+  createdAt: string;
 }
 
 export interface ConversationMessage {
@@ -484,4 +506,58 @@ export function attachmentName(media: MessageMedia): string {
   if (name) return name;
   if (media.voice) return 'Voice note';
   return 'Attachment';
+}
+
+/**
+ * One conversation's internal notes.
+ *
+ * Throwing, with no swallowing twin: the panel's whole job is to show what colleagues have said,
+ * and a caught failure would tell a conversation with four notes on it that nobody has written
+ * anything — a permanent, silent lie on the screen somebody opened to read them.
+ */
+export async function loadNotes(
+  conversationId: string,
+  token: string | null,
+): Promise<ConversationNote[]> {
+  const response = await request<ConversationNote[]>(`/conversations/${conversationId}/notes`, {
+    token,
+  });
+  return response.data;
+}
+
+/** What the inbox says about a conversation's state, as a person reads it. */
+export function describeConversationState(conversation: ConversationSummary): string | null {
+  if (conversation.status === 'closed') return 'Closed.';
+  if (conversation.status === 'snoozed') {
+    return conversation.snoozedUntil === null
+      ? 'Put aside.'
+      : `Put aside until ${new Date(conversation.snoozedUntil).toLocaleString()}.`;
+  }
+  return null;
+}
+
+/**
+ * The snooze options a screen offers, as instants.
+ *
+ * Offered as choices rather than as a free date box, because "later today" is what somebody
+ * means and computing it is the product's job. Each is resolved against `now` at render time, so
+ * a tab left open overnight does not offer yesterday afternoon.
+ */
+export function snoozeChoices(now: Date = new Date()): { label: string; until: string }[] {
+  const inHours = (hours: number) => new Date(now.getTime() + hours * 3_600_000).toISOString();
+  return [
+    { label: 'In 3 hours', until: inHours(3) },
+    { label: 'Tomorrow morning', until: tomorrowAt(now, 9) },
+    { label: 'Next week', until: inHours(24 * 7) },
+  ];
+}
+
+function tomorrowAt(now: Date, hour: number): string {
+  const next = new Date(now);
+  next.setDate(next.getDate() + 1);
+  next.setHours(hour, 0, 0, 0);
+  // A snooze into the past is refused by the API, and "tomorrow at 9" never is — but the guard
+  // costs nothing and the alternative is a choice that answers 400.
+  if (next.getTime() <= now.getTime()) next.setDate(next.getDate() + 1);
+  return next.toISOString();
 }

@@ -3,7 +3,20 @@
 import { useActionState, useState } from 'react';
 import { Button, ErrorNotice } from '@/components/ui';
 import { IDLE } from '@/lib/action-state';
-import { markConversationRead, retryMessage, sendAttachment, sendMessage } from '../actions';
+import {
+  addConversationNote,
+  assignConversation,
+  claimConversation,
+  closeConversation,
+  markConversationRead,
+  releaseConversation,
+  reopenConversation,
+  retryMessage,
+  sendAttachment,
+  sendMessage,
+  snoozeConversation,
+  transferConversation,
+} from '../actions';
 
 /**
  * "Mark as read", and nothing else.
@@ -245,5 +258,299 @@ export function AttachmentForm({
         <span className="text-xs text-[var(--color-text-muted)]">{limits}</span>
       </div>
     </form>
+  );
+}
+
+/**
+ * Who has this conversation open, and the one button about it (`FR-WA-7`).
+ *
+ * The sentence is the **API's**, through `conversationLock` in `@leados/shared` — the same
+ * function the write path calls — so the warning an agent reads and the state the server holds
+ * cannot disagree. It is a warning and not a block: the button to take it over says so, because a
+ * refusal here means a customer waits until somebody else's five minutes run out.
+ */
+export function LockBanner({
+  conversationId,
+  lock,
+}: {
+  conversationId: string;
+  lock: { held: boolean; mine: boolean; message: string | null };
+}) {
+  const [claimState, claim, claiming] = useActionState(claimConversation, IDLE);
+  const [releaseState, release, releasing] = useActionState(releaseConversation, IDLE);
+  const error = claimState.status === 'error' ? claimState : releaseState.status === 'error' ? releaseState : null;
+
+  return (
+    <div className="flex flex-col gap-2" data-lock-banner={conversationId}>
+      {error && <ErrorNotice>{error.message}</ErrorNotice>}
+      {lock.message !== null && (
+        <p
+          className={`text-xs ${lock.mine ? 'text-[var(--color-text-muted)]' : 'text-[var(--color-warning)]'}`}
+          data-lock-message={conversationId}
+        >
+          {lock.message}
+        </p>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        {lock.mine ? (
+          <form action={release}>
+            <input type="hidden" name="conversationId" value={conversationId} />
+            <Button type="submit" variant="secondary" disabled={releasing}>
+              {releasing ? 'Letting go…' : 'Let go'}
+            </Button>
+          </form>
+        ) : (
+          <form action={claim}>
+            <input type="hidden" name="conversationId" value={conversationId} />
+            <Button type="submit" variant="secondary" disabled={claiming}>
+              {claiming ? 'Opening…' : lock.held ? 'Take over' : "I'm on this"}
+            </Button>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Assignment, transfer, close, reopen and snooze — the things somebody does *to* a conversation.
+ *
+ * One component because they are one row of controls on the screen, and **separate forms** because
+ * each is a different act with a different body: one form that did whichever field was filled is
+ * the ambiguity that sends the wrong one. Every field selector is scoped to its own form for the
+ * same reason a payments panel's `name="note"` once broke a deal check.
+ */
+export function ConversationActions({
+  conversationId,
+  status,
+  assignedToId,
+  members,
+  snoozeOptions,
+}: {
+  conversationId: string;
+  status: string;
+  assignedToId: string | null;
+  members: readonly { userId: string; name: string }[];
+  snoozeOptions: readonly { label: string; until: string }[];
+}) {
+  const [assignState, assign, assigning] = useActionState(assignConversation, IDLE);
+  const [transferState, transfer, transferring] = useActionState(transferConversation, IDLE);
+  const [closeState, close, closing] = useActionState(closeConversation, IDLE);
+  const [reopenState, reopen, reopening] = useActionState(reopenConversation, IDLE);
+  const [snoozeState, snooze, snoozing] = useActionState(snoozeConversation, IDLE);
+  const failure =
+    [assignState, transferState, closeState, reopenState, snoozeState].find(
+      (state) => state.status === 'error',
+    ) ?? null;
+  // Echoed, so a refused assignment does not lose the person somebody picked — and `key` with it,
+  // because a `<select>` comes back from a refusal through nothing else. Third time this product
+  // has paid for that.
+  const echoedAssignee =
+    assignState.status === 'error' ? (assignState.values?.['assignedUserId'] ?? '') : (assignedToId ?? '');
+
+  return (
+    <div className="flex flex-col gap-3" data-conversation-actions={conversationId}>
+      {failure && <ErrorNotice>{failure.message}</ErrorNotice>}
+
+      <form action={assign} className="flex flex-wrap items-end gap-2">
+        <input type="hidden" name="conversationId" value={conversationId} />
+        <label className="flex flex-col gap-1 text-xs text-[var(--color-text-muted)]">
+          Owner
+          <select
+            key={`assignee-${echoedAssignee}`}
+            name="assignedUserId"
+            defaultValue={echoedAssignee}
+            className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-sm text-[var(--color-text)]"
+            data-assign-picker={conversationId}
+          >
+            {/* "Nobody" is a real choice: a conversation in the pool is visible to everybody who
+                can read it, and is what somebody going on leave needs. */}
+            <option value="">Nobody — back in the pool</option>
+            {members.map((member) => (
+              <option key={member.userId} value={member.userId}>
+                {member.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <Button type="submit" variant="secondary" disabled={assigning}>
+          {assigning ? 'Saving…' : 'Set owner'}
+        </Button>
+      </form>
+
+      <form action={transfer} className="flex flex-wrap items-end gap-2">
+        <input type="hidden" name="conversationId" value={conversationId} />
+        <label className="flex flex-col gap-1 text-xs text-[var(--color-text-muted)]">
+          Hand to
+          <select
+            name="toUserId"
+            defaultValue=""
+            className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-sm text-[var(--color-text)]"
+            data-transfer-picker={conversationId}
+          >
+            <option value="">Choose a colleague…</option>
+            {members
+              .filter((member) => member.userId !== assignedToId)
+              .map((member) => (
+                <option key={member.userId} value={member.userId}>
+                  {member.name}
+                </option>
+              ))}
+          </select>
+        </label>
+        <label className="flex min-w-0 flex-1 flex-col gap-1 text-xs text-[var(--color-text-muted)]">
+          Why
+          <input
+            name="transferNote"
+            defaultValue={
+              transferState.status === 'error' ? (transferState.values?.['transferNote'] ?? '') : ''
+            }
+            placeholder="On leave — she expects a call Monday"
+            className="w-full min-w-0 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-sm text-[var(--color-text)]"
+            data-transfer-note={conversationId}
+          />
+        </label>
+        <Button type="submit" variant="secondary" disabled={transferring}>
+          {transferring ? 'Handing over…' : 'Transfer'}
+        </Button>
+      </form>
+
+      <div className="flex flex-wrap items-end gap-2">
+        {status === 'closed' ? (
+          <form action={reopen}>
+            <input type="hidden" name="conversationId" value={conversationId} />
+            <Button type="submit" variant="secondary" disabled={reopening}>
+              {reopening ? 'Opening…' : 'Reopen'}
+            </Button>
+          </form>
+        ) : (
+          <>
+            <form action={close} className="flex flex-wrap items-end gap-2">
+              <input type="hidden" name="conversationId" value={conversationId} />
+              <label className="flex min-w-0 flex-col gap-1 text-xs text-[var(--color-text-muted)]">
+                Closing note
+                <input
+                  name="closeNote"
+                  defaultValue={
+                    closeState.status === 'error' ? (closeState.values?.['closeNote'] ?? '') : ''
+                  }
+                  placeholder="Booked a site visit"
+                  className="w-full min-w-0 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-sm text-[var(--color-text)]"
+                  data-close-note={conversationId}
+                />
+              </label>
+              <Button type="submit" variant="secondary" disabled={closing}>
+                {closing ? 'Closing…' : 'Close'}
+              </Button>
+            </form>
+            <form action={snooze} className="flex flex-wrap items-end gap-2">
+              <input type="hidden" name="conversationId" value={conversationId} />
+              <label className="flex flex-col gap-1 text-xs text-[var(--color-text-muted)]">
+                Come back
+                <select
+                  name="until"
+                  defaultValue={snoozeOptions[0]?.until ?? ''}
+                  className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-sm text-[var(--color-text)]"
+                  data-snooze-picker={conversationId}
+                >
+                  {snoozeOptions.map((option) => (
+                    <option key={option.until} value={option.until}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <Button type="submit" variant="secondary" disabled={snoozing}>
+                {snoozing ? 'Putting aside…' : 'Snooze'}
+              </Button>
+            </form>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Internal notes, and the colleagues a note names (`FR-WA-7`).
+ *
+ * The mention picker submits **ids** while the box carries whatever somebody typed: a service that
+ * parsed `@Asha` out of the text would tell the wrong Asha the moment a workspace has two, and the
+ * mistake would be silent in the worst direction — the right person never hears about it.
+ */
+export function NotesPanel({
+  conversationId,
+  notes,
+  members,
+}: {
+  conversationId: string;
+  notes: readonly {
+    id: string;
+    body: string;
+    author: { name: string };
+    mentions: { id: string; name: string }[];
+    createdAt: string;
+  }[];
+  members: readonly { userId: string; name: string }[];
+}) {
+  const [state, submit, pending] = useActionState(addConversationNote, IDLE);
+  return (
+    <div className="flex flex-col gap-3" data-notes-panel={conversationId}>
+      <form action={submit} className="flex flex-col gap-2">
+        <input type="hidden" name="conversationId" value={conversationId} />
+        {state.status === 'error' && <ErrorNotice>{state.message}</ErrorNotice>}
+        <textarea
+          name="noteBody"
+          rows={2}
+          defaultValue={state.status === 'error' ? (state.values?.['noteBody'] ?? '') : ''}
+          placeholder="A note for your colleagues — the customer never sees this."
+          className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-sm text-[var(--color-text)]"
+          data-note-body={conversationId}
+        />
+        {members.length > 0 && (
+          <fieldset className="flex flex-wrap items-center gap-3 text-xs text-[var(--color-text-muted)]">
+            <legend className="sr-only">Mention a colleague</legend>
+            <span>Tell</span>
+            {members.map((member) => (
+              <label key={member.userId} className="flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  name="mentionedUserIds"
+                  value={member.userId}
+                  data-mention={member.userId}
+                />
+                {member.name}
+              </label>
+            ))}
+          </fieldset>
+        )}
+        <div>
+          <Button type="submit" variant="secondary" disabled={pending}>
+            {pending ? 'Saving…' : 'Add note'}
+          </Button>
+        </div>
+      </form>
+
+      {notes.length === 0 ? (
+        <p className="text-sm text-[var(--color-text-muted)]">No notes on this conversation yet.</p>
+      ) : (
+        <ol className="flex flex-col gap-2">
+          {notes.map((note) => (
+            <li
+              key={note.id}
+              className="rounded-[var(--radius-card)] border border-[var(--color-border)] px-3 py-2 text-sm"
+              data-note={note.id}
+            >
+              <p className="whitespace-pre-wrap">{note.body}</p>
+              <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                {note.author.name}
+                {note.mentions.length > 0 &&
+                  ` · told ${note.mentions.map((mention) => mention.name).join(', ')}`}
+              </p>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
   );
 }

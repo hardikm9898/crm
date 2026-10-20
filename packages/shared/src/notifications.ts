@@ -252,6 +252,47 @@ export const NOTIFICATION_TYPES: readonly NotificationTypeSpec[] = [
      */
     staleness: 'never',
   },
+  {
+    type: 'conversation.assigned',
+    label: 'A conversation handed to you',
+    hint: 'When somebody assigns or transfers a WhatsApp conversation to you, with their reason.',
+    group: 'work',
+    defaultChannels: ['in_app'],
+    optOut: true,
+    respectsQuietHours: true,
+    /**
+     * Never stale. A conversation somebody handed you at 21:40 is still yours at 09:00 — even if
+     * they took it back in between, "I was given this and then it moved" is a thing worth knowing,
+     * and holding the first half while dropping it would tell you only about the second.
+     */
+    staleness: 'never',
+  },
+  {
+    type: 'conversation.mentioned',
+    label: 'Mentions in conversation notes',
+    hint: 'When a colleague names you in an internal note on a conversation.',
+    group: 'work',
+    defaultChannels: ['in_app'],
+    optOut: true,
+    respectsQuietHours: true,
+    // A mention is somebody asking you a question. It does not stop mattering because time passed.
+    staleness: 'never',
+  },
+  {
+    type: 'conversation.woke',
+    label: 'Snoozed conversations coming back',
+    hint: 'When a conversation you put aside reaches the time you chose.',
+    group: 'work',
+    defaultChannels: ['in_app'],
+    optOut: true,
+    /**
+     * Held through quiet hours, unlike the WhatsApp send failure. This one is a reminder somebody
+     * set **for themselves**, so the cost of holding it is paid by the person who chose the time —
+     * which is the whole test the registry applies.
+     */
+    respectsQuietHours: true,
+    staleness: 'never',
+  },
 ];
 
 export function notificationType(type: string): NotificationTypeSpec | undefined {

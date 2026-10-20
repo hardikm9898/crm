@@ -520,6 +520,52 @@ POST /whatsapp/campaigns                     consent-checked bulk (FR-WA-10)
 >   runs, so the 16 MB limit this route needs would otherwise be an unauthenticated sink on
 >   `/auth/login` — the `text/csv` lesson, in a second place.
 
+> **Amendment, 2026-10-20 (implementation, Phase 5 step 4 — the shared inbox).** Eight more, which
+> completes `FR-WA-7` apart from tags, canned replies and realtime:
+>
+> ```
+> POST   /conversations/{id}/claim      take or refresh the soft lock · DELETE to let go
+> POST   /conversations/{id}/assign     { assignedUserId: uuid | null, reason? }
+> POST   /conversations/{id}/transfer   { toUserId, note } — both required
+> POST   /conversations/{id}/close      { note? } · POST /{id}/reopen
+> POST   /conversations/{id}/snooze     { until }
+> GET    /conversations/{id}/notes      · POST with { body, mentionedUserIds? }
+> ```
+>
+> - **An unclaimed conversation is readable and answerable by anybody who holds the permission**
+>   ([ADR-0039](./decisions/ADR-0039-a-conversation-lock-is-advisory-and-an-unclaimed-conversation-is-everybodys.md)).
+>   A conversation has no branch or team column, so every narrower scope resolved to "assigned to
+>   me" — which made a *shared* inbox unreadable by the own-scoped executives it is for, in the
+>   common case where nothing assigns conversations at all. One decider,
+>   `conversationScopeWhere`, used by all four services that touch a conversation.
+> - **`POST …/claim` answers 200 with the conversation, not 409.** The lock is advisory: taking one
+>   a colleague holds is allowed, the override is audited, and the answer carries
+>   `lock: { held, mine, expiresAt, message }` so the screen says the right sentence from the
+>   viewer's own side. `DELETE` releases **only your own** — a colleague's lock is left alone,
+>   because releasing it would be a lie.
+> - **`assignedUserId` is `.nullable()`, not `.optional()`.** "Nobody — back in the pool" is a real
+>   answer, and folding an absent key to a default is the `?flag=true` mistake in a body. Assigning
+>   somebody the conversation they already have answers **200** rather than 422: pressing a button
+>   twice is not a mistake, and the screen's state may simply be stale.
+> - **A transfer requires both halves.** The recipient, because a transfer to nobody is an
+>   unassignment with its own endpoint; the note, because "transfer is audited" is this phase's exit
+>   criterion and an audit row with no reason answers nothing three weeks later.
+> - **`snooze` takes an instant, not a duration**, and refuses the past (400, naming `until`) and
+>   anything over 30 days. The screen offers "in 3 hours", "tomorrow morning" and "next week" and
+>   sends what those mean, resolved at render time.
+> - **`POST …/notes` takes ids, not `@names`.** Parsing a name out of the text is ambiguous the
+>   moment a workspace has two Ashas, and wrong in the quiet direction. Every id is checked against
+>   `Membership` and an unknown one is a **400** naming the field — an array column cannot carry a
+>   foreign key, so this is the check that replaces one.
+> - **Notes are behind `conversation:read` to list and `conversation:reply` to write.** A note is
+>   something somebody adds to the record, and the permission that lets you write to a conversation
+>   is the one that should let you write about it.
+> - **`conversation:assign` guards assign and transfer**, and has been in the catalogue since
+>   Phase 1 — granted in every existing workspace, verified with
+>   `SELECT count(*) FROM role_permissions WHERE permission_key = 'conversation:assign'` (489 rows)
+>   rather than assumed. **No backfill migration**, because a verified no-op migration is worse than
+>   none.
+
 ### Capture, integrations, developer platform
 
 ```

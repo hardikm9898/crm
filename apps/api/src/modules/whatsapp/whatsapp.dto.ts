@@ -125,6 +125,60 @@ export const previewTemplateSchema = z
   .strict();
 
 /**
+ * The shared inbox's own mutations (`FR-WA-7`).
+ *
+ * `assignedUserId` is **nullable and that is a real answer**, not laxity: "put this back in the
+ * pool" is what an agent going on holiday needs, and a conversation nobody owns is visible to
+ * everybody who can read it. `.nullable()` rather than `.optional()`, so an absent key and an
+ * explicit `null` cannot be confused — the `?flag=true` lesson, in a body.
+ */
+export const assignConversationSchema = z
+  .object({
+    assignedUserId: z.string().uuid().nullable(),
+    reason: z.string().trim().min(1).max(500).optional(),
+  })
+  .strict();
+
+/**
+ * A transfer insists on both halves.
+ *
+ * The recipient is required because a transfer to nobody is an unassignment, which has its own
+ * endpoint; the note is required because "transfer is audited" is this phase's exit criterion and
+ * an audit row with no reason answers nothing three weeks later.
+ */
+export const transferConversationSchema = z
+  .object({
+    toUserId: z.string().uuid(),
+    note: z.string().trim().min(1).max(500),
+  })
+  .strict();
+
+export const closeConversationSchema = z
+  .object({ note: z.string().trim().min(1).max(500).optional() })
+  .strict();
+
+export const snoozeConversationSchema = z
+  .object({
+    /** An instant, not a duration: the screen offers "this afternoon" and sends what that means. */
+    until: z.coerce.date(),
+  })
+  .strict();
+
+/**
+ * An internal note, and who it names.
+ *
+ * The ids are what the product acts on and the body is what somebody typed, submitted together so
+ * they cannot disagree — a service that parsed `@Asha` out of the text would tell the wrong Asha
+ * the moment a workspace has two.
+ */
+export const createNoteSchema = z
+  .object({
+    body: z.string().trim().min(1).max(4000),
+    mentionedUserIds: z.array(z.string().uuid()).max(20).optional(),
+  })
+  .strict();
+
+/**
  * What comes with an attachment's bytes (`FR-WA-3`).
  *
  * In the query string rather than the body, because the body **is** the file: a raw upload has
@@ -149,3 +203,8 @@ export type ListConversationsQuery = z.infer<typeof listConversationsSchema>;
 export type ListMessagesQuery = z.infer<typeof listMessagesSchema>;
 export type ConnectWabaInput = z.infer<typeof connectWabaSchema>;
 export type AttachmentQuery = z.infer<typeof attachmentQuerySchema>;
+export type AssignConversationInput = z.infer<typeof assignConversationSchema>;
+export type TransferConversationInput = z.infer<typeof transferConversationSchema>;
+export type CloseConversationInput = z.infer<typeof closeConversationSchema>;
+export type SnoozeConversationInput = z.infer<typeof snoozeConversationSchema>;
+export type CreateNoteInput = z.infer<typeof createNoteSchema>;

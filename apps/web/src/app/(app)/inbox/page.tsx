@@ -12,7 +12,10 @@ import {
   attachmentWaiting,
   conversationQuery,
   conversationTitle,
+  describeConversationState,
   describeSize,
+  loadNotes,
+  snoozeChoices,
   loadConversation,
   loadConversations,
   loadMessages,
@@ -23,9 +26,19 @@ import {
   templateVariables,
   type ConversationDetail,
   type ConversationMessage,
+  type ConversationNote,
   type MessageMedia,
 } from '@/lib/whatsapp';
-import { AttachmentForm, Composer, MarkReadForm, RetryForm } from './_components/inbox-forms';
+import { loadMembers } from '@/lib/leads';
+import {
+  AttachmentForm,
+  Composer,
+  ConversationActions,
+  LockBanner,
+  MarkReadForm,
+  NotesPanel,
+  RetryForm,
+} from './_components/inbox-forms';
 
 /**
  * The WhatsApp inbox (`FR-WA-7`, `FR-WA-8`).
@@ -84,10 +97,15 @@ export default async function InboxPage({
   // The templates a composer may offer, each resolved against **this** lead: a picker that showed
   // `{{1}}` would make an agent open another screen to find out what they are about to send.
   let composerTemplates: ComposerTemplate[] = [];
+  let notes: ConversationNote[] = [];
+  // The colleagues a conversation can be given to, or a note can name. Swallowing, because a
+  // member list that failed to load must not stop somebody reading a thread.
+  const members = await loadMembers(token);
   if (selected) {
     try {
       conversation = await loadConversation(selected, token);
       messages = (await loadMessages(selected, token)).items;
+      notes = await loadNotes(selected, token);
       const approved = await loadSendableTemplates(token);
       composerTemplates = await Promise.all(
         approved.map(async (template) => {
@@ -267,6 +285,39 @@ export default async function InboxPage({
                 messages={messages}
                 templates={composerTemplates}
               />
+              {/* Who has it, who owns it, and what state it is in — above the lead context,
+                  because the first question an agent opening a shared inbox has is whether
+                  somebody else is already on it (`FR-WA-7`). */}
+              <Card
+                title="This conversation"
+                description={
+                  describeConversationState(conversation) ??
+                  'Open. Assign it, hand it over, or put it aside.'
+                }
+              >
+                <div className="flex flex-col gap-4">
+                  <LockBanner conversationId={conversation.id} lock={conversation.lock} />
+                  <ConversationActions
+                    conversationId={conversation.id}
+                    status={conversation.status}
+                    assignedToId={conversation.assignedTo?.id ?? null}
+                    members={members}
+                    // Resolved at render time, so a tab left open overnight does not offer
+                    // yesterday afternoon.
+                    snoozeOptions={snoozeChoices(now)}
+                  />
+                </div>
+              </Card>
+              <Card
+                title="Internal notes"
+                description="Only your colleagues see these. Tick a name to tell them."
+              >
+                <NotesPanel
+                  conversationId={conversation.id}
+                  notes={notes}
+                  members={members}
+                />
+              </Card>
               <LeadContext conversation={conversation} />
             </>
           )}

@@ -130,6 +130,7 @@ export const TENANT_MODELS = [
   // Phase 5, step 3 — media. One file per message, belonging to the workspace whose number it
   // arrived at or was sent from.
   'MessageMedia',
+  'ConversationNote',
 ] as const;
 
 export type TenantModel = (typeof TENANT_MODELS)[number];

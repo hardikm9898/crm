@@ -18,6 +18,7 @@ import { LOGGER } from '../../infra/observability/logger.module.js';
 import { TimelineService } from '../../infra/timeline/timeline.service.js';
 import { LeadsService } from '../leads/leads.service.js';
 import { deterministicEventId } from './whatsapp-ids.js';
+import { WhatsAppConsentService } from './whatsapp-consent.service.js';
 import { WhatsAppMediaService } from './whatsapp-media.service.js';
 
 /** What one inbound message did, for the log and for a test. */
@@ -29,6 +30,13 @@ export interface InboundResult {
   readonly leadCreated: boolean;
   /** True when the row was already there — a redelivery that got past the ledger. */
   readonly alreadyHad: boolean;
+  /**
+   * What this message said about consent (`FR-WA-10`), or null for the almost-every-message case.
+   *
+   * `changed: false` with a keyword is the honest "they said `STOP` and were already stopped" —
+   * distinguishable from "they said nothing about it", which matters to a test and to a log.
+   */
+  readonly consent?: { readonly keyword: string; readonly changed: boolean } | null;
 }
 
 /**
@@ -62,6 +70,7 @@ export class WhatsAppInboundService {
     private readonly leads: LeadsService,
     private readonly timeline: TimelineService,
     private readonly media: WhatsAppMediaService,
+    private readonly consent: WhatsAppConsentService,
     @Inject(LOGGER) private readonly logger: Logger,
   ) {}
 
@@ -222,6 +231,18 @@ export class WhatsAppInboundService {
         });
       }
 
+      // `STOP` and `START`, applied in **this** request (`FR-WA-10`). Not a job: the requirement
+      // says a revocation suppresses marketing sends *immediately*, and a queue hop is a window in
+      // which a campaign reads the old value and sends the person the thing they asked to stop.
+      const consent = await this.consent.apply({
+        organizationId,
+        conversationId: conversation.id,
+        leadId: conversation.leadId,
+        customerId: null,
+        body: message.body,
+        occurredAt: sentAt,
+      });
+
       if (conversation.leadId !== null) {
         await this.timeline.record({
           type: ACTIVITY_TYPES.WHATSAPP_RECEIVED,
@@ -263,6 +284,7 @@ export class WhatsAppInboundService {
         leadId: conversation.leadId,
         leadCreated: conversation.leadCreated,
         alreadyHad: false,
+        consent: consent === null ? null : { keyword: consent.keyword, changed: consent.changed },
       };
     });
   }

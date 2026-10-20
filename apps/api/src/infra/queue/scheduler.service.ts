@@ -206,6 +206,16 @@ export const SCHEDULES: readonly ScheduleDefinition[] = [
   },
   {
     queue: QUEUES.MAINTENANCE,
+    jobName: JOBS.CONVERSATION_SWEEP,
+    // Every minute, like the notification release and for the same reason: a snooze somebody set
+    // has to be **delivered** rather than merely to expire, and a lapsed lock the column still
+    // claims is a warning about a colleague who went home. Both reads are indexed scans of nothing
+    // on almost every tick.
+    cron: '* * * * *',
+    description: 'Clear lapsed conversation locks and wake snoozed conversations',
+  },
+  {
+    queue: QUEUES.MAINTENANCE,
     jobName: JOBS.WHATSAPP_SYNC_TEMPLATES,
     // Every six hours. Meta reviews a template in hours rather than minutes, and its own
     // notification of the verdict is a webhook field this product does not subscribe to yet — so

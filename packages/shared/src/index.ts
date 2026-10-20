@@ -34,4 +34,5 @@ export * from './webhooks.js';
 export * from './api-surface.js';
 export * from './error-catalogue.js';
 export * from './integrations.js';
+export * from './conversation-inbox.js';
 export * from './whatsapp.js';

@@ -2741,6 +2741,113 @@ memory — sixteen megabytes is a real ceiling, and streaming into storage is a 
 canned replies and **realtime** are all still unbuilt, and the p95-with-100 k-messages criterion is
 still unmeasured.
 
+### Step 4 — the shared inbox, and the word that stops a send ✅ _(landed 2026-10-20)_
+
+`FR-WA-7`'s first words are "many agents on one business number", and two of this phase's exit
+criteria follow from them: "two agents opening the same conversation see the ownership lock;
+transfer is audited", and "opt-out keyword suppresses marketing sends immediately, verified end to
+end". Both are now met.
+
+**The bug this step found before it built anything.** A conversation carries no branch and no team
+column, so every data scope narrower than the whole workspace resolved to `assigned_user_id = me`.
+A seeded **sales executive** holds `conversation:read` and `conversation:reply` at **own** scope,
+and a workspace with no assignment rule leaves every incoming conversation unassigned — so a new
+customer's first message was visible to nobody but an owner or an admin. A *shared* inbox was
+unreadable by the people it is for, and the conversations at the greatest risk of never being
+answered were the ones it hid. That is the `/my/today` lesson one module later, and the file's own
+comment had claimed the right behaviour while the code did the other thing. `conversationScopeWhere`
+is now the one decider for all four services that touch a conversation, and it adds
+`OR assigned_user_id IS NULL`: a conversation nobody owns is precisely the one somebody has to be
+able to pick up
+([ADR-0039](./decisions/ADR-0039-a-conversation-lock-is-advisory-and-an-unclaimed-conversation-is-everybodys.md)).
+It was found by an e2e test driving a **second real member**, which is the only way a lock or a
+scope can be seen at all.
+
+**The lock is advisory, and separate from ownership.** `assigned_user_id` survives a closed tab,
+drives "my conversations" and is audited when it changes; `lock_user_id` with `lock_expires_at` is
+five minutes of "I am typing", taken by opening a conversation. One column for both would either
+lose ownership when somebody closed a tab or leave a conversation permanently claimed. A reply from
+somebody who is not the holder **goes through**: the requirement asks that two agents *see* each
+other, which is a sentence on a screen, and refusing the second one means a customer waits while a
+colleague is at lunch. Taking over is allowed and written to the audit log — the accountability a
+refusal would have bought at the customer's expense.
+
+**The sentence is one function, called from both sides.** `conversationLock` answers
+`{ held, mine, expiresAt, message }` from the viewer's own side, and the API returns that rather
+than two raw columns. The screen prints it; nothing on the screen compares `lockExpiresAt` to a
+clock.
+
+**A lapsed lock is swept although every read already ignores it**, because the **column** would
+otherwise lie — a row saying "Nikhil holds this" three days after Nikhil went on holiday is
+something a person will read and believe. And a **snooze is delivered rather than expiring**: a
+`snoozed_until <= now()` predicate would make a conversation visible before anything had told the
+person who asked to come back to it, which is the decision the notification release sweep already
+made and why both run every minute. Both writes are conditional on the state the sweep read, so a
+conversation somebody closed a second earlier is not dragged back.
+
+**`STOP` is applied in the request that carried it.** `FR-WA-10` says a revocation suppresses
+marketing sends *immediately*, and a queue hop is a window in which a campaign reads the old value.
+The keyword list is short and matched against the **whole** message — and `no`, `cancel`, `end` and
+`quit` are deliberately **off** it, though each appears on somebody's published opt-out list: each
+is a word a customer uses mid-conversation, and a false positive silences somebody **invisibly**,
+with nothing on any screen to say why. The timeline entry carries the word they actually sent, so
+"why did we stop messaging her?" has an answer.
+
+**A note is its own table and a mention is an id.** A note is never sent, so putting one in
+`messages` would make every "did we reply?" query and every export carry a predicate it could
+forget. Parsing `@Asha` out of the body tells the wrong Asha the moment a workspace has two, in the
+quiet direction — so the composer offers a picker, submits ids, and the service checks each against
+`Membership`, because an array column cannot carry a foreign key.
+
+**One screen** (`frontend-architecture.md` §10.16): two cards under the thread, five separate forms
+because they are five different acts, and "Nobody — back in the pool" as the first option in the
+owner picker. Four new timeline describers plus `mention.created` — in the vocabulary since Phase 1
+with nothing writing it — and both consent types, which the deferred list had down for Phase 13.
+
+**Verified.** **2 711 tests green** — 1 178 unit (655 shared, 346 web, 173 api, 4 db) and 1 533
+integration (866 api e2e, 667 across the schema-object and tenant-isolation suites) — with **63
+new**:
+
+- **17 in `@leados/shared`**, over the lock's two readings (including "1 minute ago" rather than
+  "1 minutes ago", and "just now" rather than "0 minutes ago"), the snooze bounds, the note's own
+  rules, and the keyword matcher — with a test per ambiguous word that is deliberately **not** a
+  keyword, because that list is the whole safety of the rule.
+- **2 on the web side**, over the state sentence a closed or snoozed conversation reads as, and
+  that every snooze choice is in the future when it is rendered.
+- **30 api e2e** in a new suite driving **two real members**: each seeing the other's lock from
+  their own side, the colleague replying anyway, an override audited rather than refused, releasing
+  only your own, a lapsed lock honest on read and swept from the column, an assignment notified and
+  on the timeline, the pool as a real answer, a transfer audited with its note, a snooze delivered
+  by the sweep and not dragging back a conversation somebody closed, a mention told and on the
+  timeline, a note that names nobody writing no mention entry, `STOP` revoking consent in the
+  request that carried it, the marketing template then refused with its own sentence, a free reply
+  still working, `START` giving it back, a second `STOP` writing nothing, and a sentence containing
+  the word leaving consent alone.
+- **14 schema-object and tenant-isolation cases**: the lock's biconditional in both directions, the
+  snooze CHECK with the honest state its mirror would have forbidden, a lock held by another
+  workspace's member refused, a note on another's conversation or from another's member refused, the
+  blank-and-too-long body, the `cardinality` ceiling, and the nine new hand-written objects.
+
+Then **24 HTTP checks** against a live API, **worker** and **scheduler** — including a snooze
+delivered by the real one-minute cron rather than by calling the processor, which is the only way to
+know the schedule is registered at all — and **16 browser checks** in Chromium driving **two
+separate browser contexts**, because one profile with two sign-ins is one session and the lock would
+be invisible. The exit criterion is asserted there as a sentence on a real screen: "Live Owner
+opened this just now — check with them before replying", beside a **Take over** button rather than
+a disabled one.
+
+One finding came out of that: the two-agent check first timed out waiting for the banner, because
+the conversation had been assigned to the owner and a `sales_executive` holds `conversation:read` at
+`own` scope — a 404, which is the scope working. The case the lock exists for is the **unassigned**
+conversation both agents can see.
+
+**Carried forward, named rather than assumed:** **tags, canned replies, typing state and realtime**
+are unbuilt, and `conversation_participants` and `canned_replies` are the two sketched tables still
+waiting. `conversations.priority` and `message_media.scan_status` have **no writer**. **Usage
+metering** (`FR-BIL-4`) still has no meter, and **bulk sending** is Phase 6's. The
+p95-with-100 k-messages criterion remains **unmeasured** — there is no message fixture at that
+size, which is the one outstanding Phase 5 criterion nothing but measurement can close.
+
 ---
 
 ## Phase 6 — Automation
@@ -2896,11 +3003,11 @@ partially landed, with the specific gaps named.
 ## Immediate next step
 
 _This section names the next step only; what each landed step actually did is in the step entries
-above. Last reviewed 2026-10-20, after Phase 5 step 3._
+above. Last reviewed 2026-10-20, after Phase 5 step 4._
 
 **Phase 4 is finished and all six of its exit criteria are met** — the table recording where each
-one is tested is in its own section above. **Phase 5 is three steps in**, and of its eight exit
-criteria **five** are now met:
+one is tested is in its own section above. **Phase 5 is four steps in**, and of its eight exit
+criteria **seven** are now met, with the eighth needing measurement rather than code:
 
 | Exit criterion                                                               | Status                                                            |
 | ---------------------------------------------------------------------------- | ----------------------------------------------------------------- |
@@ -2910,32 +3017,31 @@ criteria **five** are now met:
 | A failed send shows the provider's reason and reaches the timeline            | **Done** — on the message, on the timeline, and as a notification quiet hours do not hold. |
 | Two agents see the ownership lock; transfer is audited                        | Not started — the columns exist with no writer.                    |
 | Media round-trip with type/size validation and signed-URL delivery            | **Round trip and validation: done** (`whatsapp-media.e2e-spec.ts`, 30 HTTP checks). **No signed URL**, deliberately and for a named reason: `StoragePort` cannot sign one, so the bytes are served behind `conversation:read` ([ADR-0038](./decisions/ADR-0038-an-attachment-is-served-by-this-product-not-by-a-signed-url.md)). |
-| Opt-out keyword suppresses marketing sends immediately                        | Not started — consent is checked at send time; a `STOP` does nothing yet. |
-| Inbox p95 < 500 ms with 100 k messages                                       | **Unmeasured** — there is no message fixture at that size yet.      |
+| Opt-out keyword suppresses marketing sends immediately                        | **Done** — applied in the request that carried the message, not by a job; the marketing template is then refused with its own sentence, and a sentence merely *containing* the word changes nothing. |
+| Inbox p95 < 500 ms with 100 k messages                                       | **Unmeasured, and the only one left.** There is no message fixture at that size: `packages/db/perf/work-100k.sql` has no conversations. |
 
-**The next step is Phase 5 step 4 — the shared inbox's own machinery**: assignment, the ownership
-lock, transfer, close/reopen, internal notes and @mentions, plus the opt-out keyword (`FR-WA-10`)
-that is the last unbuilt rule about what may be sent. Four things from step 3 decide how it starts:
+**The next step is Phase 5 step 5 — the last of the phase**: a 100 k-message fixture and the
+measurement that closes the final exit criterion, plus the inbox's remaining conveniences (tags,
+canned replies) and the usage meter `FR-BIL-4` asks for. Four things from step 4 decide how it
+starts:
 
-- **The ownership lock has its columns and no writer** (`conversations.lock_user_id`,
-  `lock_expires_at`), which is deliberate: a soft lock whose expiry nothing sweeps is a conversation
-  nobody can answer, so the sweep arrives **with** the lock rather than after it. `priority` and
-  `snoozed_until` are in the same state.
-- **`conversation_participants` and `canned_replies` are the two sketched tables still waiting**,
-  and both belong here: a note and a mention need a participant list, and a canned reply is the
-  thing an agent reaches for while a customer is waiting.
-- **The opt-out keyword is an ingestion rule, not a send rule.** Consent is already checked at send
-  time for marketing; what is missing is the inbound half — a `STOP` from a customer has to write
-  the consent row the send path already reads, inside the same ingestion that creates the message,
-  or the two disagree for as long as a queue is behind.
-- **Realtime is still absent and still not needed for a lock to be honest.** Two agents on one
-  conversation see each other through a re-read, not a socket; `FR-WA-7`'s "typing/read state" is
-  the first thing in this product that genuinely needs a push channel, and it should arrive as its
-  own decision rather than as a side effect of the lock.
-- **The p95-with-100 k-messages criterion needs a message fixture**, which does not exist: the
-  100 k-lead fixture (`packages/db/perf/work-100k.sql`) has no conversations. That is the one
-  outstanding Phase 5 criterion nothing but measurement can close, and it is cheapest to add while
-  the inbox queries are being changed anyway.
+- **The p95 criterion is the only one that cannot be closed by code**, and it is the one that has
+  been outstanding since the phase began. `work-100k.sql` creates leads, tasks and SLA clocks and
+  **no conversations**, so the three inbox queries that cost anything — the list with its two
+  aggregates, the message page, and the body search through `messages_body_search` — have never
+  been measured against anything but a demo. A performance fixture has to contain the rows the
+  expensive query reads, which that file already learnt once about answered SLA work.
+- **The two aggregates on the list are the suspects.** `meta.unread` and `meta.open` are separate
+  counts over the whole filter, which is right — a badge that counts its page lies — and two counts
+  plus a page is three statements per request. Whether `conversations_unread` serves the first is
+  a question only `EXPLAIN ANALYZE` on the fixture answers; both versions are correct and only one
+  is fast.
+- **`messages` is partitioned monthly, so a fixture has to span months to be honest.** A hundred
+  thousand messages all in October measure one partition; the inbox's real query reads the newest
+  and the search reads all of them.
+- **Usage metering has its columns and no meter.** `messages.billable` and `conversation_category`
+  are written from Meta's receipts and nothing reads them, which is the same shape as the lock
+  columns this step found missing — so the meter should arrive with the reading, not before it.
 
 Carried forward from Phase 4, still true: `sync_cursors` is built and has **no user** (the ads
 insight pulls are Phase 9); `integration_health_checks` and `provider_events` are pruned by nothing

@@ -802,6 +802,7 @@ model Organization {
   messages            Message[]
   messageStatusEvents MessageStatusEvent[]
   messageMedia        MessageMedia[]
+  conversationNotes   ConversationNote[]
   syncCursors         SyncCursor[]
   integrationChecks   IntegrationHealthCheck[]
   providerEvents      ProviderEvent[]
@@ -958,6 +959,8 @@ model Membership {
   whatsappDefaultFor      WhatsAppNumber[]        @relation("whatsapp_default_agent")
   assignedConversations   Conversation[]          @relation("conversation_assignee")
   closedConversations     Conversation[]          @relation("conversation_closer")
+  lockedConversations     Conversation[]          @relation("conversation_locker")
+  conversationNotes       ConversationNote[]      @relation("conversation_note_author")
   sentMessages            Message[]               @relation("message_sender")
   whatsappTemplatesWritten WhatsAppTemplate[]     @relation("whatsapp_template_author")
 
@@ -4216,6 +4219,16 @@ model Conversation {
   firstResponseAt DateTime? @map("first_response_at") @db.Timestamptz(6)
   windowExpiresAt DateTime? @map("window_expires_at") @db.Timestamptz(6)
 
+  /// The soft ownership lock (`FR-WA-7`). Advisory: it makes two agents see each other, and does
+  /// not refuse the second one — a customer waiting while the holder is at lunch is the worse
+  /// outcome. Five minutes, refreshed by every reply, and swept so the column cannot lie.
+  lockUserId    String?   @map("lock_user_id") @db.Uuid
+  lockExpiresAt DateTime? @map("lock_expires_at") @db.Timestamptz(6)
+
+  /// When a snoozed conversation comes back. The sweep is what brings it: a predicate alone would
+  /// make it visible before anything had told the person who asked for it.
+  snoozedUntil DateTime? @map("snoozed_until") @db.Timestamptz(6)
+
   closedAt   DateTime? @map("closed_at") @db.Timestamptz(6)
   closedById String?   @map("closed_by_id") @db.Uuid
   tags       String[]  @default([])
@@ -4229,8 +4242,10 @@ model Conversation {
   customer     Customer?       @relation(fields: [organizationId, customerId], references: [organizationId, id], onDelete: Restrict, map: "conversations_customer_same_org_fk")
   assignedTo   Membership?     @relation("conversation_assignee", fields: [organizationId, assignedUserId], references: [organizationId, userId], onDelete: Restrict, map: "conversations_assignee_same_org_fk")
   closedBy     Membership?     @relation("conversation_closer", fields: [organizationId, closedById], references: [organizationId, userId], onDelete: Restrict, map: "conversations_closer_same_org_fk")
+  lockedBy     Membership?     @relation("conversation_locker", fields: [organizationId, lockUserId], references: [organizationId, userId], onDelete: Restrict, map: "conversations_locker_same_org_fk")
 
   messages Message[]
+  notes    ConversationNote[]
 
   @@unique([organizationId, id], name: "conversation_tenant_key")
   /// The inbox list, and "my conversations" (§7's own two indexes).
@@ -4852,4 +4867,44 @@ enum MediaDownloadStatus {
   failed
 
   @@map("media_download_status")
+}
+
+/// An internal note on a conversation, and who it names (`FR-WA-7`).
+///
+/// A **separate table**, not a `message` with a direction of its own: a note is never sent, so
+/// putting one in `messages` would make every "did we reply?" query carry a predicate it could
+/// forget, and one forgotten predicate shows a colleague's private words to a customer in an
+/// export. The two things are different enough that the schema should say so.
+///
+/// `mentioned_user_ids` is an array rather than a join table because a mention is read **with** the
+/// note and never on its own: nothing in this product asks "every note that mentions Asha" without
+/// also wanting the notes. The composite FK on the author is what makes a note from another
+/// workspace's member unrepresentable; the mentioned ids are validated by the service against
+/// `Membership`, which is stated here because an array cannot carry a foreign key.
+model ConversationNote {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  conversationId String @map("conversation_id") @db.Uuid
+
+  /// What somebody typed, including the `@Name` text. The ids below are what the product acts on;
+  /// this is what a person reads, and the two are written in one request so they cannot disagree.
+  body String
+
+  authorUserId String @map("author_user_id") @db.Uuid
+
+  /// Who was named. Empty for a note that mentions nobody, which is the common case.
+  mentionedUserIds String[] @default([]) @map("mentioned_user_ids") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [organizationId, conversationId], references: [organizationId, id], onDelete: Cascade, map: "conversation_notes_conversation_same_org_fk")
+  author       Membership   @relation("conversation_note_author", fields: [organizationId, authorUserId], references: [organizationId, userId], onDelete: Restrict, map: "conversation_notes_author_same_org_fk")
+
+  @@unique([organizationId, id], name: "conversation_note_tenant_key")
+  /// The panel's own read: one conversation's notes, newest first.
+  @@index([organizationId, conversationId, createdAt(sort: Desc)])
+  @@map("conversation_notes")
 }

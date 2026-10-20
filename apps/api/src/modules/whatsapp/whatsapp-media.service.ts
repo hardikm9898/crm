@@ -13,7 +13,8 @@ import {
   type MessageType,
 } from '@leados/shared';
 import type { Logger } from 'pino';
-import { DataScopeService, applyScopeFilter } from '../../infra/authz/data-scope.service.js';
+import { DataScopeService } from '../../infra/authz/data-scope.service.js';
+import { conversationScopeWhere } from './conversation-scope.js';
 import { DbService } from '../../infra/db/db.service.js';
 import { LOGGER } from '../../infra/observability/logger.module.js';
 import { JOBS, QUEUES } from '../../infra/queue/queue.constants.js';
@@ -249,8 +250,7 @@ export class WhatsAppMediaService {
     },
   ): Promise<StoredUpload> {
     const principal = tenantContext.require('whatsapp.media.attach');
-    const filter = this.scopes.filterFor('conversation:reply', { userColumn: 'assignedUserId' });
-    const scoped = applyScopeFilter({ id: conversationId }, filter);
+    const scoped = conversationScopeWhere(this.scopes, 'conversation:reply', { id: conversationId });
     if (scoped === null) throw AppError.notFound('Conversation');
     const conversation = await this.db.client.conversation.findFirst({
       where: scoped,
@@ -319,8 +319,7 @@ export class WhatsAppMediaService {
     fileName: string;
     inline: boolean;
   }> {
-    const filter = this.scopes.filterFor('conversation:read', { userColumn: 'assignedUserId' });
-    const scoped = applyScopeFilter({ id: conversationId }, filter);
+    const scoped = conversationScopeWhere(this.scopes, 'conversation:read', { id: conversationId });
     if (scoped === null) throw AppError.notFound('Conversation');
     const conversation = await this.db.client.conversation.findFirst({
       where: scoped,

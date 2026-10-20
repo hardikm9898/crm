@@ -565,7 +565,79 @@ const DESCRIBERS: Readonly<Record<string, Describer>> = {
     }.`,
     tone: 'danger',
   }),
+
+  // ── The shared inbox (`FR-WA-7`) ──────────────────────────────────────────
+  //
+  // Each of these says **who** and, where there is one, **why**. A row reading "Conversation
+  // assigned" would make a manager open the audit log to learn the two things they came for.
+  'conversation.assigned': (payload) => ({
+    label: 'Conversation assigned',
+    description:
+      text(payload, 'toUserId') === null
+        ? `This conversation was put back in the pool${reasonTail(payload)}.`
+        : `This conversation was assigned to a colleague${reasonTail(payload)}.`,
+  }),
+  'conversation.transferred': (payload) => ({
+    label: 'Conversation transferred',
+    // The note is required on a transfer, so there is always something to print — and printing it
+    // is the whole reason it is required.
+    description: `This conversation was handed to a colleague: “${
+      text(payload, 'note') ?? 'no reason given'
+    }”.`,
+  }),
+  'conversation.closed': (payload) => ({
+    label: 'Conversation closed',
+    description: text(payload, 'note')
+      ? `This conversation was closed: “${text(payload, 'note')}”.`
+      : 'This conversation was closed.',
+  }),
+  'conversation.reopened': () => ({
+    label: 'Conversation reopened',
+    description: 'This conversation was opened again.',
+    tone: 'warning',
+  }),
+
+  // ── Mentions (`FR-WA-7`) ──────────────────────────────────────────────────
+  'mention.created': (payload) => ({
+    label: 'Colleague asked',
+    description: `A colleague was pulled into this conversation${
+      text(payload, 'note') ? `: “${text(payload, 'note')}”` : ''
+    }.`,
+  }),
+
+  // ── Consent (`FR-WA-10`) ──────────────────────────────────────────────────
+  //
+  // The word they actually sent, because "why did we stop messaging her?" is answered by the
+  // message rather than by a code — and because a revocation somebody cannot explain is the one
+  // thing worse than not having recorded it.
+  'consent.revoked': (payload) => ({
+    label: 'Asked us to stop',
+    description: `They withdrew consent for ${channelWord(payload)}${
+      text(payload, 'keyword') ? ` by replying “${text(payload, 'keyword')}”` : ''
+    }. Marketing messages will not be sent.`,
+    tone: 'danger',
+  }),
+  'consent.granted': (payload) => ({
+    label: 'Opted back in',
+    description: `They gave consent for ${channelWord(payload)} again${
+      text(payload, 'keyword') ? ` by replying “${text(payload, 'keyword')}”` : ''
+    }.`,
+  }),
 };
+
+/** ` because they asked`, or nothing. One helper so every clause reads the same way. */
+function reasonTail(payload: ActivityPayload): string {
+  const reason = text(payload, 'reason');
+  return reason === null ? '' : ` — ${reason}`;
+}
+
+/** `whatsapp` → `WhatsApp`. The channel a consent entry is about, as a person writes it. */
+function channelWord(payload: ActivityPayload): string {
+  const channel = text(payload, 'channel');
+  if (channel === 'whatsapp') return 'WhatsApp';
+  if (channel === null) return 'messages';
+  return humanise(channel);
+}
 
 /** `first_response` is a column name; "The first response" is a sentence. */
 function slaTarget(payload: ActivityPayload): string {

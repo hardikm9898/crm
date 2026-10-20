@@ -18,6 +18,8 @@ import {
   WHATSAPP_TEMPLATE_STATUSES,
   attachmentHref,
   attachmentName,
+  describeConversationState,
+  snoozeChoices,
   attachmentShape,
   attachmentWaiting,
   describeSize,
@@ -53,6 +55,9 @@ const conversation = (over: Partial<ConversationSummary> = {}): ConversationSumm
   windowIsOpen: true,
   windowSummary: 'You can reply freely for another 23 hours',
   tags: [],
+  lockedBy: null,
+  lock: { held: false, mine: false, expiresAt: null, message: null },
+  snoozedUntil: null,
   lastMessage: {
     direction: 'inbound',
     type: 'text',
@@ -267,5 +272,38 @@ describe('an attachment on the thread (`FR-WA-3`)', () => {
     expect(describeSize(1536)).toBe('2 KB');
     expect(describeSize(5 * 1024 * 1024)).toBe('5 MB');
     expect(describeSize(1.5 * 1024 * 1024)).toBe('1.5 MB');
+  });
+});
+
+describe('the shared inbox on the screen (`FR-WA-7`)', () => {
+  it('says what state a conversation is in, and nothing when it is simply open', () => {
+    // A badge reading "Open" beside every row is noise; the two states worth a sentence are the
+    // ones that explain why a conversation is not in front of somebody.
+    expect(describeConversationState(conversation())).toBeNull();
+    expect(describeConversationState(conversation({ status: 'closed' }))).toBe('Closed.');
+    expect(
+      describeConversationState(
+        conversation({ status: 'snoozed', snoozedUntil: '2026-10-21T09:00:00.000Z' }),
+      ),
+    ).toMatch(/^Put aside until /);
+    // A snoozed row with no instant should still read as something: the CHECK makes it
+    // unrepresentable in the database, and a screen that threw on it would be worse than one that
+    // says less.
+    expect(describeConversationState(conversation({ status: 'snoozed' }))).toBe('Put aside.');
+  });
+
+  it('offers snooze choices that are all in the future, resolved against now', () => {
+    const now = new Date('2026-10-20T22:30:00.000Z');
+    const choices = snoozeChoices(now);
+    expect(choices.map((choice) => choice.label)).toEqual([
+      'In 3 hours',
+      'Tomorrow morning',
+      'Next week',
+    ]);
+    for (const choice of choices) {
+      // The API refuses a snooze into the past, so a choice that offered one would answer 400 —
+      // and "tomorrow morning" computed from a tab left open overnight is exactly that shape.
+      expect(new Date(choice.until).getTime(), choice.label).toBeGreaterThan(now.getTime());
+    }
   });
 });

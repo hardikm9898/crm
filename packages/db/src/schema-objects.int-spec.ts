@@ -196,6 +196,8 @@ const REQUIRED_INDEXES = [
   // Phase 5, step 3 — media. Keyed on `created_at` alone, because the download sweep runs across
   // every tenant.
   'message_media_awaiting',
+  'conversations_locked',
+  'conversations_snoozed',
 ];
 
 /**
@@ -648,6 +650,13 @@ const REQUIRED_CONSTRAINTS = [
   'message_media_attempts_sane',
   'message_media_scan_status',
   'message_media_message_same_org_fk',
+  'conversations_lock_is_whole',
+  'conversations_snoozed_says_when',
+  'conversation_notes_body_not_blank',
+  'conversation_notes_mentions_sane',
+  'conversations_locker_same_org_fk',
+  'conversation_notes_conversation_same_org_fk',
+  'conversation_notes_author_same_org_fk',
 ];
 
 describe('hand-written indexes survive every generated migration', () => {

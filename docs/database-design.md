@@ -867,6 +867,11 @@ RESTRICT`, like every other cross-table reference here: `SetNull` and `SetDefaul
 > and `customer_id` exist with **no writer**: they are the columns the shared inbox fills. Said
 > plainly, because a column with no writer is otherwise indistinguishable from a feature somebody
 > forgot.
+>
+> _(Corrected 2026-10-20: `lock_user_id`, `lock_expires_at` and `snoozed_until` did **not** exist
+> when this was written — step 1 added neither the columns nor a writer. Step 4 added all three
+> together, which is the amendment further down. A sentence claiming a column exists is a worse
+> error than one admitting it is missing, because the next person plans around it.)_
 
 > **Amendment, 2026-10-19 (implementation, Phase 5 step 2 — sending).** `whatsapp_templates` and
 > `message_status_events` are built, and `messages` gained two columns. The three tables still
@@ -946,6 +951,46 @@ RESTRICT`, like every other cross-table reference here: `SetNull` and `SetDefaul
 > `WHERE download_status IN ('pending', 'failed')` — no `organization_id` prefix, because the sweep
 > that re-fetches an attachment runs across every tenant, as `messages_queued` and
 > `calls_awaiting_outcome` already do.
+
+> **Amendment, 2026-10-20 (implementation, Phase 5 step 4 — the shared inbox).** `conversations`
+> gained the three columns the amendment above said it already had — `lock_user_id`,
+> `lock_expires_at` and `snoozed_until` — and `conversation_notes` is built, leaving
+> `conversation_participants` and `canned_replies` as the only tables in this section still
+> waiting. The earlier amendment listing those three as "columns with no writer" was **wrong**:
+> they did not exist. Six things worth knowing:
+>
+> - **`conversations_lock_is_whole` is a biconditional**, which this schema usually distrusts —
+>   `(lock_user_id IS NULL) = (lock_expires_at IS NULL)`. Here both directions really are
+>   contradictions, which is the test the other CHECKs fail: a holder with no expiry is a lock that
+>   never lapses, which is the single failure the five-minute TTL exists to prevent, and an expiry
+>   with no holder is an expiry for nobody.
+> - **`conversations_snoozed_says_when` is one direction only.** The mirror — "anything not snoozed
+>   has no `snoozed_until`" — reads just as sensibly and is false: a conversation closed while it
+>   was snoozed keeps the instant somebody asked for, which is the honest record of what they
+>   wanted.
+> - **`lock_user_id` carries a composite FK into `Membership`**, so a lock held by another
+>   workspace's member is unrepresentable — the same guarantee `assigned_user_id` and `closed_by_id`
+>   already have.
+> - **`conversation_notes` is a table and not a `message` with a flag.** A note is never sent, so
+>   putting one in `messages` would make every "did we reply?" query and every export carry a
+>   predicate it could forget, and one forgotten predicate shows a colleague's private words to a
+>   customer. `ON DELETE CASCADE` from the conversation, `Restrict` on the author: a note belongs to
+>   its conversation and has no meaning without it, while a member with notes is deactivated rather
+>   than deleted.
+> - **`mentioned_user_ids` is a `UUID[]`, not a join table**, because a mention is read **with** the
+>   note and never on its own. An array cannot carry a foreign key, so the service validates each id
+>   against `Membership` — stated here because that is a guarantee the schema does not give.
+>   `conversation_notes_mentions_sane` uses **`cardinality`**, never `array_length`: on an empty
+>   array the latter returns NULL, the comparison is NULL, and the check would not bite at all.
+> - **No `caption`-style duplication and no second body.** `conversation_notes.body` holds the
+>   `@Name` text somebody typed and the ids hold what the product acts on; both are written in one
+>   request, which is what stops them disagreeing.
+>
+> Two partial indexes are new, neither prefixed by `organization_id` because the inbox sweep runs
+> across every tenant: `conversations_locked` on `lock_expires_at`
+> `WHERE lock_user_id IS NOT NULL`, and `conversations_snoozed` on `snoozed_until`
+> `WHERE status = 'snoozed'`. **Two indexes and two reads rather than one `OR`**, because an `OR`
+> cannot be a range scan — the `/my/today` lesson, applied before it cost anything this time.
 
 Indexes: `(organization_id, channel_account_id, status, last_message_at DESC)` for the inbox list;
 `(organization_id, assigned_user_id, status, last_message_at DESC)` for "my conversations";

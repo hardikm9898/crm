@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import {
   AppError,
+  conversationLock,
   describeMessagePreview,
   describeWindow,
   tenantContext,
@@ -8,7 +9,8 @@ import {
   type MessageType,
 } from '@leados/shared';
 import type { Logger } from 'pino';
-import { DataScopeService, applyScopeFilter } from '../../infra/authz/data-scope.service.js';
+import { DataScopeService } from '../../infra/authz/data-scope.service.js';
+import { conversationScopeWhere } from './conversation-scope.js';
 import { DbService } from '../../infra/db/db.service.js';
 import { LOGGER } from '../../infra/observability/logger.module.js';
 import { presentMessage } from './whatsapp-presenters.js';
@@ -42,13 +44,6 @@ export class ConversationsService {
 
   async list(query: ListConversationsQuery) {
     const principal = tenantContext.require('conversations.list');
-    const filter = this.scopes.filterFor('conversation:read', {
-      userColumn: 'assignedUserId',
-      // No branch or team column: a conversation carries neither, and the lead it belongs to is a
-      // join this step does not need. A branch-scoped agent is therefore narrowed to their own
-      // rows, which is what `filterFor` does for a principal whose scope has no column to use —
-      // narrower than their grant, never wider, which is the right direction to err in.
-    });
     const base: Record<string, unknown> = {
       ...(query.status ? { status: query.status } : {}),
       ...(query.numberId ? { channelAccountId: query.numberId } : {}),
@@ -58,7 +53,7 @@ export class ConversationsService {
       ...(query.assigned === 'me' ? { assignedUserId: principal.actorId } : {}),
       ...(query.assigned === 'unassigned' ? { assignedUserId: null } : {}),
     };
-    const scoped = applyScopeFilter(base, filter);
+    const scoped = this.scopedWhere(base);
     if (scoped === null) {
       return {
         items: [],
@@ -92,6 +87,7 @@ export class ConversationsService {
           number: { select: { id: true, displayPhoneE164: true, verifiedName: true } },
           lead: { select: { id: true, fullName: true, status: { select: { name: true } } } },
           assignedTo: { select: { userId: true, user: { select: { name: true } } } },
+          lockedBy: { select: { userId: true, user: { select: { name: true } } } },
           messages: {
             // Both halves of the key the cursor pages by, so "the latest message" here and the
             // first row of `/messages` are the same row. A `createdAt` alone would tie.
@@ -111,8 +107,7 @@ export class ConversationsService {
   }
 
   async findOne(id: string) {
-    const filter = this.scopes.filterFor('conversation:read', { userColumn: 'assignedUserId' });
-    const scoped = applyScopeFilter({ id }, filter);
+    const scoped = this.scopedWhere({ id });
     if (scoped === null) throw AppError.notFound('Conversation');
     const row = await this.db.client.conversation.findFirst({
       where: scoped,
@@ -130,6 +125,7 @@ export class ConversationsService {
           },
         },
         assignedTo: { select: { userId: true, user: { select: { name: true } } } },
+        lockedBy: { select: { userId: true, user: { select: { name: true } } } },
         messages: {
           orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
           take: 1,
@@ -214,6 +210,11 @@ export class ConversationsService {
     return this.findOne(id);
   }
 
+  /** The scope, plus anything nobody has claimed — the one decider, in its own module. */
+  private scopedWhere(base: Record<string, unknown>): Record<string, unknown> | null {
+    return conversationScopeWhere(this.scopes, 'conversation:read', base);
+  }
+
   /**
    * Conversation ids whose messages match, by body.
    *
@@ -252,14 +253,27 @@ export class ConversationsService {
     lastInboundAt: Date | null;
     lastOutboundAt: Date | null;
     windowExpiresAt: Date | null;
+    lockUserId: string | null;
+    lockExpiresAt: Date | null;
+    snoozedUntil: Date | null;
     tags: string[];
     createdAt: Date;
     number: { id: string; displayPhoneE164: string; verifiedName: string | null } | null;
     lead: { id: string; fullName: string } | null;
     assignedTo: { userId: string; user: { name: string } } | null;
+    lockedBy: { userId: string; user: { name: string } } | null;
     messages: { type: string; body: string | null; direction: string; createdAt: Date }[];
   }) {
     const last = row.messages[0];
+    // From the viewer's side, by the one function the screen calls too: "You have this open" and
+    // "Nikhil opened this four minutes ago" are a reassurance and a warning, and a screen that
+    // computed its own answer is how "the button was enabled and the action was refused" happens.
+    const lock = conversationLock({
+      lockUserId: row.lockUserId,
+      lockExpiresAt: row.lockExpiresAt,
+      lockHolderName: row.lockedBy?.user.name ?? null,
+      viewerId: tenantContext.get()?.actorId ?? '',
+    });
     return {
       id: row.id,
       channel: row.channel,
@@ -279,6 +293,15 @@ export class ConversationsService {
       // and the sentence is what a person reads.
       windowIsOpen: windowIsOpen(row.windowExpiresAt),
       windowSummary: describeWindow(row.windowExpiresAt),
+      /**
+       * The soft lock, as a state rather than as two columns (`FR-WA-7`).
+       *
+       * `lockedBy` is who, and `lock` is what the viewer should be told — including `null` for the
+       * common case, so a screen never has to decide whether an expired `lockExpiresAt` counts.
+       */
+      lockedBy: row.lockedBy ? { id: row.lockedBy.userId, name: row.lockedBy.user.name } : null,
+      lock,
+      snoozedUntil: row.snoozedUntil,
       tags: row.tags,
       lastMessage: last
         ? {

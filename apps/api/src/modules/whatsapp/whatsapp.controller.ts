@@ -16,25 +16,35 @@ import type { FastifyReply } from 'fastify';
 import { RequirePermission } from '../../infra/authz/permission.decorator.js';
 import { withMessage } from '../../infra/http/envelope.interceptor.js';
 import { zodBody, ZodBody } from '../../infra/http/zod-validation.pipe.js';
+import { ConversationNotesService } from './conversation-notes.service.js';
+import { ConversationOwnershipService } from './conversation-ownership.service.js';
 import { ConversationsService } from './conversations.service.js';
 import { WhatsAppAccountsService } from './whatsapp-accounts.service.js';
 import { WhatsAppMediaService } from './whatsapp-media.service.js';
 import { WhatsAppSendService } from './whatsapp-send.service.js';
 import { WhatsAppTemplatesService } from './whatsapp-templates.service.js';
 import {
+  assignConversationSchema,
   attachmentQuerySchema,
+  closeConversationSchema,
   connectWabaSchema,
+  createNoteSchema,
   createTemplateSchema,
   listConversationsSchema,
   listMessagesSchema,
   listTemplatesSchema,
   previewTemplateSchema,
+  snoozeConversationSchema,
   syncTemplatesSchema,
+  transferConversationSchema,
   sendMessageSchema,
   setDefaultAgentSchema,
   updateTemplateSchema,
+  type AssignConversationInput,
   type AttachmentQuery,
+  type CloseConversationInput,
   type ConnectWabaInput,
+  type CreateNoteInput,
   type CreateTemplateInput,
   type ListConversationsQuery,
   type ListMessagesQuery,
@@ -42,7 +52,9 @@ import {
   type PreviewTemplateQuery,
   type SendMessageInput,
   type SetDefaultAgentInput,
+  type SnoozeConversationInput,
   type SyncTemplatesInput,
+  type TransferConversationInput,
   type UpdateTemplateInput,
 } from './whatsapp.dto.js';
 
@@ -66,6 +78,8 @@ export class ConversationsController {
     // DI-shaped error on a class whose dependencies are fine.
     private readonly send_: WhatsAppSendService,
     private readonly media: WhatsAppMediaService,
+    private readonly ownership: ConversationOwnershipService,
+    private readonly notes: ConversationNotesService,
   ) {}
 
   @Get()
@@ -125,6 +139,125 @@ export class ConversationsController {
   @RequirePermission(PERMISSIONS.CONVERSATION_REPLY)
   async retry(@Param('id') id: string, @Param('messageId') messageId: string) {
     return withMessage(await this.send_.retry(id, messageId), 'Trying again.');
+  }
+
+  /**
+   * Takes the soft ownership lock, or refreshes it (`FR-WA-7`).
+   *
+   * `conversation:reply`, not `conversation:assign`: the lock is "I am typing", which anybody who
+   * may answer may say. It is **advisory** — taking one a colleague holds is allowed and comes back
+   * with the state, because refusing it means a customer waits until somebody else's five minutes
+   * run out. The override is written to the audit log instead.
+   */
+  @Post(':id/claim')
+  @HttpCode(200)
+  @RequirePermission(PERMISSIONS.CONVERSATION_REPLY)
+  async claim(@Param('id') id: string) {
+    return this.ownership.claim(id);
+  }
+
+  /** Gives it up. A colleague's lock is left alone — releasing it would be a lie. */
+  @Delete(':id/claim')
+  @RequirePermission(PERMISSIONS.CONVERSATION_REPLY)
+  async release(@Param('id') id: string) {
+    return this.ownership.release(id);
+  }
+
+  /**
+   * Hands a conversation to somebody, or back to the pool (`FR-WA-7`).
+   *
+   * `conversation:assign`, which has been in the catalogue since Phase 1 with nothing reading it.
+   */
+  @Post(':id/assign')
+  @HttpCode(200)
+  @RequirePermission(PERMISSIONS.CONVERSATION_ASSIGN)
+  async assign(
+    @Param('id') id: string,
+    @Body(zodBody(assignConversationSchema)) body: AssignConversationInput,
+  ) {
+    return withMessage(
+      await this.ownership.assign(id, body.assignedUserId, body.reason ?? null),
+      body.assignedUserId === null ? 'Back in the pool.' : 'Assigned.',
+    );
+  }
+
+  /** A transfer: a recipient and a reason, both required, both audited. */
+  @Post(':id/transfer')
+  @HttpCode(200)
+  @RequirePermission(PERMISSIONS.CONVERSATION_ASSIGN)
+  async transfer(
+    @Param('id') id: string,
+    @Body(zodBody(transferConversationSchema)) body: TransferConversationInput,
+  ) {
+    return withMessage(
+      await this.ownership.transfer(id, body.toUserId, body.note),
+      'Transferred. They have been told, with your note.',
+    );
+  }
+
+  @Post(':id/close')
+  @HttpCode(200)
+  @RequirePermission(PERMISSIONS.CONVERSATION_REPLY)
+  async close(
+    @Param('id') id: string,
+    @Body(zodBody(closeConversationSchema)) body: CloseConversationInput,
+  ) {
+    return withMessage(await this.ownership.close(id, body.note ?? null), 'Closed.');
+  }
+
+  @Post(':id/reopen')
+  @HttpCode(200)
+  @RequirePermission(PERMISSIONS.CONVERSATION_REPLY)
+  async reopen(@Param('id') id: string) {
+    return withMessage(await this.ownership.reopen(id), 'Open again.');
+  }
+
+  /**
+   * Puts it aside until an instant.
+   *
+   * The sweep is what brings it back, which is why this is a time rather than a flag: a snooze that
+   * expired without telling anybody is a conversation nobody ever sees again.
+   */
+  @Post(':id/snooze')
+  @HttpCode(200)
+  @RequirePermission(PERMISSIONS.CONVERSATION_REPLY)
+  async snooze(
+    @Param('id') id: string,
+    @Body(zodBody(snoozeConversationSchema)) body: SnoozeConversationInput,
+  ) {
+    return withMessage(
+      await this.ownership.snooze(id, body.until),
+      'Put aside. It will come back and you will be told.',
+    );
+  }
+
+  /** The internal notes on a conversation. `conversation:read`, like the conversation itself. */
+  @Get(':id/notes')
+  @RequirePermission(PERMISSIONS.CONVERSATION_READ)
+  async notesList(@Param('id') id: string) {
+    return this.notes.list(id);
+  }
+
+  /**
+   * Writes one, and tells everybody it names (`FR-WA-7`'s @mentions).
+   *
+   * `conversation:reply` rather than `conversation:read`: a note is a thing somebody adds to the
+   * record, and the permission that lets you write to a conversation is the one that should let you
+   * write about it.
+   */
+  @Post(':id/notes')
+  @HttpCode(201)
+  @RequirePermission(PERMISSIONS.CONVERSATION_REPLY)
+  async noteCreate(
+    @Param('id') id: string,
+    @Body(zodBody(createNoteSchema)) body: CreateNoteInput,
+  ) {
+    return withMessage(
+      await this.notes.create(id, body.body, body.mentionedUserIds ?? []),
+      body.mentionedUserIds && body.mentionedUserIds.length > 0
+        ? 'Noted. The people you mentioned have been told.'
+        : 'Noted.',
+    );
   }
 
   /**

@@ -1025,3 +1025,48 @@ reading the API's own sentence with no image element at all, a file sent from th
 in the thread as an attachment, the caption printed under it, an empty submission refused with the
 field error on the input, the chosen name printed before sending, and the inbox at 375 px with
 **0 px** of sideways scroll.
+
+
+### 10.16 As built — Phase 5, step 4 (who has this conversation)
+
+The thread gained two cards under it — "This conversation" and "Internal notes" — and the first
+question a shared inbox has to answer is at the top of the first one: is somebody else already on
+this. Six decisions:
+
+- **The lock is a sentence, from the viewer's own side, and the API wrote it.** `conversationLock`
+  in `@leados/shared` answers `{ held, mine, expiresAt, message }`, the API returns that state
+  rather than two raw columns, and the screen prints `lock.message`. "You have this conversation
+  open" and "Nikhil opened this 4 minutes ago — check with them before replying" are a reassurance
+  and a warning; one sentence for both would be neither, and a screen computing its own answer from
+  `lockExpiresAt` is how two readings of one row diverge.
+- **The button says what it does to somebody else's lock.** "I'm on this" when nobody holds it,
+  "Take over" when a colleague does, "Let go" when it is yours. A greyed-out button would imply a
+  refusal that does not happen — the lock is advisory, because a customer waiting until a
+  colleague's five minutes run out is the worse outcome.
+- **"Nobody — back in the pool" is the first option in the owner picker.** It is a real answer, not
+  an empty state: a conversation nobody owns is visible to everybody who can read it, and it is
+  what somebody going on leave needs. The select is `key` + `defaultValue` from the echo — the
+  fourth time this product has paid for a `<select>` not coming back from a refused submission.
+- **Five separate forms, not one.** Assign, transfer, close, reopen and snooze are five different
+  acts with five different bodies; one form that did whichever field was filled is the ambiguity
+  that sends the wrong one. Every field selector is scoped to its own form, which is the lesson a
+  payments panel's `name="note"` taught a deal check.
+- **The snooze choices are instants resolved at render time.** "Tomorrow morning" computed from a
+  tab left open overnight would be yesterday, and the API rightly refuses a snooze into the past —
+  so the choice would answer 400 rather than doing nothing visible.
+- **The mention picker submits ids while the box carries the text.** A service parsing `@Asha` out
+  of the body tells the wrong Asha the moment a workspace has two, and silently: the right person
+  never hears. Each note then prints the names it told, resolved by the API — never a raw id, which
+  is the "Changed billingLine1" mistake.
+
+The confirmation for every one of these is the **re-rendered server tree**, not the action's own
+state: claiming changes the banner, assigning changes the owner beside it, closing moves the row
+out of the open list. A toast saying "Claimed" beside a banner that already says so is the product
+talking twice — and `useActionState` is unmounted by a revalidation anyway, which is what made the
+import replay's confirmation invisible.
+
+Four new timeline describers (`conversation.assigned`, `.transferred`, `.closed`, `.reopened`),
+plus `mention.created` — in the vocabulary since Phase 1 with nothing writing it — and both consent
+types, which the deferred list had down for Phase 13 until `FR-WA-10` arrived. Each says **who** and,
+where there is one, **why**: a row reading "Conversation assigned" would make a manager open the
+audit log for the two things they came for.

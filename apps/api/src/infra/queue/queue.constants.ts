@@ -155,6 +155,15 @@ export const JOBS = {
   WHATSAPP_DOWNLOAD_MEDIA: 'whatsapp.download-media',
   /** Re-fetches the attachments a worker never got (`FR-WA-3`). The send-retry sweep's shape. */
   WHATSAPP_MEDIA_RETRY: 'maintenance.whatsapp-media-retry',
+
+  /**
+   * Clears lapsed conversation locks and wakes snoozed conversations (`FR-WA-7`).
+   *
+   * Every minute, like the notification release, and for the same reason: a snooze somebody set
+   * has to be *delivered* rather than merely to expire, and a lock the column still claims is a
+   * warning about a colleague who went home.
+   */
+  CONVERSATION_SWEEP: 'maintenance.conversation-sweep',
   /**
    * One event, fanned out to the endpoints that asked for it (`FR-API-4`). Reads the subscribed
    * endpoints and writes a `webhook_deliveries` row per endpoint — the store that makes a delivery

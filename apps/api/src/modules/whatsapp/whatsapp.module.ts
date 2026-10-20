@@ -2,8 +2,12 @@ import { Module } from '@nestjs/common';
 import { IntegrationsModule } from '../integrations/integrations.module.js';
 import { LeadsModule } from '../leads/leads.module.js';
 import { NotificationsModule } from '../notifications/notifications.module.js';
+import { ConversationNotesService } from './conversation-notes.service.js';
+import { ConversationOwnershipService } from './conversation-ownership.service.js';
+import { ConversationSweepProcessor } from './conversation-sweep.processor.js';
 import { ConversationsService } from './conversations.service.js';
 import { WhatsAppAccountsService } from './whatsapp-accounts.service.js';
+import { WhatsAppConsentService } from './whatsapp-consent.service.js';
 import { WhatsAppInboundService } from './whatsapp-inbound.service.js';
 import { WhatsAppMediaService } from './whatsapp-media.service.js';
 import {
@@ -31,8 +35,8 @@ import { MediaUploadInstaller } from '../../infra/http/media-body.js';
 import { WhatsAppIngestMessageProcessor } from './whatsapp.processor.js';
 
 /**
- * WhatsApp: a connected number, the messages it receives, and the replies it sends (Phase 5
- * steps 1 and 2).
+ * WhatsApp: a connected number, the messages it receives, the replies it sends, the files both
+ * carry, and the people who own a conversation (Phase 5 steps 1–4).
  *
  * `IntegrationsModule` because the credential, the health and the inbound door all belong to the
  * integration framework — this module is the **shape** WhatsApp adds: a business account, its
@@ -63,6 +67,9 @@ import { WhatsAppIngestMessageProcessor } from './whatsapp.processor.js';
     WhatsAppStatusService,
     WhatsAppTemplatesService,
     WhatsAppMediaService,
+    WhatsAppConsentService,
+    ConversationOwnershipService,
+    ConversationNotesService,
     WhatsAppRateLimiter,
     MediaUploadInstaller,
     WhatsAppIngestMessageProcessor,
@@ -72,6 +79,7 @@ import { WhatsAppIngestMessageProcessor } from './whatsapp.processor.js';
     WhatsAppSyncTemplatesProcessor,
     WhatsAppDownloadMediaProcessor,
     WhatsAppMediaRetryProcessor,
+    ConversationSweepProcessor,
   ],
   exports: [
     WhatsAppInboundService,
@@ -85,8 +93,12 @@ import { WhatsAppIngestMessageProcessor } from './whatsapp.processor.js';
     WhatsAppSendRetryProcessor,
     WhatsAppSyncTemplatesProcessor,
     WhatsAppMediaService,
+    WhatsAppConsentService,
+    ConversationOwnershipService,
+    ConversationNotesService,
     WhatsAppDownloadMediaProcessor,
     WhatsAppMediaRetryProcessor,
+    ConversationSweepProcessor,
   ],
 })
 export class WhatsAppModule {}

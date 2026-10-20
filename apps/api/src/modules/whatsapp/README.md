@@ -131,12 +131,48 @@ anywhere but the attachment path — and it is registered on `onApplicationBoots
 `main.ts`, because a hook installed in the HTTP bootstrap is absent from every application the tests
 build.
 
+## The shared inbox, in six sentences (step 4)
+
+**An unclaimed conversation is everybody's.** A conversation has no branch or team column, so every
+scope narrower than the whole workspace resolved to `assigned_user_id = me` — and a seeded sales
+executive holds `conversation:read` at **own** scope, in a workspace where nothing assigns
+conversations. The inbox was therefore unreadable by the people it is for, hiding exactly the
+conversations most at risk of never being answered. `conversationScopeWhere` is the one decider all
+four services use
+([ADR-0039](../../../../../docs/decisions/ADR-0039-a-conversation-lock-is-advisory-and-an-unclaimed-conversation-is-everybodys.md)).
+
+**The lock is advisory and separate from ownership.** `assigned_user_id` survives a closed tab;
+`lock_user_id` is five minutes of "I am typing". A reply from somebody who is not the holder goes
+through, because a customer waiting until a colleague's five minutes run out is worse than two
+people typing — the override is audited instead.
+
+**The sentence is one function, called from both sides.** `conversationLock` answers from the
+viewer's own side, so the warning an agent reads and the state the server holds cannot disagree.
+
+**A lapsed lock is swept although every read already ignores it**, because the column would
+otherwise lie — and a snooze is **delivered** rather than merely expiring, because the passage of
+time is not something anybody notices.
+
+**`STOP` is applied in the request that carried it**, not by a job: a queue hop is a window in
+which a campaign reads the old consent and sends the person the thing they asked to stop. The
+keyword list is short and `no`, `cancel`, `end` and `quit` are deliberately off it — a false
+positive silences a customer invisibly.
+
+**A note is its own table and a mention is an id.** A note is never sent, so `messages` would make
+every "did we reply?" query carry a predicate it could forget; and parsing `@Asha` out of the text
+tells the wrong Asha the moment a workspace has two, in the quiet direction.
+
 ## What is unbuilt, said plainly
 
-The opt-out keyword (`FR-WA-10`), usage metering, bulk sending, the ownership lock,
-transfer, close/reopen, notes, mentions, canned replies and realtime.
-`conversations.lock_user_id`, `lock_expires_at`, `priority` and `snoozed_until` are columns with no
-writer yet, as is `message_media.scan_status` — nothing scans a file, and the column is the hook a
-scanner reads, with the same three-word vocabulary `documents.scan_status` has had since Phase 2 — which is said here because a column with no writer is otherwise indistinguishable from a
-feature somebody forgot. `first_response_at` **is** written now, from the `sent` receipt rather than
-from the queueing — a figure about the business's answer must not be flattered by the queue.
+Usage metering (`FR-BIL-4`), bulk sending, tags, canned replies, typing state and realtime.
+`conversation_participants` and `canned_replies` are the two sketched tables still unbuilt.
+
+Two columns still have **no writer**: `conversations.priority` and `message_media.scan_status` —
+nothing scans a file, and that column is the hook a scanner reads, with the same three-word
+vocabulary `documents.scan_status` has had since Phase 2. Said here because a column with no writer
+is otherwise indistinguishable from a feature somebody forgot — and because the step-1 note in
+`database-design.md` once claimed `lock_user_id`, `lock_expires_at` and `snoozed_until` existed
+when they did not, which is the worse version of the same mistake: the next person plans around it.
+
+`first_response_at` **is** written, from the `sent` receipt rather than from the queueing — a figure
+about the business's answer must not be flattered by the queue.

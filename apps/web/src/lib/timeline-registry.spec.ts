@@ -583,10 +583,7 @@ describe('every activity type the product writes has a describer', () => {
    * part of the work.
    */
   const NOT_WRITTEN_YET: Readonly<Record<string, number>> = {
-    'mention.created': 3,
     'document.uploaded': 3,
-    'consent.granted': 13,
-    'consent.revoked': 13,
     // An *inbound* call nobody answered. Only a telephony provider can report one — the manual
     // driver never learns that a call came in at all — so nothing writes it until Phase 4.
     'call.missed': 4,
@@ -614,6 +611,12 @@ describe('every activity type the product writes has a describer', () => {
     'sla',
     'call',
     'whatsapp',
+    // Phase 5 step 4 writes all four conversation types, `mention.created` — which had been in the
+    // vocabulary since Phase 1 with nothing writing it — and both consent types, which the
+    // deferred list above had down for Phase 13 until `FR-WA-10`'s opt-out keyword arrived.
+    'conversation',
+    'mention',
+    'consent',
   ];
 
   it('describes every type in a module the product writes, except the ones nothing writes yet', () => {

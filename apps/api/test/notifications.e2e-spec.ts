@@ -231,6 +231,12 @@ describe('what a new member starts with', () => {
     expect(settings.types.map((entry) => entry.type).sort()).toEqual([
       // Phase 3 step 6: the nudge that asks what happened on a call nobody recorded.
       'call.outcome_missing',
+      // Phase 5 step 4: the shared inbox's three. `assigned` covers a transfer too — being handed
+      // work is one event however it happened — and `woke` is a reminder somebody set for
+      // themselves, which is why it *is* held for quiet hours while a failed send is not.
+      'conversation.assigned',
+      'conversation.mentioned',
+      'conversation.woke',
       // Phase 4 step 6: a connected provider that refused our credential. Also not opt-out, and
       // for the same reason: the email or the leads it carries have stopped, silently.
       'integration.revoked',

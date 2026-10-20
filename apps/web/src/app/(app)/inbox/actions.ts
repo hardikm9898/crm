@@ -161,3 +161,150 @@ export async function retryMessage(_previous: ActionState, form: FormData): Prom
   if (result.status === 'success') revalidatePath('/inbox');
   return result;
 }
+
+/**
+ * The shared inbox's own mutations (`FR-WA-7`).
+ *
+ * Each one is a server action whose confirmation is the **re-rendered server tree**, not its own
+ * state: claiming a conversation changes the banner at the top of the thread, assigning it changes
+ * the owner beside it, and closing it moves it out of the open list. A `useActionState` message
+ * saying "Claimed" beside a banner that already says so would be the product talking twice.
+ */
+export async function claimConversation(
+  _previous: ActionState,
+  form: FormData,
+): Promise<ActionState> {
+  const id = String(form.get('conversationId') ?? '');
+  const result = await callApi(`/conversations/${id}/claim`, { method: 'POST', body: {} }, 'Opened.');
+  if (result.status === 'success') revalidatePath('/inbox');
+  return result;
+}
+
+export async function releaseConversation(
+  _previous: ActionState,
+  form: FormData,
+): Promise<ActionState> {
+  const id = String(form.get('conversationId') ?? '');
+  const result = await callApi(`/conversations/${id}/claim`, { method: 'DELETE' }, 'Let go.');
+  if (result.status === 'success') revalidatePath('/inbox');
+  return result;
+}
+
+/**
+ * Assigns, or puts it back in the pool.
+ *
+ * An empty `assignedUserId` is **`null`**, not an absent key: "nobody" is a real answer, and the
+ * `?flag=true` lesson is that folding an empty string to a default loses the three-way answer.
+ */
+export async function assignConversation(
+  _previous: ActionState,
+  form: FormData,
+): Promise<ActionState> {
+  const id = String(form.get('conversationId') ?? '');
+  const chosen = text(form, 'assignedUserId') ?? '';
+  const result = await callApi(
+    `/conversations/${id}/assign`,
+    { method: 'POST', body: { assignedUserId: chosen === '' ? null : chosen } },
+    'Assigned.',
+    form,
+  );
+  if (result.status === 'success') {
+    revalidatePath('/inbox');
+    revalidatePath('/today');
+  }
+  return result;
+}
+
+/** A transfer insists on both halves, and the API's refusal says which is missing. */
+export async function transferConversation(
+  _previous: ActionState,
+  form: FormData,
+): Promise<ActionState> {
+  const id = String(form.get('conversationId') ?? '');
+  const result = await callApi(
+    `/conversations/${id}/transfer`,
+    {
+      method: 'POST',
+      body: { toUserId: text(form, 'toUserId') ?? '', note: text(form, 'transferNote') ?? '' },
+    },
+    'Transferred.',
+    form,
+  );
+  if (result.status === 'success') {
+    revalidatePath('/inbox');
+    revalidatePath('/today');
+  }
+  return result;
+}
+
+export async function closeConversation(
+  _previous: ActionState,
+  form: FormData,
+): Promise<ActionState> {
+  const id = String(form.get('conversationId') ?? '');
+  const note = (text(form, 'closeNote') ?? '').trim();
+  const result = await callApi(
+    `/conversations/${id}/close`,
+    { method: 'POST', body: note === '' ? {} : { note } },
+    'Closed.',
+    form,
+  );
+  if (result.status === 'success') revalidatePath('/inbox');
+  return result;
+}
+
+export async function reopenConversation(
+  _previous: ActionState,
+  form: FormData,
+): Promise<ActionState> {
+  const id = String(form.get('conversationId') ?? '');
+  const result = await callApi(
+    `/conversations/${id}/reopen`,
+    { method: 'POST', body: {} },
+    'Open again.',
+  );
+  if (result.status === 'success') revalidatePath('/inbox');
+  return result;
+}
+
+/** Puts it aside. The instant comes from the choice somebody picked, resolved when it was rendered. */
+export async function snoozeConversation(
+  _previous: ActionState,
+  form: FormData,
+): Promise<ActionState> {
+  const id = String(form.get('conversationId') ?? '');
+  const result = await callApi(
+    `/conversations/${id}/snooze`,
+    { method: 'POST', body: { until: text(form, 'until') ?? '' } },
+    'Put aside.',
+    form,
+  );
+  if (result.status === 'success') revalidatePath('/inbox');
+  return result;
+}
+
+/**
+ * Writes an internal note, and tells the people it names.
+ *
+ * The mention ids are submitted as a repeated checkbox, so the refusal echo cannot use
+ * `submittedValues` — it keeps one value per name, which is the trap the mapping editor paid for.
+ * The body is echoed and the ticks are not, which is the honest division: a sentence somebody
+ * typed is worth keeping, and three ticks are two seconds to redo.
+ */
+export async function addConversationNote(
+  _previous: ActionState,
+  form: FormData,
+): Promise<ActionState> {
+  const id = String(form.get('conversationId') ?? '');
+  const mentionedUserIds = form
+    .getAll('mentionedUserIds')
+    .filter((value): value is string => typeof value === 'string' && value !== '');
+  const result = await callApi(
+    `/conversations/${id}/notes`,
+    { method: 'POST', body: { body: text(form, 'noteBody') ?? '', mentionedUserIds } },
+    'Noted.',
+    form,
+  );
+  if (result.status === 'success') revalidatePath('/inbox');
+  return result;
+}

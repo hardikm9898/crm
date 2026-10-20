@@ -501,6 +501,30 @@ All schedules are working-hours/timezone aware where they touch humans — a fol
 >   unique on a partitioned table would have to contain the partition key — which would make
 >   "one attachment per message" a guarantee that expires at the end of the month.
 
+> **Amendment, 2026-10-20 (implementation, Phase 5 step 4 — the shared inbox).** One more job:
+>
+> | Schedule      | Job                               | Purpose                                                       |
+> | ------------- | --------------------------------- | ------------------------------------------------------------- |
+> | every minute  | `maintenance.conversation-sweep`  | Clear lapsed locks and wake snoozed conversations             |
+>
+> - **Every minute, like the notification release**, and for the same reason: a snooze somebody set
+>   has to be **delivered** rather than merely to expire. `snoozed_until <= now()` as a list
+>   predicate would make a conversation visible before anything had told the person who asked to
+>   come back to it.
+> - **The lock half changes no behaviour, and runs anyway.** Every read already treats an expired
+>   lock as absent; the **column** is what would otherwise lie. A row saying "Nikhil holds this"
+>   three days after Nikhil went on holiday is something a person will read and believe.
+> - **Two reads, not one `OR`.** The two partial indexes (`conversations_locked`,
+>   `conversations_snoozed`) are only used if each is asked its own question — an `OR` cannot be a
+>   range scan, which `/my/today` paid for.
+> - **Both writes are conditional on the state the sweep read.** `UPDATE … WHERE status =
+>   'snoozed' AND snoozed_until <= now()` cannot drag back a conversation somebody closed a second
+>   earlier, and the row count is what says whether anything happened — the same shape as the
+>   status receipts' conditional advance.
+> - **Cross-tenant, so the read is platform-scoped and each write enters its row's own workspace.**
+>   `withPlatformScope` leaves `tenantContext.organizationId()` unset, and both the notification
+>   and the audit row take the organization from the context.
+
 ## 6. Retry, failure and DLQ
 
 Policy: exponential backoff with full jitter, per-queue attempt caps (§3). Errors are classified:

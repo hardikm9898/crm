@@ -12,7 +12,8 @@ import {
   type WhatsAppTemplateStatus,
 } from '@leados/shared';
 import type { Logger } from 'pino';
-import { DataScopeService, applyScopeFilter } from '../../infra/authz/data-scope.service.js';
+import { DataScopeService } from '../../infra/authz/data-scope.service.js';
+import { conversationScopeWhere } from './conversation-scope.js';
 import { DbService } from '../../infra/db/db.service.js';
 import { LOGGER } from '../../infra/observability/logger.module.js';
 import { JOBS, QUEUES } from '../../infra/queue/queue.constants.js';
@@ -210,8 +211,7 @@ export class WhatsAppSendService {
 
   /** The conversation, through the **reply** scope rather than the read one. */
   private async conversationForReply(id: string) {
-    const filter = this.scopes.filterFor('conversation:reply', { userColumn: 'assignedUserId' });
-    const scoped = applyScopeFilter({ id }, filter);
+    const scoped = conversationScopeWhere(this.scopes, 'conversation:reply', { id });
     if (scoped === null) throw AppError.notFound('Conversation');
     const row = await this.db.client.conversation.findFirst({
       where: scoped,

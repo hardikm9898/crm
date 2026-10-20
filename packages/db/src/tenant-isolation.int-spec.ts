@@ -4301,6 +4301,119 @@ describe('layer 5 — WhatsApp conversations and messages (Phase 5 step 1)', () 
     );
   });
 
+  // ── Phase 5 step 4 — the shared inbox ────────────────────────────────────
+
+  it('insists a lock has both halves, and a snooze says when', async () => {
+    const own = await number(h.orgA.organizationId);
+    const id = await conversation(h.orgA.organizationId, own.numberId);
+    const set = (data: Record<string, unknown>) =>
+      h.unscoped.conversation.update({ where: { id }, data: data as never });
+
+    // A holder with no expiry is a lock that never lapses — the one failure the five-minute TTL
+    // exists to prevent — and an expiry with no holder is an expiry for nobody. Both directions
+    // are contradictions, which is why this one constraint is a biconditional.
+    await expect(set({ lockUserId: h.orgA.userId })).rejects.toThrow(
+      /conversations_lock_is_whole/i,
+    );
+    await expect(set({ lockExpiresAt: new Date() })).rejects.toThrow(
+      /conversations_lock_is_whole/i,
+    );
+    await expect(
+      set({ lockUserId: h.orgA.userId, lockExpiresAt: new Date() }),
+    ).resolves.toBeTruthy();
+    await expect(set({ lockUserId: null, lockExpiresAt: null })).resolves.toBeTruthy();
+
+    await expect(set({ status: 'snoozed' })).rejects.toThrow(
+      /conversations_snoozed_says_when/i,
+    );
+    await expect(
+      set({ status: 'snoozed', snoozedUntil: new Date(Date.now() + 3_600_000) }),
+    ).resolves.toBeTruthy();
+    // The honest state the mirror would have forbidden: a conversation closed while it was snoozed
+    // keeps the instant somebody asked for, which is the record of what they wanted.
+    await expect(set({ status: 'closed', closedAt: new Date() })).resolves.toBeTruthy();
+  });
+
+  it('refuses a lock held by another workspace’s member', async () => {
+    const own = await number(h.orgA.organizationId);
+    const id = await conversation(h.orgA.organizationId, own.numberId);
+    await expect(
+      h.unscoped.conversation.update({
+        where: { id },
+        data: { lockUserId: h.orgB.userId, lockExpiresAt: new Date() } as never,
+      }),
+    ).rejects.toThrow(/conversations_locker_same_org_fk|foreign key/i);
+  });
+
+  it('refuses a note on another workspace’s conversation, or from another’s member', async () => {
+    const own = await number(h.orgA.organizationId);
+    const ours = await conversation(h.orgA.organizationId, own.numberId);
+    const theirNumber = await number(h.orgB.organizationId);
+    const theirs = await conversation(h.orgB.organizationId, theirNumber.numberId);
+    const note = (over: Record<string, unknown> = {}) =>
+      h.unscoped.conversationNote.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          conversationId: ours,
+          body: 'Asha wants possession by March',
+          authorUserId: h.orgA.userId,
+          ...over,
+        } as never,
+      });
+    await expect(note()).resolves.toBeTruthy();
+    await expect(note({ conversationId: theirs })).rejects.toThrow(
+      /conversation_notes_conversation_same_org_fk|foreign key/i,
+    );
+    await expect(note({ authorUserId: h.orgB.userId })).rejects.toThrow(
+      /conversation_notes_author_same_org_fk|foreign key/i,
+    );
+  });
+
+  it('refuses a note with nothing in it, and one that names everybody', async () => {
+    const own = await number(h.orgA.organizationId);
+    const ours = await conversation(h.orgA.organizationId, own.numberId);
+    const note = (over: Record<string, unknown>) =>
+      h.unscoped.conversationNote.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          conversationId: ours,
+          body: 'something',
+          authorUserId: h.orgA.userId,
+          ...over,
+        } as never,
+      });
+    await expect(note({ body: '   ' })).rejects.toThrow(/conversation_notes_body_not_blank/i);
+    await expect(note({ body: 'a'.repeat(4001) })).rejects.toThrow(
+      /conversation_notes_body_not_blank/i,
+    );
+    // `cardinality`, not `array_length`: on an empty array the latter is NULL and the check would
+    // not bite at all, so this asserts the empty case is allowed *and* the ceiling holds.
+    await expect(note({ mentionedUserIds: [] })).resolves.toBeTruthy();
+    await expect(
+      note({ mentionedUserIds: Array.from({ length: 21 }, () => newId()) }),
+    ).rejects.toThrow(/conversation_notes_mentions_sane/i);
+  });
+
+  it('shows one workspace nothing of another’s notes', async () => {
+    const own = await number(h.orgA.organizationId);
+    const ours = await conversation(h.orgA.organizationId, own.numberId);
+    await h.unscoped.conversationNote.create({
+      data: {
+        id: newId(),
+        organizationId: h.orgA.organizationId,
+        conversationId: ours,
+        body: 'Private',
+        authorUserId: h.orgA.userId,
+      } as never,
+    });
+    const theirs = await tenantContext.run(h.orgB.principal, async () => ({
+      notes: await h.db.conversationNote.findMany({}),
+    }));
+    expect(theirs.notes.every((row) => row.organizationId === h.orgB.organizationId)).toBe(true);
+  });
+
   it('shows one workspace nothing of another’s attachments', async () => {
     const parent = await messageIn(h.orgA.organizationId);
     await h.unscoped.messageMedia.create({
