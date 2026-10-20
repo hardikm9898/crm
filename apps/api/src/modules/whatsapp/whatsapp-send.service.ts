@@ -18,6 +18,7 @@ import { LOGGER } from '../../infra/observability/logger.module.js';
 import { JOBS, QUEUES } from '../../infra/queue/queue.constants.js';
 import { QueueService } from '../../infra/queue/queue.service.js';
 import { presentMessage } from './whatsapp-presenters.js';
+import type { StoredUpload } from './whatsapp-media.service.js';
 import { WhatsAppTemplatesService } from './whatsapp-templates.service.js';
 
 /** What somebody is asking us to send. */
@@ -28,7 +29,15 @@ export type OutboundRequest =
       readonly templateId: string;
       /** Overrides for variables the lead cannot supply. Keyed by the variable's number. */
       readonly variables?: Readonly<Record<string, string>>;
-    };
+    }
+  /**
+   * A file the agent has already uploaded (`FR-WA-3`).
+   *
+   * The bytes are stored **before** this request, by `POST …/attachments`, which is what makes a
+   * media send retryable: Meta is given the file inside the send job, so a provider refusal does
+   * not lose the file somebody chose.
+   */
+  | { readonly kind: 'media'; readonly upload: StoredUpload };
 
 /**
  * Sending a WhatsApp message (`FR-WA-1`, `FR-WA-4`, `FR-WA-9`).
@@ -90,7 +99,9 @@ export class WhatsAppSendService {
     const prepared =
       request.kind === 'text'
         ? await this.prepareText(request.body)
-        : await this.prepareTemplate(conversation, request);
+        : request.kind === 'media'
+          ? this.prepareMedia(request.upload)
+          : await this.prepareTemplate(conversation, request);
 
     const messageId = newId();
     const now = new Date();
@@ -112,6 +123,27 @@ export class WhatsAppSendService {
         createdAt: now,
       },
     });
+
+    // The file's own row, in the same breath as the message: a media row with no message would be
+    // a file nothing can ever reach, and a message with no row would be an attachment the thread
+    // cannot show.
+    if (request.kind === 'media') {
+      await this.db.client.messageMedia.create({
+        data: {
+          id: request.upload.mediaId,
+          organizationId: principal.organizationId,
+          messageId,
+          messageCreatedAt: now,
+          fileKey: request.upload.fileKey,
+          fileName: request.upload.fileName,
+          mimeType: request.upload.mimeType,
+          sizeBytes: request.upload.sizeBytes,
+          sha256: request.upload.sha256,
+          // Ours already: the bytes were stored by the upload route. Meta gets them at send time.
+          downloadStatus: 'stored',
+        },
+      });
+    }
 
     // The thread's order, immediately: a message that appears only once Meta has accepted it makes
     // the agent wonder whether they pressed the button.
@@ -194,6 +226,28 @@ export class WhatsAppSendService {
     });
     if (!row) throw AppError.notFound('Conversation');
     return row;
+  }
+
+  /**
+   * A file, as the message that will carry it.
+   *
+   * The caption is the body, because that is what it is: text somebody wrote about the file, which
+   * the thread shows and search finds. A media message with no caption has a null body and the
+   * preview sentence stands in for it — never "[image]".
+   */
+  private prepareMedia(upload: StoredUpload): PreparedMessage {
+    return {
+      type: upload.type,
+      body: upload.caption,
+      templateId: null,
+      payload: {
+        kind: 'media',
+        mediaId: upload.mediaId,
+        mimeType: upload.mimeType,
+        fileName: upload.fileName,
+        ...(upload.caption === null ? {} : { caption: upload.caption }),
+      },
+    };
   }
 
   private async prepareText(body: string): Promise<PreparedMessage> {
@@ -290,7 +344,12 @@ export class WhatsAppSendService {
   async present(messageId: string) {
     const row = await this.db.client.message.findFirstOrThrow({
       where: { id: messageId },
-      include: { sender: { select: { userId: true, user: { select: { name: true } } } } },
+      include: {
+        sender: { select: { userId: true, user: { select: { name: true } } } },
+        // One of each, in both readings: a row with two presenters is a row whose two readings
+        // diverge, which `sendAttempts` already paid for once.
+        media: true,
+      },
     });
     return presentMessage(row);
   }
@@ -298,7 +357,7 @@ export class WhatsAppSendService {
 
 interface PreparedMessage {
   readonly type: MessageType;
-  readonly body: string;
+  readonly body: string | null;
   readonly templateId: string | null;
   readonly payload: Record<string, unknown>;
 }

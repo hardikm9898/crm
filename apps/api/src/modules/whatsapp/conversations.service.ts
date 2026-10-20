@@ -185,7 +185,12 @@ export class ConversationsService {
       },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: query.limit + 1,
-      include: { sender: { select: { userId: true, user: { select: { name: true } } } } },
+      include: {
+        sender: { select: { userId: true, user: { select: { name: true } } } },
+        // One of each, in both readings: a row with two presenters is a row whose two readings
+        // diverge, which `sendAttempts` already paid for once.
+        media: true,
+      },
     });
     const page = rows.slice(0, query.limit);
     return {

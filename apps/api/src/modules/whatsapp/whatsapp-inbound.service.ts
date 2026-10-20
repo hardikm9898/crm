@@ -18,6 +18,7 @@ import { LOGGER } from '../../infra/observability/logger.module.js';
 import { TimelineService } from '../../infra/timeline/timeline.service.js';
 import { LeadsService } from '../leads/leads.service.js';
 import { deterministicEventId } from './whatsapp-ids.js';
+import { WhatsAppMediaService } from './whatsapp-media.service.js';
 
 /** What one inbound message did, for the log and for a test. */
 export interface InboundResult {
@@ -60,6 +61,7 @@ export class WhatsAppInboundService {
     private readonly db: DbService,
     private readonly leads: LeadsService,
     private readonly timeline: TimelineService,
+    private readonly media: WhatsAppMediaService,
     @Inject(LOGGER) private readonly logger: Logger,
   ) {}
 
@@ -206,6 +208,19 @@ export class WhatsAppInboundService {
           ...(conversation.wasClosed ? { status: 'open', closedAt: null, closedById: null } : {}),
         },
       });
+
+      // The file, if there is one: recorded in the same breath as the message so the screen never
+      // flickers between "no attachment" and "a photo", and fetched by a job because the bytes are
+      // a second request over somebody else's CDN.
+      if (message.media !== null) {
+        await this.media.expect({
+          organizationId,
+          messageId,
+          messageCreatedAt: receivedAt,
+          type: message.type,
+          media: message.media,
+        });
+      }
 
       if (conversation.leadId !== null) {
         await this.timeline.record({

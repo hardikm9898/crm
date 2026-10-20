@@ -117,6 +117,21 @@ export interface ConversationMessage {
   replyToProviderId: string | null;
   sender: { id: string; name: string } | null;
   createdAt: string;
+  /** The file, when there is one (`FR-WA-3`). Null for a text or a template. */
+  media: MessageMedia | null;
+}
+
+export interface MessageMedia {
+  id: string;
+  fileName: string | null;
+  mimeType: string | null;
+  sizeBytes: number | null;
+  downloadStatus: 'pending' | 'stored' | 'refused' | 'failed' | string;
+  /** Why it is not here, when it is not — the API's sentence, printed rather than paraphrased. */
+  reason: string | null;
+  voice: boolean;
+  /** Whether the bytes are worth asking for. */
+  available: boolean;
 }
 
 export interface WhatsAppNumber {
@@ -417,4 +432,56 @@ export async function previewTemplate(
 /** Whether this message is one an agent can do something about. */
 export function needsAttention(message: ConversationMessage): boolean {
   return message.direction === 'outbound' && message.status === 'failed';
+}
+
+/**
+ * Where the browser asks for an attachment's bytes (`FR-WA-3`).
+ *
+ * Through this app, not the API: the access token is an httpOnly cookie, so a `src` pointed at the
+ * API would be an unauthenticated request — the same reason the export download is a relay route.
+ */
+export function attachmentHref(conversationId: string, messageId: string): string {
+  return `/inbox/attachments/${conversationId}/${messageId}`;
+}
+
+/**
+ * How an attachment should be shown.
+ *
+ * `image` renders where it is, `download` is a link, and `unavailable` is a **sentence** — because
+ * an `<img>` for a file that was refused or has not arrived is a broken image with no explanation,
+ * which is the one thing worse than saying so.
+ */
+export function attachmentShape(media: MessageMedia): 'image' | 'download' | 'unavailable' {
+  if (!media.available) return 'unavailable';
+  return (media.mimeType ?? '').startsWith('image/') ? 'image' : 'download';
+}
+
+/**
+ * The sentence for an attachment that is not here.
+ *
+ * The API's own `reason` wins: "That is 40 MB, and the limit for an image is 5 MB" is what somebody
+ * needs, and a fallback written here would discard it — the `ERROR_COPY` lesson, one layer in.
+ */
+export function attachmentWaiting(media: MessageMedia): string {
+  if (media.reason !== null && media.reason.trim() !== '') return media.reason;
+  return media.downloadStatus === 'pending'
+    ? 'They sent a file — it is still being fetched from WhatsApp.'
+    : 'That file is not available.';
+}
+
+/** `1536` → `1.5 KB`. Mirrors `describeBytes` in `@leados/shared`, which this app may not import. */
+export function describeSize(bytes: number | null): string | null {
+  if (bytes === null || bytes <= 0) return null;
+  if (bytes < 1024) return `${bytes} bytes`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  const megabytes = bytes / (1024 * 1024);
+  return `${megabytes >= 10 ? Math.round(megabytes) : Math.round(megabytes * 10) / 10} MB`;
+}
+
+/** The name to print for a file, which is never the empty string. */
+export function attachmentName(media: MessageMedia): string {
+  const name = media.fileName?.trim();
+  if (name) return name;
+  if (media.voice) return 'Voice note';
+  return 'Attachment';
 }

@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   CONVERSATION_STATUSES,
+  MEDIA_DOWNLOAD_STATUSES,
+  MEDIA_LIMITS,
+  MEDIA_MESSAGE_TYPES,
+  describeBytes,
+  mediaProblem,
   MESSAGE_STATUS_ORDER,
   WHATSAPP_TEMPLATE_CATEGORIES,
   WHATSAPP_TEMPLATE_STATUSES,
@@ -230,6 +235,16 @@ describe('what may be sent, and when (`FR-WA-1`)', () => {
     }
   });
 
+  it('treats a file as free-form, because Meta’s rule is about templates and not about words', () => {
+    const closed = new Date('2026-10-19T06:00:00.000Z');
+    const refusal = sendingAllowed({ windowExpiresAt: closed, kind: 'media', now });
+    expect(refusal.allowed).toBe(false);
+    if (refusal.allowed === false) expect(refusal.code).toBe('OUTSIDE_SERVICE_WINDOW');
+    expect(
+      sendingAllowed({ windowExpiresAt: new Date('2026-10-19T18:00:00.000Z'), kind: 'media', now }),
+    ).toEqual({ allowed: true });
+  });
+
   it('allows a template at any time, including to somebody who has never written', () => {
     expect(sendingAllowed({ windowExpiresAt: null, kind: 'template', now })).toEqual({
       allowed: true,
@@ -434,5 +449,101 @@ describe('the statuses one receipt may overwrite', () => {
         expect(statusAdvances(current, next), `${current} → ${next}`).toBe(true);
       }
     }
+  });
+});
+
+describe('an attachment (`FR-WA-3`)', () => {
+  const mediaDelivery = (type: string, block: Record<string, unknown>) =>
+    delivery([
+      {
+        from: '919845012345',
+        id: 'wamid.media',
+        timestamp: '1792400000',
+        type,
+        [type]: block,
+        ...(type === 'image' ? {} : {}),
+      },
+    ]);
+
+  it('reads the media id Meta is holding, under the message’s own type', () => {
+    const [message] = parseWhatsAppMessages(
+      mediaDelivery('image', {
+        id: 'media-1',
+        mime_type: 'image/jpeg; codecs=x',
+        sha256: 'abc',
+        caption: 'The sofa in daylight',
+      }),
+    );
+    expect(message?.media?.providerMediaId).toBe('media-1');
+    // The parameters after the semicolon are not the type.
+    expect(message?.media?.mimeType).toBe('image/jpeg');
+    expect(message?.media?.sha256).toBe('abc');
+    // A caption is text somebody wrote, so it is also the body — which is what makes it searchable.
+    expect(message?.body).toBe('The sofa in daylight');
+  });
+
+  it('keeps a document’s file name and knows a voice note from an audio file', () => {
+    const [document] = parseWhatsAppMessages(
+      mediaDelivery('document', { id: 'media-2', mime_type: 'application/pdf', filename: 'quote.pdf' }),
+    );
+    expect(document?.media?.fileName).toBe('quote.pdf');
+    expect(document?.media?.voice).toBe(false);
+    const [voice] = parseWhatsAppMessages(
+      mediaDelivery('audio', { id: 'media-3', mime_type: 'audio/ogg', voice: true }),
+    );
+    expect(voice?.media?.voice).toBe(true);
+  });
+
+  it('has no media for a text message, and none for a block with no id', () => {
+    const [text] = parseWhatsAppMessages(delivery([{ from: '919845012345', id: 'wamid.t', timestamp: '1792400000', type: 'text', text: { body: 'hello' } }]));
+    expect(text?.media).toBeNull();
+    // An attachment nothing can fetch is worse than a row saying there was none.
+    const [broken] = parseWhatsAppMessages(mediaDelivery('image', { mime_type: 'image/jpeg' }));
+    expect(broken?.media).toBeNull();
+    expect(broken?.type).toBe('image');
+  });
+
+  it('refuses what it cannot carry, in a sentence with the sizes in it', () => {
+    expect(mediaProblem({ type: 'image', mimeType: 'image/jpeg', sizeBytes: 1024 })).toBeNull();
+    const big = mediaProblem({ type: 'image', mimeType: 'image/png', sizeBytes: 9 * 1024 * 1024 });
+    expect(big?.code).toBe('MEDIA_TOO_LARGE');
+    expect(big?.message).toContain('MB');
+    // The sentence, not the code: "the limit for a image" is the same class of mistake as
+    // "1 missed promises", and it reached a browser check before this assertion existed.
+    expect(big?.message).toBe('That is 9 MB, and the limit for an image is 5 MB.');
+    expect(mediaProblem({ type: 'text', mimeType: null, sizeBytes: null })?.message).toBe(
+      'A text attachment is not something this product stores.',
+    );
+    expect(mediaProblem({ type: 'audio', mimeType: 'text/plain', sizeBytes: 1 })?.message).toBe(
+      'text/plain is not a kind of audio this product stores.',
+    );
+    // A document is bounded by size alone, because "any file" is what a document is.
+    expect(mediaProblem({ type: 'document', mimeType: 'application/zip', sizeBytes: 1024 })).toBeNull();
+    expect(mediaProblem({ type: 'image', mimeType: 'application/zip', sizeBytes: 1024 })?.code).toBe(
+      'MEDIA_MIME_UNSUPPORTED',
+    );
+    expect(mediaProblem({ type: 'text', mimeType: null, sizeBytes: null })?.code).toBe(
+      'MEDIA_TYPE_UNSUPPORTED',
+    );
+    // A size nobody knows yet passes: the job checks again once Meta has said.
+    expect(mediaProblem({ type: 'video', mimeType: null, sizeBytes: null })).toBeNull();
+    expect(mediaProblem({ type: 'document', mimeType: 'application/pdf', sizeBytes: 0 })?.code).toBe(
+      'MEDIA_EMPTY',
+    );
+  });
+
+  it('says a size in words a person reads', () => {
+    expect(describeBytes(512)).toBe('512 bytes');
+    expect(describeBytes(2048)).toBe('2 KB');
+    expect(describeBytes(1024 * 1024 * 3.5)).toBe('3.5 MB');
+    expect(describeBytes(1024 * 1024 * 16)).toBe('16 MB');
+  });
+
+  it('agrees with itself about which types are files', () => {
+    for (const type of MEDIA_MESSAGE_TYPES) {
+      expect(MEDIA_LIMITS[type], type).toBeDefined();
+    }
+    expect(MEDIA_MESSAGE_TYPES).not.toContain('text');
+    expect(MEDIA_DOWNLOAD_STATUSES).toContain('refused');
   });
 });

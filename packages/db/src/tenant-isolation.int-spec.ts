@@ -4202,4 +4202,119 @@ describe('layer 5 — WhatsApp conversations and messages (Phase 5 step 1)', () 
       ).toBe(true);
     }
   });
+
+  // ── Phase 5 step 3 — attachments ─────────────────────────────────────────
+
+  /** A message in whichever workspace is asked for, with both halves of its key. */
+  async function messageIn(organizationId: string, over: Record<string, unknown> = {}) {
+    const own = await number(organizationId);
+    const conversationId = await conversation(organizationId, own.numberId);
+    const created = await h.unscoped.message.create({
+      data: {
+        id: newId(),
+        organizationId,
+        conversationId,
+        direction: 'inbound',
+        type: 'image',
+        status: 'delivered',
+        ...over,
+      } as never,
+    });
+    return { id: created.id, createdAt: created.createdAt, conversationId };
+  }
+
+  it('keeps one attachment per message, with the parent’s own instant', async () => {
+    const parent = await messageIn(h.orgA.organizationId);
+    const media = (over: Record<string, unknown> = {}) =>
+      h.unscoped.messageMedia.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          messageId: parent.id,
+          // Both halves, because `messages` is partitioned by `created_at` — the same reason the
+          // status receipts carry it.
+          messageCreatedAt: parent.createdAt,
+          providerMediaId: `media_${newId().slice(-8)}`,
+          mimeType: 'image/jpeg',
+          ...over,
+        } as never,
+      });
+    await expect(media()).resolves.toBeTruthy();
+    // A message shows one attachment, so a replayed ingestion must not be able to write a second.
+    await expect(media()).rejects.toThrow(/message_media_one_per_message|unique/i);
+
+    const other = await messageIn(h.orgA.organizationId);
+    // The wrong instant is the wrong row: without the parent's own `created_at` the FK cannot
+    // resolve, however real the id is.
+    await expect(
+      media({ messageId: other.id, messageCreatedAt: new Date(Date.now() - 86_400_000) }),
+    ).rejects.toThrow(/message_media_message_same_org_fk|foreign key/i);
+  });
+
+  it('refuses an attachment on another workspace’s message', async () => {
+    const theirs = await messageIn(h.orgB.organizationId);
+    await expect(
+      h.unscoped.messageMedia.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          messageId: theirs.id,
+          messageCreatedAt: theirs.createdAt,
+          mimeType: 'image/jpeg',
+        } as never,
+      }),
+    ).rejects.toThrow(/message_media_message_same_org_fk|foreign key/i);
+  });
+
+  it('insists a stored file has bytes and a refusal says why', async () => {
+    const parent = await messageIn(h.orgA.organizationId);
+    const media = (over: Record<string, unknown>) =>
+      h.unscoped.messageMedia.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          messageId: parent.id,
+          messageCreatedAt: parent.createdAt,
+          mimeType: 'image/jpeg',
+          ...over,
+        } as never,
+      });
+    await expect(media({ downloadStatus: 'stored' })).rejects.toThrow(
+      /message_media_stored_has_a_file/i,
+    );
+    await expect(media({ downloadStatus: 'refused' })).rejects.toThrow(
+      /message_media_refused_says_why/i,
+    );
+    await expect(media({ downloadStatus: 'failed' })).rejects.toThrow(
+      /message_media_refused_says_why/i,
+    );
+    await expect(
+      media({ downloadStatus: 'stored', fileKey: 'org/a/whatsapp-media/x.jpg', sizeBytes: 1 }),
+    ).resolves.toBeTruthy();
+    // The honest state the mirror would have forbidden: an outbound attachment is stored by us
+    // *before* Meta has it and before anything has been sent, so "not stored ⇒ no file key" is
+    // false and deliberately not asserted.
+    await expect(media({ sizeBytes: 0 })).rejects.toThrow(/message_media_size_sane/i);
+    await expect(media({ attempts: -1 })).rejects.toThrow(/message_media_attempts_sane/i);
+    await expect(media({ scanStatus: 'probably fine' })).rejects.toThrow(
+      /message_media_scan_status/i,
+    );
+  });
+
+  it('shows one workspace nothing of another’s attachments', async () => {
+    const parent = await messageIn(h.orgA.organizationId);
+    await h.unscoped.messageMedia.create({
+      data: {
+        id: newId(),
+        organizationId: h.orgA.organizationId,
+        messageId: parent.id,
+        messageCreatedAt: parent.createdAt,
+        mimeType: 'image/jpeg',
+      } as never,
+    });
+    const theirs = await tenantContext.run(h.orgB.principal, async () => ({
+      media: await h.db.messageMedia.findMany({}),
+    }));
+    expect(theirs.media.every((row) => row.organizationId === h.orgB.organizationId)).toBe(true);
+  });
 });

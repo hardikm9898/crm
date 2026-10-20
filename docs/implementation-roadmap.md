@@ -2645,6 +2645,102 @@ Meta's real ceiling depends on the number's messaging tier and is not readable f
 **no realtime**: a reply appears because the server action re-renders the page, and a colleague's
 reply appears when somebody reloads. And the p95-with-100 k-messages criterion is still unmeasured.
 
+### Step 3 — media, in both directions ✅ _(landed 2026-10-20)_
+
+`FR-WA-3`: a customer sends a photo of the room they want quoted, and an agent sends the quotation
+back. Meta's delivery contains neither — it contains a media **id**, which has to be exchanged for a
+URL and then for bytes, with the access token on both requests; an outbound file has to be handed to
+Meta before it can be attached to a message.
+
+**The message lands first; the file is a job**
+([ADR-0038](./decisions/ADR-0038-an-attachment-is-served-by-this-product-not-by-a-signed-url.md)).
+The ingestion writes the message and a `message_media` row in its own transaction, status `pending`,
+and queues `whatsapp.download-media` keyed on the message's id. A delivery Meta waits on is a
+delivery Meta **retries**, so a four-second CDN fetch inside the request would have turned one photo
+into two and undone the ledger. The row existing from the first write is what makes "they sent a
+photo and we have not got it yet" a state the screen can show rather than a gap.
+
+**The kind is refused without asking Meta; the size is refused before reading.** `mediaProblem` is
+the one decider, called three times with progressively more information: at ingestion with the kind
+and the mime type (an `image` whose mime type is `application/x-msdownload` never costs a request),
+in the job with Meta's own `file_size` — the one moment a refusal is free — and in the adapter
+**while reading**, because a `file_size` is a claim and a provider that under-reports would otherwise
+decide how much memory this process uses.
+
+**A refusal is a state with a sentence, not an exception.** `refused` is ours and final, `failed` is
+Meta's or the network's and is swept four times, and either way the row carries the words somebody
+reads — "That is 40 MB, and the limit for an image is 5 MB." Four statuses rather than three because
+"we will not fetch this" and "we could not" are different answers to "where is the photo", and a
+screen that conflated them would offer a retry on a file that will never arrive.
+
+**An outbound file is ours before Meta has it.** `POST /conversations/{id}/attachments` stores the
+bytes and writes the media row in the same breath as the `queued` message; the **send job** hands
+Meta the file and keeps the id it answers with. A provider refusal then costs an attempt rather than
+the file, and a retry re-uses `provider_media_id` — proven by a test that makes Meta refuse the send
+after taking the file and then asserts one upload across two attempts.
+
+**The bytes are served by this product, and the "signed-URL delivery" in the exit criterion is
+deliberately not built.** A signed URL needs a driver that can sign one; `StoragePort` is a
+`put`/`get`/`delete` over a key and the local driver is a directory. `GET …/messages/{id}/media` is
+behind `conversation:read` through `DataScopeService`, `inline` for an image, video or audio and
+`attachment` for anything else, with `nosniff` and `no-store` on both — a file a stranger sent us
+must never be interpreted as HTML on our own origin. When the S3 driver lands,
+`WhatsAppMediaService.read` is the one place that changes.
+
+**The upload parser is a provider of the WhatsApp module, and it refuses every other path.** A
+Fastify content-type parser is global and the body is parsed before any guard runs, so the 16 MB
+limit this one route needs would otherwise be an unauthenticated sink on `/auth/login` — the
+`text/csv` lesson, in a second place. `MediaUploadInstaller` adds an `onRequest` hook answering 415
+for those content types anywhere but the attachment path, and it is registered on
+`onApplicationBootstrap` rather than from `main.ts`, because a hook installed in the HTTP bootstrap
+is **absent from every application the tests build**.
+
+**One screen** (`frontend-architecture.md` §10.15): the thread shows a photo where it is, anything
+else as a named link that saves, and a file that is not here as a **sentence** — the API's own,
+through `media.available` rather than this screen reading a status word, because an `<img>` whose
+bytes 422 is a broken image with no explanation. The composer gained a second form beside the reply
+box, because a file and a typed reply are two messages on WhatsApp.
+
+**Verified.** **2 643 tests green** — 1 154 unit (638 shared, 344 web, 168 api, 4 db) and 1 489
+integration (836 api e2e, 653 across the schema-object and tenant-isolation suites) — with **34
+new**:
+
+- **7 in `@leados/shared`**, over `mediaProblem`'s three refusals and the sentence each produces
+  (including the article: "the limit for a image" is the same class of mistake as "1 missed
+  promises"), the per-kind limits, and `readMedia` keyed by the message's own type.
+- **6 on the web side**, over the three shapes an attachment renders as, the API's reason winning
+  over any local fallback, the relay route's path, and a size described the way `describeBytes`
+  does.
+- **10 api e2e** in a new suite against a real in-process Graph API serving all three halves of the
+  round trip: the message readable before the fetch and the route saying so, the exact bytes coming
+  back out, a document as a download under the sender's own name, a 40 MB claim refused without
+  reading a byte, a kind refused without asking Meta at all, the same job twice storing one file,
+  the sweep re-queuing what a worker never got, an outbound file stored before Meta has it and
+  uploaded once across two attempts, an empty body and an unnamed file refused, and a file posted
+  to `/auth/login` answering 415.
+- **11 schema-object and tenant-isolation cases**: one attachment per message, the parent's own
+  instant required by the composite FK, another workspace's message refused, the two `CASE`
+  constraints with the honest state each mirror would have forbidden, the scan vocabulary, and the
+  partial index.
+
+Then **30 HTTP checks** against a live API, **worker** and **scheduler** with a fake Graph API on
+another port — the whole path through a real queue hop, including the PNG magic bytes and the `%PDF-`
+header coming back out of our own route — and **15 browser checks** in Chromium, asserting
+`naturalWidth > 0` rather than that an `<img>` exists.
+
+Three things were only visible outside the unit tests: the OpenAPI writer dying because a
+**standalone** Nest context has `httpAdapter === null` rather than `undefined`; a browser check whose
+`waitForFunction` on `body.innerText` matched the composer's own echo of the filename and resolved
+before the thread had re-rendered; and **4 px** of sideways scroll at 375 px from a file input's
+intrinsic width.
+
+**Carried forward, named rather than assumed:** **no signed URL** (above), and a file is held in
+memory — sixteen megabytes is a real ceiling, and streaming into storage is a port change.
+`message_media.scan_status` has **no scanner**. The **opt-out keyword** (`FR-WA-10`), bulk sending,
+**usage metering** (`FR-BIL-4`), the **ownership lock**, transfer, close/reopen, notes, mentions,
+canned replies and **realtime** are all still unbuilt, and the p95-with-100 k-messages criterion is
+still unmeasured.
+
 ---
 
 ## Phase 6 — Automation
@@ -2800,11 +2896,11 @@ partially landed, with the specific gaps named.
 ## Immediate next step
 
 _This section names the next step only; what each landed step actually did is in the step entries
-above. Last reviewed 2026-10-19, after Phase 5 step 2._
+above. Last reviewed 2026-10-20, after Phase 5 step 3._
 
 **Phase 4 is finished and all six of its exit criteria are met** — the table recording where each
-one is tested is in its own section above. **Phase 5 is two steps in**, and of its eight exit
-criteria **four** are now met:
+one is tested is in its own section above. **Phase 5 is three steps in**, and of its eight exit
+criteria **five** are now met:
 
 | Exit criterion                                                               | Status                                                            |
 | ---------------------------------------------------------------------------- | ----------------------------------------------------------------- |
@@ -2813,28 +2909,33 @@ criteria **four** are now met:
 | Out-of-window free-form send blocked; template send succeeds                  | **Done** — `whatsapp-sending.e2e-spec.ts`, and the browser check that finds the text box disabled. |
 | A failed send shows the provider's reason and reaches the timeline            | **Done** — on the message, on the timeline, and as a notification quiet hours do not hold. |
 | Two agents see the ownership lock; transfer is audited                        | Not started — the columns exist with no writer.                    |
-| Media round-trip with type/size validation and signed-URL delivery            | Not started — an inbound image keeps its payload and nothing else. |
+| Media round-trip with type/size validation and signed-URL delivery            | **Round trip and validation: done** (`whatsapp-media.e2e-spec.ts`, 30 HTTP checks). **No signed URL**, deliberately and for a named reason: `StoragePort` cannot sign one, so the bytes are served behind `conversation:read` ([ADR-0038](./decisions/ADR-0038-an-attachment-is-served-by-this-product-not-by-a-signed-url.md)). |
 | Opt-out keyword suppresses marketing sends immediately                        | Not started — consent is checked at send time; a `STOP` does nothing yet. |
 | Inbox p95 < 500 ms with 100 k messages                                       | **Unmeasured** — there is no message fixture at that size yet.      |
 
-**The next step is Phase 5 step 3 — media, and the shared inbox's own machinery**: the inbound
-download to object storage with type and size validation, outbound upload, signed-URL delivery, and
-then assignment, the ownership lock, transfer, close/reopen, notes and @mentions. Four things from
-step 2 decide how it starts:
+**The next step is Phase 5 step 4 — the shared inbox's own machinery**: assignment, the ownership
+lock, transfer, close/reopen, internal notes and @mentions, plus the opt-out keyword (`FR-WA-10`)
+that is the last unbuilt rule about what may be sent. Four things from step 3 decide how it starts:
 
-- **The storage port takes a `Buffer`**, which is why exports are capped at 100 000 rows. An inbound
-  image is the point at which streaming an object into storage stops being a Phase 12 nicety: it is
-  a port change, named here because it is not a feature to be written around.
-- **`message_media` is the one sketched table the inbound path already needs**, and its parent is
-  partitioned — so it carries `message_created_at` beside `message_id`, as `message_status_events`
-  now does.
-- **The ownership lock has its columns and no writer** (`lock_user_id`, `lock_expires_at`), which is
-  deliberate: a soft lock whose expiry nothing sweeps is a conversation nobody can answer, so the
-  sweep arrives with the lock rather than after it.
+- **The ownership lock has its columns and no writer** (`conversations.lock_user_id`,
+  `lock_expires_at`), which is deliberate: a soft lock whose expiry nothing sweeps is a conversation
+  nobody can answer, so the sweep arrives **with** the lock rather than after it. `priority` and
+  `snoozed_until` are in the same state.
+- **`conversation_participants` and `canned_replies` are the two sketched tables still waiting**,
+  and both belong here: a note and a mention need a participant list, and a canned reply is the
+  thing an agent reaches for while a customer is waiting.
+- **The opt-out keyword is an ingestion rule, not a send rule.** Consent is already checked at send
+  time for marketing; what is missing is the inbound half — a `STOP` from a customer has to write
+  the consent row the send path already reads, inside the same ingestion that creates the message,
+  or the two disagree for as long as a queue is behind.
 - **Realtime is still absent and still not needed for a lock to be honest.** Two agents on one
   conversation see each other through a re-read, not a socket; `FR-WA-7`'s "typing/read state" is
   the first thing in this product that genuinely needs a push channel, and it should arrive as its
   own decision rather than as a side effect of the lock.
+- **The p95-with-100 k-messages criterion needs a message fixture**, which does not exist: the
+  100 k-lead fixture (`packages/db/perf/work-100k.sql`) has no conversations. That is the one
+  outstanding Phase 5 criterion nothing but measurement can close, and it is cheapest to add while
+  the inbox queries are being changed anyway.
 
 Carried forward from Phase 4, still true: `sync_cursors` is built and has **no user** (the ads
 insight pulls are Phase 9); `integration_health_checks` and `provider_events` are pruned by nothing

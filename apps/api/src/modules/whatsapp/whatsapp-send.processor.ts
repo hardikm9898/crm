@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import {
   ACTIVITY_TYPES,
+  MEDIA_MESSAGE_TYPES,
   newId,
   systemPrincipal,
   tenantContext,
@@ -15,6 +16,7 @@ import { JOBS, QUEUES } from '../../infra/queue/queue.constants.js';
 import type { JobProcessor } from '../../infra/queue/job-processor.js';
 import type { JobPayload } from '../../infra/queue/queue.service.js';
 import { QueueService } from '../../infra/queue/queue.service.js';
+import { STORAGE, type StoragePort } from '../../infra/storage/storage.port.js';
 import { TimelineService } from '../../infra/timeline/timeline.service.js';
 import { IntegrationsService } from '../integrations/integrations.service.js';
 import { WhatsAppCloudAdapter } from '../integrations/adapters/whatsapp-cloud.adapter.js';
@@ -54,6 +56,7 @@ export class WhatsAppSendMessageProcessor implements JobProcessor {
     private readonly timeline: TimelineService,
     private readonly status: WhatsAppStatusService,
     private readonly queues: QueueService,
+    @Inject(STORAGE) private readonly storage: StoragePort,
     @Inject(LOGGER) private readonly logger: Logger,
   ) {}
 
@@ -142,7 +145,61 @@ export class WhatsAppSendMessageProcessor implements JobProcessor {
     const connection = await this.inTenant(organizationId, async () =>
       this.integrations.openForSending('whatsapp_cloud', account.integrationConnectionId),
     );
-    const body = sendBody(prepared.type as MessageType, prepared.payload, prepared.body);
+    // A file has to be at Meta before it can be sent, and it is uploaded **here** rather than when
+    // the agent chose it: a provider refusal then costs an attempt rather than the file.
+    let mediaId: string | null = null;
+    if (MEDIA_MESSAGE_TYPES.includes(prepared.type as MessageType)) {
+      const stored = await this.inTenant(organizationId, async () =>
+        this.db.client.messageMedia.findFirst({
+          where: { messageId },
+          select: { id: true, fileKey: true, fileName: true, mimeType: true, providerMediaId: true },
+        }),
+      );
+      if (!stored || stored.fileKey === null) {
+        await this.fail(organizationId, prepared, {
+          code: 'MEDIA_MISSING',
+          message: 'The file this message carries is no longer stored, so it cannot be sent.',
+        });
+        return;
+      }
+      if (stored.providerMediaId !== null) {
+        // Already given to Meta by an earlier attempt: uploading again would pay twice and leave
+        // an orphan at Meta.
+        mediaId = stored.providerMediaId;
+      } else {
+        const bytes = await this.storage.get(stored.fileKey);
+        if (bytes === null) {
+          await this.fail(organizationId, prepared, {
+            code: 'MEDIA_MISSING',
+            message: 'The file this message carries is no longer stored, so it cannot be sent.',
+          });
+          return;
+        }
+        mediaId = await this.adapter.uploadMedia(
+          {
+            connectionId: connection.connectionId,
+            organizationId,
+            secrets: connection.secrets,
+            settings: connection.settings,
+            externalAccountId: connection.externalAccountId,
+          },
+          {
+            phoneNumberId: number.phoneNumberId,
+            bytes,
+            mimeType: stored.mimeType ?? 'application/octet-stream',
+            fileName: stored.fileName ?? 'attachment',
+          },
+        );
+        await this.inTenant(organizationId, async () => {
+          await this.db.client.messageMedia.update({
+            where: { id: stored.id },
+            data: { providerMediaId: mediaId },
+          });
+        });
+      }
+    }
+
+    const body = sendBody(prepared.type as MessageType, prepared.payload, prepared.body, mediaId);
     const outcome = await this.adapter.sendMessage(
       {
         connectionId: connection.connectionId,
@@ -334,10 +391,27 @@ function sendBody(
   type: MessageType,
   payload: unknown,
   body: string | null,
+  mediaId: string | null,
 ):
   | { kind: 'text'; text: string }
-  | { kind: 'template'; name: string; language: string; parameters: readonly string[] } {
+  | { kind: 'template'; name: string; language: string; parameters: readonly string[] }
+  | {
+      kind: 'media';
+      mediaType: MessageType;
+      providerMediaId: string;
+      caption: string | null;
+      fileName: string | null;
+    } {
   const stored = (payload ?? {}) as Record<string, unknown>;
+  if (mediaId !== null && MEDIA_MESSAGE_TYPES.includes(type)) {
+    return {
+      kind: 'media',
+      mediaType: type,
+      providerMediaId: mediaId,
+      caption: body,
+      fileName: typeof stored['fileName'] === 'string' ? stored['fileName'] : null,
+    };
+  }
   if (type === 'template') {
     return {
       kind: 'template',

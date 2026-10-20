@@ -954,3 +954,33 @@ report something as done that is not done.
   `@Body(zodBody(...))` — is two descriptions of one contract across 289 routes, and the one that
   is wrong is always the one nothing runs. The same reasoning makes the **routing table** the list
   of endpoints: a document assembled from decorators omits whatever nobody decorated.
+- **A `@Global()`-style installer that reads the HTTP adapter must survive a context with no HTTP.**
+  `MediaUploadInstaller` guarded with `httpAdapter === undefined`, and a **standalone** application
+  context — which is what `scripts/write-openapi.ts` and the schema tooling build — has
+  `httpAdapter === **null**`. The strict check read straight through it and the OpenAPI writer died
+  with `Cannot read properties of null (reading 'useBodyParser')`, on a feature whose whole test
+  suite was green. Anything on `onApplicationBootstrap` runs in every context Nest can build, so the
+  guard is `== null`.
+- **A browser check's `waitForFunction` on `body.innerText` matches the form it just submitted.**
+  The attachment check waited for its unique filename to appear and resolved **immediately** — on
+  the composer's own echo of the chosen file, not on the thread — so the assertion after it read the
+  thread before the server tree had re-rendered and reported the file missing when it was there.
+  Wait on the node only the destination can produce
+  (`[data-attachment-download] [data-attachment-name]`), not on the page's text; the same trap as
+  waiting for a shape the previous run already left on the screen.
+- **A `<input type="file">` has an intrinsic width of its own.** The button plus the longest filename
+  it has held, which at 375 px was **4 px** of sideways scroll on the whole inbox — invisible in any
+  amount of stylesheet reading, and found only by a browser check measuring
+  `scrollWidth - clientWidth` at phone width. `w-full min-w-0` on the input, `max-w-full` on an
+  `<img>`, and `break-all` on anything printing a filename.
+- **`whatsapp_numbers.phone_number_id` is globally unique, so a live HTTP check cannot reuse one.**
+  The second run of the media checks was refused with "already connected to another workspace" —
+  which is the cross-tenant guard working exactly as intended, and a fixture bug. A fake provider
+  has to mint a fresh id per run and tell the check script what it chose, rather than both
+  hard-coding the same literal.
+- **A thumbnail that fails to load looks exactly like a feature that works.** A `<img>` whose bytes
+  answer 422 renders as a broken image with no explanation, and a check asserting the element is
+  *present* passes hardest when that is what happened. The API therefore answers `media.available`
+  as a field rather than leaving the screen to read a status word, the thread renders a **sentence**
+  for anything not stored, and the browser check asserts `naturalWidth > 0` — "it is there" and "it
+  loaded" are two different claims.

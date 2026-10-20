@@ -5,6 +5,11 @@ import { NotificationsModule } from '../notifications/notifications.module.js';
 import { ConversationsService } from './conversations.service.js';
 import { WhatsAppAccountsService } from './whatsapp-accounts.service.js';
 import { WhatsAppInboundService } from './whatsapp-inbound.service.js';
+import { WhatsAppMediaService } from './whatsapp-media.service.js';
+import {
+  WhatsAppDownloadMediaProcessor,
+  WhatsAppMediaRetryProcessor,
+} from './whatsapp-media.processor.js';
 import { WhatsAppRateLimiter } from './whatsapp-rate-limiter.service.js';
 import { WhatsAppSendService } from './whatsapp-send.service.js';
 import {
@@ -22,6 +27,7 @@ import {
   WhatsAppController,
   WhatsAppTemplatesController,
 } from './whatsapp.controller.js';
+import { MediaUploadInstaller } from '../../infra/http/media-body.js';
 import { WhatsAppIngestMessageProcessor } from './whatsapp.processor.js';
 
 /**
@@ -41,6 +47,10 @@ import { WhatsAppIngestMessageProcessor } from './whatsapp.processor.js';
  *
  * `NotificationsModule` because `FR-WA-9` asks for a failed send that is never silent: the agent
  * who sent it is told, through the one method every producer in this product goes through.
+ *
+ * `MediaUploadInstaller` is a provider here rather than a line in `main.ts` because a Fastify hook
+ * registered from the HTTP bootstrap is **absent from every application the tests build** — the
+ * upload suite would then be proving the parser the running product has and the tests do not.
  */
 @Module({
   imports: [IntegrationsModule, LeadsModule, NotificationsModule],
@@ -52,12 +62,16 @@ import { WhatsAppIngestMessageProcessor } from './whatsapp.processor.js';
     WhatsAppSendService,
     WhatsAppStatusService,
     WhatsAppTemplatesService,
+    WhatsAppMediaService,
     WhatsAppRateLimiter,
+    MediaUploadInstaller,
     WhatsAppIngestMessageProcessor,
     WhatsAppIngestStatusProcessor,
     WhatsAppSendMessageProcessor,
     WhatsAppSendRetryProcessor,
     WhatsAppSyncTemplatesProcessor,
+    WhatsAppDownloadMediaProcessor,
+    WhatsAppMediaRetryProcessor,
   ],
   exports: [
     WhatsAppInboundService,
@@ -70,6 +84,9 @@ import { WhatsAppIngestMessageProcessor } from './whatsapp.processor.js';
     WhatsAppSendMessageProcessor,
     WhatsAppSendRetryProcessor,
     WhatsAppSyncTemplatesProcessor,
+    WhatsAppMediaService,
+    WhatsAppDownloadMediaProcessor,
+    WhatsAppMediaRetryProcessor,
   ],
 })
 export class WhatsAppModule {}

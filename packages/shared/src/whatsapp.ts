@@ -42,6 +42,106 @@ export const SUPPORTED_INBOUND_TYPES: readonly MessageType[] = [
   'interactive',
 ];
 
+/** The types that arrive as a **file** rather than as text (`FR-WA-3`). */
+export const MEDIA_MESSAGE_TYPES: readonly MessageType[] = [
+  'image',
+  'video',
+  'audio',
+  'document',
+  'sticker',
+];
+
+/** How far an attachment has got. `refused` is ours; `failed` is Meta's or the network's. */
+export const MEDIA_DOWNLOAD_STATUSES = ['pending', 'stored', 'refused', 'failed'] as const;
+export type MediaDownloadStatus = (typeof MEDIA_DOWNLOAD_STATUSES)[number];
+
+/**
+ * What this product will accept for each kind of attachment (`FR-WA-3`).
+ *
+ * The ceilings are **ours**, not Meta's, and they are lower: the storage port takes a `Buffer`, so
+ * every byte of an attachment is held in memory on its way through — the same constraint that caps
+ * an export at 100 000 rows. Meta allows 100 MB for a document; sixteen is what this product can
+ * carry honestly until the S3 driver streams, and a refusal that says so is better than an
+ * out-of-memory kill that says nothing.
+ *
+ * The mime prefixes are an **allowlist**. A document is the one kind that has to accept anything,
+ * because that is what a document is — so it is bounded by size alone, and `scan_status` on the
+ * stored row is where virus scanning will land (Phase 12) rather than a guess at a type.
+ */
+export const MEDIA_LIMITS: Readonly<
+  Record<string, { readonly maxBytes: number; readonly mimePrefixes: readonly string[] | null }>
+> = {
+  image: { maxBytes: 5 * 1024 * 1024, mimePrefixes: ['image/'] },
+  video: { maxBytes: 16 * 1024 * 1024, mimePrefixes: ['video/'] },
+  audio: { maxBytes: 16 * 1024 * 1024, mimePrefixes: ['audio/'] },
+  document: { maxBytes: 16 * 1024 * 1024, mimePrefixes: null },
+  sticker: { maxBytes: 512 * 1024, mimePrefixes: ['image/'] },
+};
+
+/**
+ * Why an attachment will not be stored, or null when it will be.
+ *
+ * One decider, because three places ask: the download job (before it fetches), the upload route
+ * (before it stores), and the screen (which says what it will accept). A size it cannot know yet is
+ * `null` and passes — the job checks again once Meta has told it, which is the only moment the
+ * answer is real.
+ */
+export function mediaProblem(input: {
+  readonly type: string;
+  readonly mimeType: string | null;
+  readonly sizeBytes: number | null;
+}): { code: string; message: string } | null {
+  const limit = MEDIA_LIMITS[input.type];
+  if (limit === undefined) {
+    return {
+      code: 'MEDIA_TYPE_UNSUPPORTED',
+      message: `${withArticle(input.type, true)} attachment is not something this product stores.`,
+    };
+  }
+  if (
+    limit.mimePrefixes !== null &&
+    input.mimeType !== null &&
+    !limit.mimePrefixes.some((prefix) => input.mimeType!.startsWith(prefix))
+  ) {
+    return {
+      code: 'MEDIA_MIME_UNSUPPORTED',
+      message: `${input.mimeType} is not a kind of ${input.type} this product stores.`,
+    };
+  }
+  if (input.sizeBytes !== null && input.sizeBytes > limit.maxBytes) {
+    return {
+      code: 'MEDIA_TOO_LARGE',
+      message: `That is ${describeBytes(input.sizeBytes)}, and the limit for ${withArticle(
+        input.type,
+      )} is ${describeBytes(limit.maxBytes)}.`,
+    };
+  }
+  if (input.sizeBytes !== null && input.sizeBytes <= 0) {
+    return { code: 'MEDIA_EMPTY', message: 'That file has no contents.' };
+  }
+  return null;
+}
+
+/**
+ * `image` → `an image`.
+ *
+ * Small, and here because these sentences are shown to a business owner: "the limit for a image"
+ * is the same class of mistake as "1 missed promises" — a screen that cannot write English reads
+ * as machine output, which is the one thing a hand-written sentence exists to avoid.
+ */
+export function withArticle(noun: string, capitalise = false): string {
+  const article = /^[aeiou]/i.test(noun) ? 'an' : 'a';
+  return `${capitalise ? article[0]!.toUpperCase() + article.slice(1) : article} ${noun}`;
+}
+
+/** `5242880` → `5 MB`. For a sentence somebody reads, not for arithmetic. */
+export function describeBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} bytes`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  const megabytes = bytes / (1024 * 1024);
+  return `${megabytes >= 10 ? Math.round(megabytes) : Math.round(megabytes * 10) / 10} MB`;
+}
+
 export const MESSAGE_DIRECTIONS = ['inbound', 'outbound'] as const;
 export type MessageDirection = (typeof MESSAGE_DIRECTIONS)[number];
 
@@ -130,6 +230,25 @@ export interface InboundWhatsAppMessage {
   readonly occurredAt: Date;
   /** The message this one is a reply or a reaction to, when Meta says. */
   readonly replyToProviderId: string | null;
+  /**
+   * The file Meta is holding for us, when this message is one (`FR-WA-3`).
+   *
+   * A delivery carries a media **id**, never the bytes: they are fetched from Meta's media endpoint
+   * with the access token, which is why an inbound photo is two steps rather than one. The caption
+   * is also the message's `body`, deliberately — it is text somebody wrote about the file.
+   */
+  readonly media: InboundWhatsAppMedia | null;
+}
+
+/** What a delivery says about an attached file, before anything has been fetched. */
+export interface InboundWhatsAppMedia {
+  readonly providerMediaId: string;
+  readonly mimeType: string | null;
+  /** Meta's own hash, kept so "is this the same file again" is answerable without the bytes. */
+  readonly sha256: string | null;
+  readonly fileName: string | null;
+  /** True for a voice note, which Meta distinguishes from an audio file somebody attached. */
+  readonly voice: boolean;
 }
 
 /**
@@ -220,6 +339,32 @@ function readMessage(
     raw: message,
     occurredAt,
     replyToProviderId: readContextId(message),
+    media: readMedia(message, messageType),
+  };
+}
+
+/**
+ * The media block Meta puts under the message's own type.
+ *
+ * Keyed by the type rather than searched for, because `image`, `video`, `audio`, `document` and
+ * `sticker` each put it under their own name and a sticker's shape is an image's. A type with no
+ * media returns null, which is what stops a text message from being queued for a download.
+ */
+function readMedia(message: Record<string, unknown>, type: MessageType): InboundWhatsAppMedia | null {
+  if (!MEDIA_MESSAGE_TYPES.includes(type)) return null;
+  const block = message[type];
+  if (block === null || typeof block !== 'object') return null;
+  const media = block as Record<string, unknown>;
+  const id = media['id'];
+  // No id is no file: Meta sends one for everything it is holding, and a row claiming an
+  // attachment nothing can fetch is worse than a row that says the message had none.
+  if (typeof id !== 'string' || id === '') return null;
+  return {
+    providerMediaId: id,
+    mimeType: typeof media['mime_type'] === 'string' ? (media['mime_type'] as string).split(';')[0]!.trim() : null,
+    sha256: typeof media['sha256'] === 'string' ? (media['sha256'] as string) : null,
+    fileName: typeof media['filename'] === 'string' ? (media['filename'] as string) : null,
+    voice: media['voice'] === true,
   };
 }
 
@@ -548,7 +693,12 @@ export function renderTemplate(
  */
 export function sendingAllowed(input: {
   readonly windowExpiresAt: Date | null;
-  readonly kind: 'text' | 'template';
+  /**
+   * `media` is free-form, exactly as `text` is: Meta's rule is about a template versus anything
+   * else, not about words versus files — a photo sent outside the window is refused with the same
+   * error code as a sentence.
+   */
+  readonly kind: 'text' | 'media' | 'template';
   readonly now?: Date;
 }): { allowed: true } | { allowed: false; code: string; message: string } {
   if (input.kind === 'template') return { allowed: true };

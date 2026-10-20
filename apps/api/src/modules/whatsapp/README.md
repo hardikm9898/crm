@@ -98,11 +98,45 @@ Templates are **authored here, reviewed by Meta and reconciled by a sweep**, nev
 draft is editable, anything Meta has seen is not (Meta has no edit), and a template Meta holds that
 this workspace has never seen is adopted rather than hidden.
 
+## Attachments, in six sentences (step 3)
+
+**A message lands before its file.** A delivery carries a media **id**, not the bytes, so an inbound
+photo is two writes: the message and its `message_media` row appear immediately — the conversation
+reads correctly, the lead gets its timeline entry — and `whatsapp.download-media` fetches the file
+after. The row exists from the first write as `pending`, which is what makes "they sent a photo and
+we have not got it yet" a state the screen can show rather than a gap.
+
+**The size is checked twice, and the kind is checked before either.** A mime type the kind cannot
+have is refused at ingestion, without asking Meta anything. Then Meta's media lookup answers a
+`file_size`, which is the one moment this product can refuse a file **before** reading it; the
+download enforces the same limit while reading, because a header is a claim.
+
+**A refusal is a state, not an error.** Too large, or a kind this product does not store, is
+`refused` with the sentence somebody reads — on the row, beside the message. Throwing would lose the
+message and the explanation; a `failed` is Meta's or the network's and is swept.
+
+**An outbound file is ours before Meta has it.** `POST …/attachments` stores the bytes and queues
+the message; the **send job** hands Meta the file and keeps the id it answers with. A provider
+refusal then costs an attempt rather than the file, and a retry re-uses the id rather than uploading
+twice.
+
+**The bytes are served by this product, not by a link**
+([ADR-0038](../../../../../docs/decisions/ADR-0038-an-attachment-is-served-by-this-product-not-by-a-signed-url.md)).
+`GET …/messages/:id/media` is behind `conversation:read`, `inline` for a photo and `attachment` for
+anything else, always `nosniff` and `no-store`.
+
+**The upload parser is a provider of this module.** A Fastify content-type parser is global and the
+body is parsed before any guard runs, so `MediaUploadInstaller` also refuses those content types
+anywhere but the attachment path — and it is registered on `onApplicationBootstrap` rather than from
+`main.ts`, because a hook installed in the HTTP bootstrap is absent from every application the tests
+build.
+
 ## What is unbuilt, said plainly
 
-Media download, the opt-out keyword (`FR-WA-10`), usage metering, bulk sending, the ownership lock,
+The opt-out keyword (`FR-WA-10`), usage metering, bulk sending, the ownership lock,
 transfer, close/reopen, notes, mentions, canned replies and realtime.
 `conversations.lock_user_id`, `lock_expires_at`, `priority` and `snoozed_until` are columns with no
-writer yet, which is said here because a column with no writer is otherwise indistinguishable from a
+writer yet, as is `message_media.scan_status` — nothing scans a file, and the column is the hook a
+scanner reads, with the same three-word vocabulary `documents.scan_status` has had since Phase 2 — which is said here because a column with no writer is otherwise indistinguishable from a
 feature somebody forgot. `first_response_at` **is** written now, from the `sent` receipt rather than
 from the queueing — a figure about the business's answer must not be flattered by the queue.

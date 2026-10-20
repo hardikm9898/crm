@@ -7,17 +7,22 @@ import {
   Param,
   Patch,
   Post,
+  Headers,
   Query,
+  Res,
 } from '@nestjs/common';
 import { PERMISSIONS } from '@leados/shared';
+import type { FastifyReply } from 'fastify';
 import { RequirePermission } from '../../infra/authz/permission.decorator.js';
 import { withMessage } from '../../infra/http/envelope.interceptor.js';
 import { zodBody, ZodBody } from '../../infra/http/zod-validation.pipe.js';
 import { ConversationsService } from './conversations.service.js';
 import { WhatsAppAccountsService } from './whatsapp-accounts.service.js';
+import { WhatsAppMediaService } from './whatsapp-media.service.js';
 import { WhatsAppSendService } from './whatsapp-send.service.js';
 import { WhatsAppTemplatesService } from './whatsapp-templates.service.js';
 import {
+  attachmentQuerySchema,
   connectWabaSchema,
   createTemplateSchema,
   listConversationsSchema,
@@ -28,6 +33,7 @@ import {
   sendMessageSchema,
   setDefaultAgentSchema,
   updateTemplateSchema,
+  type AttachmentQuery,
   type ConnectWabaInput,
   type CreateTemplateInput,
   type ListConversationsQuery,
@@ -59,6 +65,7 @@ export class ConversationsController {
     // would shadow it on `this` and every `this.send.send(...)` would call itself. The symptom is a
     // DI-shaped error on a class whose dependencies are fine.
     private readonly send_: WhatsAppSendService,
+    private readonly media: WhatsAppMediaService,
   ) {}
 
   @Get()
@@ -118,6 +125,71 @@ export class ConversationsController {
   @RequirePermission(PERMISSIONS.CONVERSATION_REPLY)
   async retry(@Param('id') id: string, @Param('messageId') messageId: string) {
     return withMessage(await this.send_.retry(id, messageId), 'Trying again.');
+  }
+
+  /**
+   * Sends a file (`FR-WA-3`).
+   *
+   * The body **is** the bytes — one file and nothing else, so the name and the caption travel in
+   * the query string and no multipart parser is needed. `MediaUploadInstaller` is what gives this
+   * one path a sixteen-megabyte limit, and what refuses those content types everywhere else before
+   * a byte is read.
+   *
+   * Two steps in one request, in this order on purpose: the file is stored by **us** first, and
+   * only then is the message queued — so a provider refusal is a failed message with a retry
+   * button beside the file somebody chose, not a lost upload.
+   */
+  @Post(':id/attachments')
+  @HttpCode(202)
+  @RequirePermission(PERMISSIONS.CONVERSATION_REPLY)
+  async attach(
+    @Param('id') id: string,
+    @Query(new ZodBody(attachmentQuerySchema)) query: AttachmentQuery,
+    @Headers('content-type') contentType: string | undefined,
+    @Body() body: unknown,
+  ) {
+    // Not refused here: a body check before the service would answer 400 on a request for
+    // somebody else's conversation, which is an oracle and a refusal the route never earned.
+    // `attach` checks the conversation first and the bytes second.
+    const upload = await this.media.attach(id, {
+      bytes: Buffer.isBuffer(body) ? body : null,
+      // The file's own type, as the browser sent it: `typeForMime` is what turns it into a WhatsApp
+      // kind, and a photo posted as `application/octet-stream` is honestly a document.
+      mimeType: (contentType ?? '').split(';')[0]?.trim() || 'application/octet-stream',
+      fileName: query.fileName,
+      caption: query.caption ?? null,
+    });
+    return withMessage(
+      await this.send_.send(id, { kind: 'media', upload }),
+      'On its way. The thread will show when WhatsApp has it.',
+    );
+  }
+
+  /**
+   * The bytes of one message's attachment.
+   *
+   * Straight through the reply, like the export download: a file is not an envelope. `inline` for a
+   * photo, because the thread shows it where it is, and `attachment` for a document so the browser
+   * saves it — with `nosniff` either way, since a file a stranger sent us must never be interpreted
+   * as HTML on our own origin.
+   */
+  @Get(':id/messages/:messageId/media')
+  @RequirePermission(PERMISSIONS.CONVERSATION_READ)
+  async attachment(
+    @Param('id') id: string,
+    @Param('messageId') messageId: string,
+    @Res() reply: FastifyReply,
+  ): Promise<void> {
+    const file = await this.media.read(id, messageId);
+    await reply
+      .header('content-type', file.mimeType)
+      .header(
+        'content-disposition',
+        `${file.inline ? 'inline' : 'attachment'}; filename="${file.fileName.replace(/["\\]/g, '')}"`,
+      )
+      .header('x-content-type-options', 'nosniff')
+      .header('cache-control', 'no-store')
+      .send(file.bytes);
   }
 }
 

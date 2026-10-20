@@ -488,6 +488,38 @@ POST /whatsapp/campaigns                     consent-checked bulk (FR-WA-10)
 >   A template is the business's own wording, submitted for review, and changing one changes what
 >   every agent sends; sending one is a reply.
 
+> **Amendment, 2026-10-20 (implementation, Phase 5 step 3 — media).** Two more:
+>
+> ```
+> POST  /conversations/{id}/attachments                  ?fileName=&caption= — the body IS the file
+> GET   /conversations/{id}/messages/{messageId}/media   the bytes, inline or as a download
+> ```
+>
+> - **The body is the bytes, and the name is in the query.** One file and nothing else, so multipart
+>   would add a parser and a second body limit for no second part — the CSV import's shape, for the
+>   same reason. `fileName` is required rather than optional: WhatsApp shows it to the person
+>   receiving a document, and `blob` is the difference between a file somebody opens and one they do
+>   not.
+> - **It answers `202` with a `queued` message**, like a text send, and the file is already stored by
+>   **us** before Meta has it — which is what makes a media send retryable
+>   ([ADR-0038](./decisions/ADR-0038-an-attachment-is-served-by-this-product-not-by-a-signed-url.md)).
+> - **The conversation is checked before the body.** A missing or empty body refused first would
+>   answer `400` for another workspace's conversation and `404` for a real one, and the shape of an
+>   id must not become an oracle.
+> - **A file the product will not take is `400 VALIDATION_FAILED`** with a field error on `file`
+>   naming the limit in a sentence ("That is 40 MB, and the limit for an image is 5 MB"), not a code
+>   a screen has to translate.
+> - **The download is not an envelope.** `@Res()` straight through the reply, as the export and the
+>   import error file already are: `inline` for an image, video or audio and `attachment` for
+>   anything else, with `x-content-type-options: nosniff` and `cache-control: no-store` on both — a
+>   file a stranger sent us must never be interpreted as HTML on our own origin.
+> - **A file that has not arrived is `422` with the row's own sentence**, never an empty `200`: a
+>   browser renders an empty image as broken, with no explanation, which is worse than being told.
+> - **The content types that may carry a file are refused on every other path, with `415`, before a
+>   byte is read.** A Fastify content-type parser is global and the body is parsed before any guard
+>   runs, so the 16 MB limit this route needs would otherwise be an unauthenticated sink on
+>   `/auth/login` — the `text/csv` lesson, in a second place.
+
 ### Capture, integrations, developer platform
 
 ```

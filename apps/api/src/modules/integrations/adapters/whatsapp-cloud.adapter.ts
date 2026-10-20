@@ -22,6 +22,12 @@ import { WHATSAPP_ACCESS_TOKEN, WHATSAPP_APP_SECRET } from './secret-names.js';
 const TIMEOUT_MS = 8_000;
 
 /**
+ * How long a media transfer waits. Longer than a probe, deliberately: sixteen megabytes over
+ * somebody else's CDN is not an eight-second request, and a timeout here loses a customer's photo.
+ */
+const DOWNLOAD_TIMEOUT_MS = 30_000;
+
+/**
  * What came of asking Meta to send a message.
  *
  * A failure says whether asking again could work, because the two outcomes are different things to
@@ -280,13 +286,41 @@ export class WhatsAppCloudAdapter implements IntegrationAdapter {
             readonly name: string;
             readonly language: string;
             readonly parameters: readonly string[];
+          }
+        | {
+            readonly kind: 'media';
+            readonly mediaType: string;
+            readonly providerMediaId: string;
+            readonly caption: string | null;
+            readonly fileName: string | null;
           };
     },
   ): Promise<SendOutcome> {
     // Meta wants the recipient without the `+`, which is also how it sends `wa_id`.
     const to = input.toE164.replace(/^\+/, '');
     const payload =
-      input.body.kind === 'text'
+      input.body.kind === 'media'
+        ? {
+            messaging_product: 'whatsapp',
+            recipient_type: 'individual',
+            to,
+            type: input.body.mediaType,
+            // Meta keys the media block by the type's own name, and only a document carries a
+            // file name — a caption on a sticker or an audio file is refused.
+            [input.body.mediaType]: {
+              id: input.body.providerMediaId,
+              ...(input.body.caption !== null &&
+              (input.body.mediaType === 'image' ||
+                input.body.mediaType === 'video' ||
+                input.body.mediaType === 'document')
+                ? { caption: input.body.caption }
+                : {}),
+              ...(input.body.mediaType === 'document' && input.body.fileName !== null
+                ? { filename: input.body.fileName }
+                : {}),
+            },
+          }
+        : input.body.kind === 'text'
         ? {
             messaging_product: 'whatsapp',
             recipient_type: 'individual',
@@ -479,6 +513,140 @@ export class WhatsAppCloudAdapter implements IntegrationAdapter {
         },
       ];
     });
+  }
+
+  /**
+   * Where Meta is keeping an inbound file, and what it says about it (`FR-WA-3`).
+   *
+   * Two requests rather than one, because Meta's media endpoint answers a **short-lived** URL
+   * rather than the bytes: the url, the mime type, the size and its own sha256. The size is the
+   * point — it is the only moment this product can refuse a file **before** reading it, which is
+   * what keeps a 90 MB video out of a `Buffer`.
+   */
+  async fetchMediaMeta(
+    context: AdapterContext,
+    providerMediaId: string,
+  ): Promise<{ url: string; mimeType: string | null; sizeBytes: number | null; sha256: string | null }> {
+    const response = await this.graph(`/${encodeURIComponent(providerMediaId)}`, context);
+    const text = (await response.text()).slice(0, 20_000);
+    if (!response.ok) {
+      throw new AppError(
+        isCredentialFailure(response.status, metaErrorCode(text)) ? 'INVALID_API_KEY' : 'INTERNAL_ERROR',
+        `Meta refused the media lookup (${response.status}): ${metaMessage(text)}`,
+        isCredentialFailure(response.status, metaErrorCode(text)) ? 401 : 502,
+      );
+    }
+    let parsed: { url?: unknown; mime_type?: unknown; file_size?: unknown; sha256?: unknown };
+    try {
+      parsed = JSON.parse(text) as typeof parsed;
+    } catch {
+      throw new AppError('INTERNAL_ERROR', 'Meta answered something that is not JSON.', 502);
+    }
+    if (typeof parsed.url !== 'string' || parsed.url === '') {
+      throw new AppError('INTERNAL_ERROR', 'Meta did not say where that file is.', 502);
+    }
+    const size = Number(parsed.file_size);
+    return {
+      url: parsed.url,
+      mimeType:
+        typeof parsed.mime_type === 'string' ? parsed.mime_type.split(';')[0]!.trim() : null,
+      sizeBytes: Number.isFinite(size) && size > 0 ? size : null,
+      sha256: typeof parsed.sha256 === 'string' ? parsed.sha256 : null,
+    };
+  }
+
+  /**
+   * The bytes.
+   *
+   * The URL Meta answers is on its own CDN and **still needs the access token** — a fetch without
+   * the bearer header answers 401, which reads like an expired link and is not. `maxBytes` is
+   * enforced while reading rather than from `content-length`, because a header is a claim: a
+   * provider that under-reports would otherwise be the thing that decides how much memory this
+   * process uses.
+   */
+  async downloadMedia(
+    context: AdapterContext,
+    url: string,
+    maxBytes: number,
+  ): Promise<{ bytes: Buffer; mimeType: string | null }> {
+    const response = await fetch(url, {
+      headers: { authorization: `Bearer ${context.secrets[WHATSAPP_ACCESS_TOKEN] ?? ''}` },
+      signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+    });
+    if (!response.ok || response.body === null) {
+      throw new AppError(
+        'INTERNAL_ERROR',
+        `Meta would not hand over that file (${response.status}).`,
+        502,
+      );
+    }
+    const chunks: Buffer[] = [];
+    let total = 0;
+    for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+      total += chunk.byteLength;
+      if (total > maxBytes) {
+        // Refused while reading, so the bytes above the limit are never held at once.
+        throw new AppError(
+          'BUSINESS_RULE_VIOLATION',
+          `That file is larger than the ${maxBytes} bytes this product stores.`,
+          422,
+        );
+      }
+      chunks.push(Buffer.from(chunk));
+    }
+    return {
+      bytes: Buffer.concat(chunks),
+      mimeType: (response.headers.get('content-type') ?? '').split(';')[0]?.trim() || null,
+    };
+  }
+
+  /**
+   * Hands Meta a file and keeps the id it answers with (`FR-WA-3`).
+   *
+   * `multipart/form-data`, because that is the only thing Meta's media endpoint accepts — and it is
+   * assembled here with `FormData`/`Blob` rather than by hand, so the boundary is somebody else's
+   * problem. The id is good for 30 days at Meta, which is why it is stored on the row rather than
+   * fetched at send time.
+   */
+  async uploadMedia(
+    context: AdapterContext,
+    input: {
+      readonly phoneNumberId: string;
+      readonly bytes: Buffer;
+      readonly mimeType: string;
+      readonly fileName: string;
+    },
+  ): Promise<string> {
+    const form = new FormData();
+    form.append('messaging_product', 'whatsapp');
+    form.append('type', input.mimeType);
+    form.append(
+      'file',
+      new Blob([new Uint8Array(input.bytes)], { type: input.mimeType }),
+      input.fileName,
+    );
+    const response = await fetch(
+      `${this.config.META_GRAPH_URL}/${encodeURIComponent(input.phoneNumberId)}/media`,
+      {
+        method: 'POST',
+        headers: { authorization: `Bearer ${context.secrets[WHATSAPP_ACCESS_TOKEN] ?? ''}` },
+        body: form,
+        signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+      },
+    );
+    const text = (await response.text()).slice(0, 20_000);
+    if (!response.ok) {
+      throw new AppError(
+        isCredentialFailure(response.status, metaErrorCode(text)) ? 'INVALID_API_KEY' : 'INTERNAL_ERROR',
+        `WhatsApp would not take that file: ${metaMessage(text)}`,
+        isCredentialFailure(response.status, metaErrorCode(text)) ? 401 : 502,
+      );
+    }
+    const parsed = JSON.parse(text) as { id?: unknown };
+    if (typeof parsed.id !== 'string' || parsed.id === '') {
+      throw new AppError('INTERNAL_ERROR', 'WhatsApp took the file without giving it an id.', 502);
+    }
+    return parsed.id;
   }
 
   private post(path: string, context: AdapterContext, payload: unknown): Promise<Response> {

@@ -389,6 +389,28 @@ WhatsApp automation path.
 >
 > Media and the opt-out keyword are still unbuilt, and so is Embedded Signup.
 
+> **Amendment, 2026-10-20 (implementation, Phase 5 step 3 — media).** The adapter gained three more
+> methods, and media is now built in both directions
+> ([ADR-0038](./decisions/ADR-0038-an-attachment-is-served-by-this-product-not-by-a-signed-url.md)).
+> Four things worth knowing:
+>
+> - **`fetchMediaMeta` and `downloadMedia` are two calls, on purpose.** Meta's lookup answers a URL
+>   and a `file_size`, and that size is the one moment this product can refuse a file **before**
+>   reading it. The URL is on Meta's own CDN and **still needs the access token** — a fetch without
+>   the bearer header answers 401, which reads like an expired link and is not.
+> - **The size cap is enforced while reading, not from `content-length`.** A header is a claim, and
+>   a provider that under-reports would otherwise decide how much memory this process uses. The
+>   read aborts the moment the running total passes the cap, so the bytes above it are never held.
+> - **`uploadMedia` is `multipart/form-data`**, because that is the only thing Meta's media endpoint
+>   accepts — assembled with `FormData`/`Blob` so the boundary is somebody else's problem. The id it
+>   answers is good for 30 days at Meta, which is why it is stored on the row rather than fetched at
+>   send time, and why a retry re-uses it rather than paying for the upload twice.
+> - **Both share the 30-second timeout**, not the adapter's 10: a sixteen-megabyte transfer over
+>   somebody else's CDN is not the same shape of request as a JSON POST, and the shorter timeout
+>   would have made every large file a "retryable failure" that never succeeds.
+>
+> The opt-out keyword is still unbuilt, and so is Embedded Signup.
+
 ---
 
 ## 5. Credential vault (`NFR-SEC-3`)

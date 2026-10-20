@@ -951,6 +951,11 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       '/whatsapp/templates/:id': `/whatsapp/templates/${orgA.whatsappTemplateId}`,
       '/whatsapp/templates/:id/preview': `/whatsapp/templates/${orgA.whatsappTemplateId}/preview`,
       '/whatsapp/templates/:id/submit': `/whatsapp/templates/${orgA.whatsappTemplateId}/submit`,
+      // Phase 5, step 3 — attachments. The upload carries its name in the query string, because
+      // the body is the file: without it the pipe would answer 400 and the sweep would record a
+      // refusal it never earned.
+      '/conversations/:id/attachments': `/conversations/${orgA.conversationId}/attachments?fileName=sweep.pdf`,
+      '/conversations/:id/messages/:messageId/media': `/conversations/${orgA.conversationId}/messages/${orgA.outboundMessageId}/media`,
     };
 
     // An unmapped parameter would test nothing meaningful, so it is reported instead.
@@ -1352,6 +1357,10 @@ function bodyFor(
       return { kind: 'text', body: 'A reply from another workspace' };
     case '/conversations/:id/messages/:messageId/retry':
     case '/whatsapp/templates/:id/submit':
+      return {};
+    // The bytes themselves are not what this sweep is about: the conversation is checked before
+    // the body, so another workspace's id answers 404 whatever arrives with it.
+    case '/conversations/:id/attachments':
       return {};
     case '/whatsapp/templates':
       return {

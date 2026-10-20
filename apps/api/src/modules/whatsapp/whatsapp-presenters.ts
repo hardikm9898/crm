@@ -21,6 +21,22 @@ export interface MessageRow {
   readAt: Date | null;
   failedAt: Date | null;
   sender: { userId: string; user: { name: string } } | null;
+  /**
+   * The attachment, which Prisma hands over as an **array** because the constraint that makes it
+   * at-most-one is a unique index rather than anything the schema can express.
+   */
+  media?: readonly MediaRow[];
+}
+
+/** The columns an attachment presenter reads. */
+export interface MediaRow {
+  id: string;
+  fileName: string | null;
+  mimeType: string | null;
+  sizeBytes: number | null;
+  downloadStatus: string;
+  reason: string | null;
+  voice: boolean;
 }
 
 /**
@@ -59,5 +75,30 @@ export function presentMessage(row: MessageRow) {
     deliveredAt: row.deliveredAt,
     readAt: row.readAt,
     failedAt: row.failedAt,
+    /**
+     * The file, when there is one (`FR-WA-3`).
+     *
+     * `available` rather than leaving the screen to read the status: "there is a photo and we have
+     * not got it yet" and "there is a photo and it was refused" are two different sentences, and a
+     * thread that rendered an `<img>` for either would show a broken image with no explanation.
+     * The bytes themselves are at `GET …/messages/:id/media`; this says whether asking is worth it.
+     */
+    media: presentMedia(row.media?.[0]),
+  };
+}
+
+function presentMedia(row: MediaRow | undefined) {
+  if (row === undefined) return null;
+  return {
+    id: row.id,
+    fileName: row.fileName,
+    mimeType: row.mimeType,
+    sizeBytes: row.sizeBytes,
+    downloadStatus: row.downloadStatus,
+    /** Why it is not here, when it is not — the sentence a screen prints rather than paraphrases. */
+    reason: row.reason,
+    /** A voice note is a different thing from an audio file somebody attached. */
+    voice: row.voice,
+    available: row.downloadStatus === 'stored',
   };
 }

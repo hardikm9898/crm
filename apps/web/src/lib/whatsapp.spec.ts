@@ -16,6 +16,11 @@ import {
   TEMPLATE_VARIABLE_SOURCES,
   WHATSAPP_TEMPLATE_CATEGORIES,
   WHATSAPP_TEMPLATE_STATUSES,
+  attachmentHref,
+  attachmentName,
+  attachmentShape,
+  attachmentWaiting,
+  describeSize,
   needsAttention,
   templateVariables,
   MESSAGE_DIRECTIONS,
@@ -29,6 +34,7 @@ import {
   messageStanding,
   type ConversationMessage,
   type ConversationSummary,
+  type MessageMedia,
 } from './whatsapp';
 
 const conversation = (over: Partial<ConversationSummary> = {}): ConversationSummary => ({
@@ -70,6 +76,19 @@ const message = (over: Partial<ConversationMessage> = {}): ConversationMessage =
   replyToProviderId: null,
   sender: { id: 'u1', name: 'Nikhil' },
   createdAt: '2026-10-19T09:05:00.000Z',
+  media: null,
+  ...over,
+});
+
+const attachment = (over: Partial<MessageMedia> = {}): MessageMedia => ({
+  id: 'md1',
+  fileName: 'floor-plan.pdf',
+  mimeType: 'application/pdf',
+  sizeBytes: 1536,
+  downloadStatus: 'stored',
+  reason: null,
+  voice: false,
+  available: true,
   ...over,
 });
 
@@ -191,5 +210,62 @@ describe('what a template screen says', () => {
     expect(needsAttention(message({ status: 'queued' }))).toBe(false);
     // A message they sent is not ours to retry.
     expect(needsAttention(message({ direction: 'inbound', status: 'failed' }))).toBe(false);
+  });
+});
+
+describe('an attachment on the thread (`FR-WA-3`)', () => {
+  it('renders a photo where it is, and anything else as a link', () => {
+    expect(attachmentShape(attachment({ mimeType: 'image/png' }))).toBe('image');
+    expect(attachmentShape(attachment())).toBe('download');
+    // A sticker is a webp image, which is still something to look at.
+    expect(attachmentShape(attachment({ mimeType: 'image/webp' }))).toBe('image');
+  });
+
+  it('says so rather than rendering a broken image, for a file that is not here', () => {
+    // An `<img>` whose bytes 422 is a broken image with no explanation, which is the one outcome
+    // worse than a sentence.
+    for (const status of ['pending', 'refused', 'failed']) {
+      expect(
+        attachmentShape(attachment({ mimeType: 'image/png', available: false, downloadStatus: status })),
+      ).toBe('unavailable');
+    }
+  });
+
+  it('prints the API’s own reason, and never paraphrases it away', () => {
+    const refused = attachment({
+      available: false,
+      downloadStatus: 'refused',
+      reason: 'That is 40 MB, and the limit for an image is 5 MB.',
+    });
+    expect(attachmentWaiting(refused)).toBe('That is 40 MB, and the limit for an image is 5 MB.');
+    // Only when the API sent nothing — the `ERROR_FALLBACKS` rule, one layer in.
+    expect(attachmentWaiting(attachment({ available: false, downloadStatus: 'pending', reason: null }))).toMatch(
+      /still being fetched/,
+    );
+    expect(
+      attachmentWaiting(attachment({ available: false, downloadStatus: 'failed', reason: '  ' })),
+    ).toBe('That file is not available.');
+  });
+
+  it('never prints an empty name', () => {
+    expect(attachmentName(attachment())).toBe('floor-plan.pdf');
+    expect(attachmentName(attachment({ fileName: '   ' }))).toBe('Attachment');
+    // A voice note is a different thing from an audio file somebody attached.
+    expect(attachmentName(attachment({ fileName: null, voice: true }))).toBe('Voice note');
+  });
+
+  it('asks this app for the bytes, not the API', () => {
+    // The access token is an httpOnly cookie, so a `src` pointed at the API would be an
+    // unauthenticated request.
+    expect(attachmentHref('c1', 'm1')).toBe('/inbox/attachments/c1/m1');
+  });
+
+  it('describes a size the way `describeBytes` does', () => {
+    expect(describeSize(null)).toBeNull();
+    expect(describeSize(0)).toBeNull();
+    expect(describeSize(900)).toBe('900 bytes');
+    expect(describeSize(1536)).toBe('2 KB');
+    expect(describeSize(5 * 1024 * 1024)).toBe('5 MB');
+    expect(describeSize(1.5 * 1024 * 1024)).toBe('1.5 MB');
   });
 });

@@ -59,6 +59,10 @@ import {
   WhatsAppSendMessageProcessor,
   WhatsAppSendRetryProcessor,
 } from '../../modules/whatsapp/whatsapp-send.processor.js';
+import {
+  WhatsAppDownloadMediaProcessor,
+  WhatsAppMediaRetryProcessor,
+} from '../../modules/whatsapp/whatsapp-media.processor.js';
 import type { JobProcessor } from './job-processor.js';
 
 /**
@@ -119,6 +123,8 @@ export const PROCESSOR_TYPES: readonly Type<JobProcessor>[] = [
   WhatsAppSendMessageProcessor,
   WhatsAppSendRetryProcessor,
   WhatsAppSyncTemplatesProcessor,
+  WhatsAppDownloadMediaProcessor,
+  WhatsAppMediaRetryProcessor,
   // outbound webhooks
   WebhookFanoutProcessor,
   WebhookDeliverProcessor,

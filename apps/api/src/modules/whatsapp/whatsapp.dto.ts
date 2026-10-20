@@ -124,6 +124,21 @@ export const previewTemplateSchema = z
   .object({ leadId: z.string().uuid().optional() })
   .strict();
 
+/**
+ * What comes with an attachment's bytes (`FR-WA-3`).
+ *
+ * In the query string rather than the body, because the body **is** the file: a raw upload has
+ * nowhere else to carry its own name. `fileName` matters more than it looks — WhatsApp shows it to
+ * the person receiving a document, so "the quotation" and `blob` are the difference between a file
+ * somebody opens and one they do not.
+ */
+export const attachmentQuerySchema = z
+  .object({
+    fileName: z.string().trim().min(1).max(240),
+    caption: z.string().trim().min(1).max(1024).optional(),
+  })
+  .strict();
+
 export type SendMessageInput = z.infer<typeof sendMessageSchema>;
 export type CreateTemplateInput = z.infer<typeof createTemplateSchema>;
 export type UpdateTemplateInput = z.infer<typeof updateTemplateSchema>;
@@ -133,3 +148,4 @@ export type SyncTemplatesInput = z.infer<typeof syncTemplatesSchema>;
 export type ListConversationsQuery = z.infer<typeof listConversationsSchema>;
 export type ListMessagesQuery = z.infer<typeof listMessagesSchema>;
 export type ConnectWabaInput = z.infer<typeof connectWabaSchema>;
+export type AttachmentQuery = z.infer<typeof attachmentQuerySchema>;

@@ -801,6 +801,7 @@ model Organization {
   conversations       Conversation[]
   messages            Message[]
   messageStatusEvents MessageStatusEvent[]
+  messageMedia        MessageMedia[]
   syncCursors         SyncCursor[]
   integrationChecks   IntegrationHealthCheck[]
   providerEvents      ProviderEvent[]
@@ -4306,6 +4307,7 @@ model Message {
   template     WhatsAppTemplate? @relation(fields: [organizationId, templateId], references: [organizationId, id], onDelete: Restrict, map: "messages_template_same_org_fk")
 
   statusEvents MessageStatusEvent[]
+  media        MessageMedia[]
 
   @@id([id, createdAt])
   @@unique([organizationId, id, createdAt], name: "message_tenant_key")
@@ -4791,4 +4793,63 @@ enum WhatsAppTemplateStatus {
   disabled
 
   @@map("whatsapp_template_status")
+}
+
+/// One file attached to one message (`FR-WA-3`).
+///
+/// A delivery carries a media **id**, never the bytes, so an inbound attachment is two steps: the
+/// message is stored immediately (so the conversation reads correctly) and the file is fetched by a
+/// job. The row exists from the first step with `download_status = pending`, which is what makes
+/// "they sent a photo and we have not got it yet" a state the screen can show rather than a gap.
+///
+/// `refused` is **ours** — too large, or a kind this product does not store — and carries the
+/// sentence somebody reads. `failed` is Meta's or the network's, and is retried.
+model MessageMedia {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  messageId        String   @map("message_id") @db.Uuid
+  /// The parent's instant: `messages` is partitioned, so the composite FK needs both halves.
+  messageCreatedAt DateTime @map("message_created_at") @db.Timestamptz(6)
+
+  /// Meta's id for the file. Null for an outbound attachment until Meta has been given it.
+  providerMediaId String? @map("provider_media_id")
+  /// The storage driver's key, once the bytes are ours. Opaque above the port.
+  fileKey  String? @map("file_key")
+  fileName String? @map("file_name")
+  mimeType String? @map("mime_type")
+  sizeBytes Int?   @map("size_bytes")
+  /// Meta's own hash for an inbound file, ours for an outbound one.
+  sha256   String?
+  /// Whether Meta distinguishes this audio as a voice note.
+  voice    Boolean @default(false)
+
+  downloadStatus MediaDownloadStatus @default(pending) @map("download_status")
+  /// Why it will not be stored, in the words somebody reads. Null unless refused or failed.
+  reason         String?
+  attempts       Int                 @default(0)
+  /// Virus scanning is Phase 12, as it is for `documents`: the column exists so nothing migrates
+  /// for it, and `pending` is honest about the fact that nothing has scanned it.
+  scanStatus     String              @default("pending") @map("scan_status")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  message      Message      @relation(fields: [organizationId, messageId, messageCreatedAt], references: [organizationId, id, createdAt], onDelete: Cascade, map: "message_media_message_same_org_fk")
+
+  @@unique([organizationId, id], name: "message_media_tenant_key")
+  /// One file per message, which is what WhatsApp sends: a message carries one attachment.
+  @@unique([organizationId, messageId], name: "message_media_one_per_message")
+  @@index([organizationId, downloadStatus])
+  @@map("message_media")
+}
+
+enum MediaDownloadStatus {
+  pending
+  stored
+  refused
+  failed
+
+  @@map("media_download_status")
 }

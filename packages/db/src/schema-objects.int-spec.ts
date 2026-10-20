@@ -193,6 +193,9 @@ const REQUIRED_INDEXES = [
   // unsent message runs across every tenant, as the call-nudge index already does.
   'whatsapp_templates_sendable',
   'messages_queued',
+  // Phase 5, step 3 — media. Keyed on `created_at` alone, because the download sweep runs across
+  // every tenant.
+  'message_media_awaiting',
 ];
 
 /**
@@ -638,6 +641,13 @@ const REQUIRED_CONSTRAINTS = [
   'whatsapp_templates_author_same_org_fk',
   'messages_template_same_org_fk',
   'message_status_events_message_same_org_fk',
+  // Phase 5, step 3 — media: four CHECKs and one composite FK into a partitioned parent.
+  'message_media_stored_has_a_file',
+  'message_media_refused_says_why',
+  'message_media_size_sane',
+  'message_media_attempts_sane',
+  'message_media_scan_status',
+  'message_media_message_same_org_fk',
 ];
 
 describe('hand-written indexes survive every generated migration', () => {

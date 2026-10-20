@@ -6,8 +6,13 @@ import { formatDateTime, formatPhone, relativeTime } from '@/lib/lead-format';
 import {
   CONVERSATION_STATUSES,
   STATUS_LABELS,
+  attachmentHref,
+  attachmentName,
+  attachmentShape,
+  attachmentWaiting,
   conversationQuery,
   conversationTitle,
+  describeSize,
   loadConversation,
   loadConversations,
   loadMessages,
@@ -18,8 +23,9 @@ import {
   templateVariables,
   type ConversationDetail,
   type ConversationMessage,
+  type MessageMedia,
 } from '@/lib/whatsapp';
-import { Composer, MarkReadForm, RetryForm } from './_components/inbox-forms';
+import { AttachmentForm, Composer, MarkReadForm, RetryForm } from './_components/inbox-forms';
 
 /**
  * The WhatsApp inbox (`FR-WA-7`, `FR-WA-8`).
@@ -330,6 +336,13 @@ function Thread({
                     : 'self-end border-transparent bg-[var(--color-primary)]/10'
                 }`}
               >
+                {message.media !== null && (
+                  <Attachment
+                    conversationId={conversation.id}
+                    messageId={message.id}
+                    media={message.media}
+                  />
+                )}
                 <p data-message-body={message.id}>{message.preview}</p>
                 <p className="mt-1 text-xs text-[var(--color-text-muted)]">
                   {message.direction === 'inbound'
@@ -354,12 +367,17 @@ function Thread({
         </ol>
       )}
 
-      <div className="mt-4 border-t border-[var(--color-border)] pt-3">
+      <div className="mt-4 flex flex-col gap-4 border-t border-[var(--color-border)] pt-3">
         <Composer
           conversationId={conversation.id}
           windowIsOpen={conversation.windowIsOpen}
           windowSummary={conversation.windowSummary}
           templates={templates}
+        />
+        <AttachmentForm
+          conversationId={conversation.id}
+          windowIsOpen={conversation.windowIsOpen}
+          limits="Up to 5 MB for a photo and 16 MB for anything else."
         />
       </div>
     </Card>
@@ -419,5 +437,70 @@ function Fact({ label, value }: { label: string; value: string }) {
         {value}
       </dd>
     </div>
+  );
+}
+
+/**
+ * One message's file (`FR-WA-3`).
+ *
+ * Three shapes, because an attachment is three different things to look at: a photo renders where
+ * it is, anything else is a link that saves, and a file that is **not here** is a sentence. An
+ * `<img>` for a refused or still-arriving file would be a broken image with no explanation — the
+ * one outcome worse than saying so, and the reason `available` is a field on the API's answer
+ * rather than something this screen infers from a status word.
+ *
+ * The bytes come from this app's own relay route: the access token is an httpOnly cookie, so a
+ * `src` pointed at the API would be unauthenticated.
+ */
+function Attachment({
+  conversationId,
+  messageId,
+  media,
+}: {
+  conversationId: string;
+  messageId: string;
+  media: MessageMedia;
+}) {
+  const href = attachmentHref(conversationId, messageId);
+  const name = attachmentName(media);
+  const size = describeSize(media.sizeBytes);
+  const shape = attachmentShape(media);
+
+  if (shape === 'unavailable') {
+    return (
+      <p
+        className="mb-1 text-xs text-[var(--color-warning)]"
+        data-attachment-unavailable={messageId}
+      >
+        {attachmentWaiting(media)}
+      </p>
+    );
+  }
+
+  if (shape === 'image') {
+    return (
+      <a href={href} target="_blank" rel="noreferrer" data-attachment-image={messageId}>
+        {/* A plain `img`, not `next/image`: the bytes are behind a session cookie and have no
+            stable public URL for the optimiser to fetch. */}
+        <img
+          src={href}
+          alt={name}
+          className="mb-1 max-h-64 max-w-full rounded-[var(--radius-card)] border border-[var(--color-border)]"
+        />
+      </a>
+    );
+  }
+
+  return (
+    <a
+      href={href}
+      className="mb-1 flex items-center gap-2 text-sm text-[var(--color-primary)] underline"
+      data-attachment-download={messageId}
+    >
+      <span className="break-all" data-attachment-name={messageId}>
+        {name}
+      </span>
+      {size !== null && <span className="text-xs text-[var(--color-text-muted)]">{size}</span>}
+    </a>
   );
 }

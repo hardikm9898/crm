@@ -907,6 +907,46 @@ RESTRICT`, like every other cross-table reference here: `SetNull` and `SetDefaul
 > (`WHERE status = 'queued'`), keyed on `created_at` alone because the sweep that re-queues an
 > unsent message runs across every tenant — as `calls_awaiting_outcome` already does.
 
+> **Amendment, 2026-10-20 (implementation, Phase 5 step 3 — media).** `message_media` is built, so
+> the two tables still waiting are `conversation_participants` and `canned_replies`, both with the
+> shared inbox. Six differences from the sketch above:
+>
+> - **It carries `message_created_at`** beside `message_id`, because the parent is partitioned and
+>   a composite FK needs the partition key — the third table to have this shape, after
+>   `ingestion_errors` and `message_status_events`. `ON DELETE CASCADE`, unlike those two: a file
+>   belongs to its message and has no meaning without it.
+> - **`message_media_one_per_message`** is `UNIQUE (organization_id, message_id)`, so a replayed
+>   ingestion is a no-op rather than a second row. Prisma therefore models the relation as a
+>   **list**, and the one presenter both the thread and the send's answer use reads `media[0]`.
+> - **`download_status`** is an enum of four: `pending` (the message has landed, the file has not),
+>   `stored`, `refused` (ours and final — too large, or a kind this product does not store) and
+>   `failed` (Meta's or the network's, and swept four times). Four rather than three because "we
+>   will not fetch this" and "we could not" are different answers to "where is the photo", and a
+>   screen that conflated them would offer a retry on a file that will never arrive.
+> - **Two CHECKs are `CASE`s, each in the one direction that is a contradiction.**
+>   `message_media_stored_has_a_file` says a stored row has a `file_key` and a `size_bytes`; its
+>   mirror ("anything not stored has no file key") is **false**, because an outbound attachment is
+>   stored by us before Meta has been given it and before anything has been sent.
+>   `message_media_refused_says_why` says a `refused` or `failed` row carries its sentence — the
+>   same rule as a failed message, a failed probe and a rejected template.
+> - **`provider_media_id` is nullable in both directions, for opposite reasons.** Inbound it is
+>   Meta's id and is always present; outbound it is null until the **send job** uploads the file and
+>   null again for a file Meta never took. That is what makes a retry re-use the upload rather than
+>   pay for it twice.
+> - **There is no `caption` column**, which the sketch has. A caption is what the person typed, so
+>   it is the **message's** `body` — the column the thread already prints and the search index
+>   already covers. A second copy on the file would be the `notification_preferences.quiet_hours`
+>   mistake again: one fact read by two things that can disagree.
+> - **`scan_status` has no scanner**, and carries the same three-word vocabulary
+>   `documents.scan_status` has had since Phase 2, with `message_media_scan_status` so a second
+>   producer cannot invent a fourth word. Said plainly here and in the module README, because a
+>   column with no writer is otherwise indistinguishable from a feature somebody forgot.
+>
+> One partial index is new: `message_media_awaiting` on `created_at`
+> `WHERE download_status IN ('pending', 'failed')` — no `organization_id` prefix, because the sweep
+> that re-fetches an attachment runs across every tenant, as `messages_queued` and
+> `calls_awaiting_outcome` already do.
+
 Indexes: `(organization_id, channel_account_id, status, last_message_at DESC)` for the inbox list;
 `(organization_id, assigned_user_id, status, last_message_at DESC)` for "my conversations";
 `(organization_id, conversation_id, created_at DESC)` for message paging;

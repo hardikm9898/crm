@@ -987,3 +987,41 @@ the picker resolving the lead's own name into the preview, a template reaching s
 window, a refusal showing WhatsApp's words with a retry beside it that clears the failure, the
 lead's timeline reading "Answered on WhatsApp" rather than `whatsapp.sent`, and both screens at
 375 px with **0 px** of sideways scroll.
+
+### 10.15 As built — Phase 5, step 3 (an attachment on the thread)
+
+The thread learned to show a file, and the composer gained a second form beside it. Six decisions:
+
+- **An attachment is three different things to look at, so it has three shapes.** A photo renders
+  where it is, anything else is a link that saves, and a file that is **not here** is a sentence.
+  Which one is decided by the API's own `media.available`, not by this screen reading a status word:
+  an `<img>` for a refused or still-arriving file is a broken image with no explanation, which is
+  the one outcome worse than being told.
+- **The sentence is the API's.** "That is 40 MB, and the limit for an image is 5 MB" is what
+  somebody needs; `attachmentWaiting` falls back to its own wording **only** when the row carries
+  none — the `ERROR_FALLBACKS` rule, one layer in.
+- **The bytes come from this app, not the API.** `/inbox/attachments/{conversationId}/{messageId}`
+  is a relay route, because the access token is an httpOnly cookie and an `<img src>` pointed at the
+  API would be an unauthenticated request. The API's own `content-type` and `content-disposition`
+  are honoured, so nothing here decides whether a file is shown or saved. A plain `<img>` rather
+  than `next/image`: the bytes are behind a session cookie and have no stable public URL for the
+  optimiser to fetch.
+- **The attachment composer is its own form.** A file and a typed reply are two messages on
+  WhatsApp, and one form that sent either depending on which field was filled is the kind of
+  ambiguity that sends the wrong one. It is also why the caption input is scoped to that form — a
+  second `name="caption"` on the page would make every field selector ambiguous, which a browser
+  check has already paid for once.
+- **It is absent outside the 24-hour window**, like the text box, because a file is not a template
+  and Meta refuses one: a button that was enabled and then refused is what the split exists to
+  prevent.
+- **The chosen file's name is printed under the input.** A refused submission cannot restore a file
+  input — `submittedValues` skips files deliberately, because a filename in a restored input would
+  suggest the upload survived when it did not — so the one thing this screen can honestly say is
+  which file is attached right now, and the caption is echoed back beside it.
+
+**One suite, 11 checks**, all green: an inbound photo rendering inline in the thread with its bytes
+served through the relay route, a document appearing as a named link that downloads, a refused file
+reading the API's own sentence with no image element at all, a file sent from the composer appearing
+in the thread as an attachment, the caption printed under it, an empty submission refused with the
+field error on the input, the chosen name printed before sending, and the inbox at 375 px with
+**0 px** of sideways scroll.

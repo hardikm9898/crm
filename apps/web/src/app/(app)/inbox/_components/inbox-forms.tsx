@@ -3,7 +3,7 @@
 import { useActionState, useState } from 'react';
 import { Button, ErrorNotice } from '@/components/ui';
 import { IDLE } from '@/lib/action-state';
-import { markConversationRead, retryMessage, sendMessage } from '../actions';
+import { markConversationRead, retryMessage, sendAttachment, sendMessage } from '../actions';
 
 /**
  * "Mark as read", and nothing else.
@@ -172,6 +172,78 @@ export function RetryForm({
       <Button type="submit" variant="secondary" disabled={pending}>
         {pending ? 'Trying…' : 'Try again'}
       </Button>
+    </form>
+  );
+}
+
+/**
+ * The attachment composer (`FR-WA-3`).
+ *
+ * Its own form, beside the reply box rather than inside it: a file and a typed reply are two
+ * messages on WhatsApp, and one form that sent either depending on which field was filled is the
+ * kind of ambiguity that sends the wrong one. It is also why the file input is scoped to this
+ * form — a second `name="caption"` on the page would make every field selector ambiguous, which a
+ * browser check has already paid for once.
+ *
+ * Offered only while the 24-hour window is open, because a file is not a template and Meta refuses
+ * one outside it: a button that was enabled and then refused is the thing the split exists to
+ * prevent.
+ */
+export function AttachmentForm({
+  conversationId,
+  windowIsOpen,
+  limits,
+}: {
+  conversationId: string;
+  windowIsOpen: boolean;
+  limits: string;
+}) {
+  const [state, submit, pending] = useActionState(sendAttachment, IDLE);
+  const [chosen, setChosen] = useState<string | null>(null);
+
+  if (!windowIsOpen) return null;
+  return (
+    <form action={submit} className="flex flex-col gap-2" data-attachment-form={conversationId}>
+      <input type="hidden" name="conversationId" value={conversationId} />
+      {state.status === 'error' && <ErrorNotice>{state.message}</ErrorNotice>}
+      {state.status === 'error' && state.fieldErrors?.['file'] && (
+        <p className="text-xs text-[var(--color-danger)]" data-attachment-field-error>
+          {state.fieldErrors['file']}
+        </p>
+      )}
+      {/* `w-full min-w-0`: a file input has an intrinsic width of its own — the button plus the
+          longest filename it has held — and at 375 px that was 4 px of sideways scroll on the whole
+          page, which only a browser check at phone width finds. */}
+      <label className="flex flex-col gap-1 text-xs text-[var(--color-text-muted)]">
+        Send a file
+        <input
+          type="file"
+          name="file"
+          onChange={(event) => setChosen(event.target.files?.[0]?.name ?? null)}
+          className="w-full min-w-0 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-sm text-[var(--color-text)]"
+          data-attachment-input={conversationId}
+        />
+      </label>
+      {/* The chosen name, printed: a refused submission cannot restore a file input, so the one
+          thing this screen can honestly say is which file is currently attached. */}
+      {chosen !== null && (
+        <p className="break-all text-xs text-[var(--color-text-muted)]" data-attachment-chosen>
+          {chosen}
+        </p>
+      )}
+      <input
+        name="caption"
+        defaultValue={state.status === 'error' ? (state.values?.['caption'] ?? '') : ''}
+        placeholder="A caption, if you want one"
+        className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-sm text-[var(--color-text)]"
+        data-attachment-caption={conversationId}
+      />
+      <div className="flex items-center gap-2">
+        <Button type="submit" variant="secondary" disabled={pending}>
+          {pending ? 'Sending…' : 'Send file'}
+        </Button>
+        <span className="text-xs text-[var(--color-text-muted)]">{limits}</span>
+      </div>
     </form>
   );
 }

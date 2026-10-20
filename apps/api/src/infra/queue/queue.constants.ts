@@ -145,6 +145,17 @@ export const JOBS = {
    */
   WHATSAPP_SYNC_TEMPLATES: 'whatsapp.sync-templates',
   /**
+   * One inbound attachment, fetched from Meta and stored (`FR-WA-3`).
+   *
+   * A job rather than part of the ingestion, because a delivery carries a media **id** and the
+   * bytes are a second request over somebody else's CDN: a sixteen-megabyte video must not hold the
+   * transaction that writes the message, and a message whose file is still arriving reads correctly
+   * without it.
+   */
+  WHATSAPP_DOWNLOAD_MEDIA: 'whatsapp.download-media',
+  /** Re-fetches the attachments a worker never got (`FR-WA-3`). The send-retry sweep's shape. */
+  WHATSAPP_MEDIA_RETRY: 'maintenance.whatsapp-media-retry',
+  /**
    * One event, fanned out to the endpoints that asked for it (`FR-API-4`). Reads the subscribed
    * endpoints and writes a `webhook_deliveries` row per endpoint — the store that makes a delivery
    * survive a worker restart, exactly as `inbound_payloads` does inbound.

@@ -475,6 +475,32 @@ All schedules are working-hours/timezone aware where they touch humans — a fol
 >   because what is waiting is a customer. Its read is an indexed scan of nothing
 >   (`messages_queued`) on almost every tick.
 
+> **Amendment, 2026-10-20 (implementation, Phase 5 step 3 — media).** Two more jobs:
+>
+> | Schedule      | Job                                 | Purpose                                                        |
+> | ------------- | ----------------------------------- | -------------------------------------------------------------- |
+> | on demand     | `whatsapp.download-media`           | One inbound attachment → Meta's lookup → the object store      |
+> | every 5 min   | `maintenance.whatsapp-media-retry`  | Re-fetch the attachments a worker never got                    |
+>
+> - **The download is a job because the delivery must be acknowledged first.** A delivery Meta
+>   waits on is a delivery Meta **retries**, and a four-second CDN fetch would turn one photo into
+>   two — undoing the ledger. The message and its `message_media` row land in the ingestion's own
+>   transaction; the bytes follow.
+> - **The job's subject is the *message's* id**, read from `payload.aggregateId`, because that is
+>   what the attachment belongs to and what the ingestion knows. Its job id is
+>   `whatsapp-media-<messageId>`, so a replayed ingestion queues nothing new.
+> - **A failure is recorded on the row and then rethrown.** The row carries the sentence the screen
+>   shows; the throw is what makes BullMQ's backoff apply and the queue show a failing job rather
+>   than looking idle. Idempotency is the **row's own status**, not the job id: a job delivered
+>   twice finds it `stored` and does nothing, which is what stops Meta's bandwidth being paid for
+>   twice.
+> - **The five-minute sweep ignores rows younger than a minute**, so it never races the job the
+>   ingestion already queued, and it re-queues with a **fresh** job id each tick — BullMQ will not
+>   accept an id it has already seen, and the row's status is what stops a second download.
+> - **`message_media` is not partitioned**, unlike its parent: it is small, it is read by id, and a
+>   unique on a partitioned table would have to contain the partition key — which would make
+>   "one attachment per message" a guarantee that expires at the end of the month.
+
 ## 6. Retry, failure and DLQ
 
 Policy: exponential backoff with full jitter, per-queue attempt caps (§3). Errors are classified:

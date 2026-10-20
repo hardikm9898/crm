@@ -196,6 +196,16 @@ export const SCHEDULES: readonly ScheduleDefinition[] = [
   },
   {
     queue: QUEUES.MAINTENANCE,
+    jobName: JOBS.WHATSAPP_MEDIA_RETRY,
+    // Every five minutes rather than every two: an attachment nobody has fetched yet is a photo
+    // the thread says is coming, which is a worse wait than no message at all but a better one
+    // than a reply that never went. The sweep ignores rows younger than a minute, so it never
+    // races the job the ingestion already queued.
+    cron: '*/5 * * * *',
+    description: 'Re-fetch the WhatsApp attachments a worker never got',
+  },
+  {
+    queue: QUEUES.MAINTENANCE,
     jobName: JOBS.WHATSAPP_SYNC_TEMPLATES,
     // Every six hours. Meta reviews a template in hours rather than minutes, and its own
     // notification of the verdict is a webhook field this product does not subscribe to yet — so

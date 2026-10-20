@@ -81,7 +81,16 @@ export interface RequestOptions {
    * Separate from `body` rather than a union, so nothing can accidentally send a string through
    * `JSON.stringify` and upload `"name,phone\n..."` — quoted, escaped and unparseable.
    */
-  rawBody?: { readonly content: string; readonly contentType: string };
+  rawBody?: {
+    /**
+     * A string for a text format, bytes for anything else.
+     *
+     * `Uint8Array` rather than `Buffer`, because a WhatsApp attachment is the first binary upload
+     * in this app and `Buffer` is Node's — a type the client half of this module may not name.
+     */
+    readonly content: string | Uint8Array;
+    readonly contentType: string;
+  };
 }
 
 export async function request<T>(
@@ -96,7 +105,7 @@ export async function request<T>(
       ...(options.token ? { authorization: `Bearer ${options.token}` } : {}),
     },
     ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
-    ...(options.rawBody ? { body: options.rawBody.content } : {}),
+    ...(options.rawBody ? { body: options.rawBody.content as BodyInit } : {}),
     credentials: options.credentials ?? 'include',
     ...(options.signal ? { signal: options.signal } : {}),
     cache: 'no-store',
