@@ -162,10 +162,38 @@ positive silences a customer invisibly.
 every "did we reply?" query carry a predicate it could forget; and parsing `@Asha` out of the text
 tells the wrong Asha the moment a workspace has two, in the quiet direction.
 
+## Tags, shortcuts and the meter, in five sentences (step 5)
+
+**A tag is normalised on the way in.** `normaliseTags` lower-cases, hyphenates and de-duplicates,
+because a tag is a **filter chip**: a vocabulary that keeps `Site Visit`, `site visit` and
+`site-visit` apart is three chips for one idea and a filter that finds a third of what it should. A
+submission that cleans to nothing is refused rather than saved.
+
+**A canned reply's count is sends, never clicks**, because the picker is ordered by it and a count
+of clicks would promote whatever is easiest to misclick. The **body that is sent is what the agent
+typed**: they edit before sending more often than not, and substituting the stored wording would
+put words in their mouth.
+
+**A private reply is unique per person and a shared one per workspace**, which is one partial unique
+carrying the owner — and the `WHERE deleted_at IS NULL` is what lets a workspace reuse a shortcut it
+retired. A used reply is archived, because `messages.canned_reply_id` is `Restrict`.
+
+**The meter counts and does not price**
+([ADR-0040](../../../../../docs/decisions/ADR-0040-the-usage-meter-counts-and-does-not-price.md)).
+Billable **conversations** by the category Meta billed under, because Meta bills per conversation
+and prices differ; no cost at all, because Meta's prices are per-country and change, and a rate card
+here would be wrong within a quarter and wrong silently on somebody's invoice.
+
+**The inbox list is pageable at last.** It answered `hasMore: false` on every page, so a workspace
+with 4 000 conversations was told it had 50 — found by measuring against `inbox-100k.sql`, which is
+the whole reason that fixture exists.
+
 ## What is unbuilt, said plainly
 
-Usage metering (`FR-BIL-4`), bulk sending, tags, canned replies, typing state and realtime.
-`conversation_participants` and `canned_replies` are the two sketched tables still unbuilt.
+Bulk sending (Phase 6), typing state and realtime. `conversation_participants` is the one sketched
+table still unbuilt, and deliberately: a per-person read cursor is what it is really for, and it
+belongs with the realtime work that would make it meaningful rather than arriving now as a table
+with no reader.
 
 Two columns still have **no writer**: `conversations.priority` and `message_media.scan_status` —
 nothing scans a file, and that column is the hook a scanner reads, with the same three-word

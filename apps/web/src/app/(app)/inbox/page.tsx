@@ -14,6 +14,7 @@ import {
   conversationTitle,
   describeConversationState,
   describeSize,
+  loadCannedReplies,
   loadNotes,
   snoozeChoices,
   loadConversation,
@@ -26,6 +27,7 @@ import {
   templateVariables,
   type ConversationDetail,
   type ConversationMessage,
+  type CannedReply,
   type ConversationNote,
   type MessageMedia,
 } from '@/lib/whatsapp';
@@ -38,6 +40,7 @@ import {
   MarkReadForm,
   NotesPanel,
   RetryForm,
+  TagsForm,
 } from './_components/inbox-forms';
 
 /**
@@ -101,6 +104,9 @@ export default async function InboxPage({
   // The colleagues a conversation can be given to, or a note can name. Swallowing, because a
   // member list that failed to load must not stop somebody reading a thread.
   const members = await loadMembers(token);
+  // Swallowing, because it sits beside a conversation: an agent whose shortcut list failed to load
+  // can still type a reply, and a thread that will not open because of it is worse.
+  const cannedReplies: CannedReply[] = await loadCannedReplies(token);
   if (selected) {
     try {
       conversation = await loadConversation(selected, token);
@@ -284,6 +290,7 @@ export default async function InboxPage({
                 conversation={conversation}
                 messages={messages}
                 templates={composerTemplates}
+                cannedReplies={cannedReplies}
               />
               {/* Who has it, who owns it, and what state it is in — above the lead context,
                   because the first question an agent opening a shared inbox has is whether
@@ -306,6 +313,7 @@ export default async function InboxPage({
                     // yesterday afternoon.
                     snoozeOptions={snoozeChoices(now)}
                   />
+                  <TagsForm conversationId={conversation.id} tags={conversation.tags} />
                 </div>
               </Card>
               <Card
@@ -344,10 +352,12 @@ function Thread({
   conversation,
   messages,
   templates,
+  cannedReplies,
 }: {
   conversation: ConversationDetail;
   messages: ConversationMessage[];
   templates: readonly ComposerTemplate[];
+  cannedReplies: readonly CannedReply[];
 }) {
   const ordered = [...messages].reverse();
   return (
@@ -424,6 +434,7 @@ function Thread({
           windowIsOpen={conversation.windowIsOpen}
           windowSummary={conversation.windowSummary}
           templates={templates}
+          cannedReplies={cannedReplies}
         />
         <AttachmentForm
           conversationId={conversation.id}

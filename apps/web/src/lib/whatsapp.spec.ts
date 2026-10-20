@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { matchingShortcuts } from '@leados/shared';
 import {
   CONVERSATION_STATUSES as API_CONVERSATION_STATUSES,
   WHATSAPP_TEMPLATE_CATEGORIES as API_TEMPLATE_CATEGORIES,
@@ -19,6 +20,7 @@ import {
   attachmentHref,
   attachmentName,
   describeConversationState,
+  describeUsageCategory,
   snoozeChoices,
   attachmentShape,
   attachmentWaiting,
@@ -304,6 +306,37 @@ describe('the shared inbox on the screen (`FR-WA-7`)', () => {
       // The API refuses a snooze into the past, so a choice that offered one would answer 400 —
       // and "tomorrow morning" computed from a tab left open overnight is exactly that shape.
       expect(new Date(choice.until).getTime(), choice.label).toBeGreaterThan(now.getTime());
+    }
+  });
+});
+
+describe('the usage meter on the screen (`FR-BIL-4`)', () => {
+  it('names a category as a person reads it', () => {
+    expect(describeUsageCategory('service')).toBe('Service');
+    expect(describeUsageCategory('marketing')).toBe('Marketing');
+    // Meta sends no category on some older receipts. A total that silently omitted them would be
+    // a total nobody can reconcile with an invoice.
+    expect(describeUsageCategory('unknown')).toBe('Not classified');
+  });
+});
+
+describe('the composer’s shortcut matching, mirrored from `@leados/shared`', () => {
+  // `matchingShortcuts` cannot be imported by a client component — `@leados/shared` reaches
+  // `node:async_hooks` through the tenant context and the Next build fails — so the composer
+  // mirrors the rule and this spec, which runs in Node, reconciles the two.
+  const replies = [{ shortcut: '/price-list' }, { shortcut: '/pricing' }, { shortcut: '/thanks' }];
+  const mirrored = (typed: string) => {
+    const text = typed.trim().toLowerCase();
+    return text.startsWith('/') && !/\s/u.test(text)
+      ? replies.filter((reply) => reply.shortcut.startsWith(text))
+      : [];
+  };
+
+  it('agrees with the shared rule on every shape that matters', () => {
+    for (const typed of ['/pri', '/thanks', '/nope', 'price-list', 'call me on /thanks', '', '/']) {
+      expect(mirrored(typed).map((r) => r.shortcut), typed).toEqual(
+        matchingShortcuts(replies, typed).map((r) => r.shortcut),
+      );
     }
   });
 });

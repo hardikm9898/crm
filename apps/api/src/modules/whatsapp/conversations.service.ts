@@ -17,6 +17,28 @@ import { presentMessage } from './whatsapp-presenters.js';
 import type { ListConversationsQuery, ListMessagesQuery } from './whatsapp.dto.js';
 
 /**
+ * Where the next page starts, from the cursor the previous one handed out.
+ *
+ * `(last_message_at, id)` as a **tuple**, not two independent comparisons: `lastMessageAt < t OR
+ * (lastMessageAt = t AND id < i)` is the only form that neither skips a row nor repeats one when
+ * two conversations' newest messages share a second. Written under `AND` so it composes with the
+ * scope's own `OR`, which two keys at one level would silently replace.
+ *
+ * A malformed cursor cannot get here: the schema's regex refuses anything this endpoint did not
+ * issue, which is also what stops a client inventing one and paging through another shape.
+ */
+function keysetFrom(cursor: string | undefined): Record<string, unknown> {
+  if (cursor === undefined) return {};
+  const split = cursor.lastIndexOf('_');
+  const at = new Date(cursor.slice(0, split));
+  const id = cursor.slice(split + 1);
+  if (Number.isNaN(at.getTime())) return {};
+  return {
+    OR: [{ lastMessageAt: { lt: at } }, { lastMessageAt: at, id: { lt: id } }],
+  };
+}
+
+/**
  * The inbox, read (`FR-WA-7`, `FR-WA-8`).
  *
  * Three decisions worth stating:
@@ -52,6 +74,10 @@ export class ConversationsService {
       ...(query.unread === false ? { unreadCount: 0 } : {}),
       ...(query.assigned === 'me' ? { assignedUserId: principal.actorId } : {}),
       ...(query.assigned === 'unassigned' ? { assignedUserId: null } : {}),
+      // One tag, because a filter chip is one tag. `hasSome` rather than `has` so the predicate
+      // stays right the day the screen offers two.
+      ...(query.tag ? { tags: { hasSome: [query.tag] } } : {}),
+      ...keysetFrom(query.cursor),
     };
     const scoped = this.scopedWhere(base);
     if (scoped === null) {
@@ -82,7 +108,10 @@ export class ConversationsService {
       this.db.client.conversation.findMany({
         where: scoped,
         orderBy: [{ lastMessageAt: 'desc' }, { id: 'desc' }],
-        take: query.limit,
+        // One more than asked for, so "is there another page" is read from the database rather
+        // than inferred from a full page — which is wrong exactly when the total is a multiple of
+        // the limit.
+        take: query.limit + 1,
         include: {
           number: { select: { id: true, displayPhoneE164: true, verifiedName: true } },
           lead: { select: { id: true, fullName: true, status: { select: { name: true } } } },
@@ -99,9 +128,21 @@ export class ConversationsService {
       }),
     ]);
 
+    const page = rows.slice(0, query.limit);
+    const last = page.at(-1);
     return {
-      items: rows.map((row) => this.presentConversation(row)),
-      pagination: { limit: query.limit, nextCursor: null, hasMore: false, total },
+      items: page.map((row) => this.presentConversation(row)),
+      pagination: {
+        limit: query.limit,
+        // A real cursor. The first version answered `nextCursor: null, hasMore: false` on every
+        // page — so a workspace with 4 000 conversations was told its inbox held 50, with the
+        // other 3 950 unreachable and `total` sitting beside the lie saying 4 000. Found by
+        // measuring against the 100 k fixture, which is the only thing that would have.
+        nextCursor:
+          rows.length > query.limit && last ? `${last.lastMessageAt.toISOString()}_${last.id}` : null,
+        hasMore: rows.length > query.limit,
+        total,
+      },
       meta: { unread, open },
     };
   }

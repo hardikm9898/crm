@@ -3,7 +3,9 @@ import {
   ACTIVITY_TYPES,
   AppError,
   conversationLockExpiry,
+  normaliseTags,
   snoozeProblem,
+  tagsProblem,
   tenantContext,
 } from '@leados/shared';
 import type { Logger } from 'pino';
@@ -325,6 +327,39 @@ export class ConversationOwnershipService {
   }
 
   /**
+   * Replaces a conversation's tags (`FR-WA-7`).
+   *
+   * The whole set, not add-one/remove-one: a tag editor is a set of chips, and two endpoints for
+   * one field is how a screen and an API end up disagreeing about what is on a row. Cleaned by
+   * `normaliseTags`, which is what stops `Site Visit`, `site visit` and `site-visit` being three
+   * chips for one idea and a filter that finds a third of what it should.
+   *
+   * No timeline entry. A tag is how an agent organises their own queue; "somebody added a label"
+   * is not what a business owner opens a lead to read. The audit log has it.
+   */
+  async setTags(id: string, tags: readonly string[]) {
+    const current = await this.row(id);
+    const problem = tagsProblem(tags);
+    if (problem !== null) {
+      throw AppError.validation('Those tags cannot be saved', [
+        { field: 'tags', code: 'TAGS_INVALID', message: problem },
+      ]);
+    }
+    const cleaned = normaliseTags(tags);
+    await this.db.client.conversation.update({ where: { id }, data: { tags: cleaned } });
+    await this.audit.record({
+      action: 'conversation.tagged',
+      resourceType: 'conversation',
+      resourceId: id,
+      // The before-image comes from the row the scope check already read, rather than a second
+      // query: one read is also one answer to "what were they".
+      before: { tags: current.tags },
+      after: { tags: cleaned },
+    });
+    return this.conversations.findOne(id);
+  }
+
+  /**
    * The rows the sweep has to act on, across every workspace.
    *
    * Two separate reads rather than one `OR`: an `OR` cannot be a range scan, so the two partial
@@ -402,6 +437,7 @@ export class ConversationOwnershipService {
         assignedUserId: true,
         lockUserId: true,
         lockExpiresAt: true,
+        tags: true,
       },
     });
     if (!row) throw AppError.notFound('Conversation');

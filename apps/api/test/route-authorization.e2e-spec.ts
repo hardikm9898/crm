@@ -99,6 +99,9 @@ interface Tenant {
   whatsappAccountId: string;
   whatsappTemplateId: string;
   outboundMessageId: string;
+  // Phase 5, step 5. A **shared** reply, because that is the one anybody who may reply can edit —
+  // a private one would answer 404 for a reason that has nothing to do with the tenant.
+  cannedReplyId: string;
 }
 
 let orgA: Tenant;
@@ -558,6 +561,18 @@ async function createTenant(label: string): Promise<Tenant> {
     } as never,
   });
 
+  const cannedReplyId = newId();
+  await ctx.db.cannedReply.create({
+    data: {
+      id: cannedReplyId,
+      organizationId,
+      shortcut: `/swept-${label}-${SUFFIX}`.toLowerCase().replace(/[^a-z0-9/-]+/g, '-'),
+      body: 'Swept wording',
+      visibility: 'shared',
+      ownerUserId: userId,
+    } as never,
+  });
+
   const slaClock = await ctx.db.slaClock.findFirstOrThrow({
     where: { organizationId, leadId: lead.body.data.id },
   });
@@ -636,6 +651,7 @@ async function createTenant(label: string): Promise<Tenant> {
     whatsappAccountId,
     whatsappTemplateId,
     outboundMessageId,
+    cannedReplyId,
   };
 }
 
@@ -964,6 +980,9 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       '/conversations/:id/reopen': `/conversations/${orgA.conversationId}/reopen`,
       '/conversations/:id/snooze': `/conversations/${orgA.conversationId}/snooze`,
       '/conversations/:id/notes': `/conversations/${orgA.conversationId}/notes`,
+      // Phase 5, step 5 — tags, canned replies and the usage meter
+      '/conversations/:id/tags': `/conversations/${orgA.conversationId}/tags`,
+      '/canned-replies/:id': `/canned-replies/${orgA.cannedReplyId}`,
     };
 
     // An unmapped parameter would test nothing meaningful, so it is reported instead.
@@ -1053,6 +1072,7 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       ['whatsappNumberId', orgA.whatsappNumberId],
       ['whatsappTemplateId', orgA.whatsappTemplateId],
       ['outboundMessageId', orgA.outboundMessageId],
+      ['cannedReplyId', orgA.cannedReplyId],
     ];
 
     const problems: string[] = [];
@@ -1386,6 +1406,12 @@ function bodyFor(
       return { until: new Date(Date.now() + 3_600_000).toISOString() };
     case '/conversations/:id/notes':
       return { body: 'A note from another workspace' };
+    case '/conversations/:id/tags':
+      return { tags: ['taken-by-another-workspace'] };
+    case '/canned-replies':
+      return { shortcut: `/x-${SUFFIX}`, body: 'Written by another workspace' };
+    case '/canned-replies/:id':
+      return { body: 'Edited by another workspace' };
     case '/whatsapp/templates':
       return {
         accountId: target.whatsappAccountId,

@@ -992,6 +992,44 @@ RESTRICT`, like every other cross-table reference here: `SetNull` and `SetDefaul
 > `WHERE status = 'snoozed'`. **Two indexes and two reads rather than one `OR`**, because an `OR`
 > cannot be a range scan — the `/my/today` lesson, applied before it cost anything this time.
 
+> **Amendment, 2026-10-20 (implementation, Phase 5 step 5 — canned replies and the meter).**
+> `canned_replies` is built, which is the **last** sketched table in this section:
+> `conversation_participants` is deliberately not built and said so below. `messages` gained
+> `canned_reply_id`. Five things worth knowing:
+>
+> - **`canned_replies_live_shortcut` is a partial unique on
+>   `(organization_id, owner_user_id, shortcut) WHERE deleted_at IS NULL`.** The owner is in the key
+>   because a **private** reply is somebody's own — two agents may each keep their own `/thanks` —
+>   and a shared one is unique across the workspace, which the service checks by looking for any
+>   owner's. The `WHERE` is what lets a workspace reuse a shortcut it retired; a plain unique would
+>   have made that impossible for ever, which is the `integration_connections_live_provider` lesson
+>   in a second place.
+> - **`usage_count` counts sends, not clicks**, and `messages.canned_reply_id` carries the same fact
+>   on the message. Two records of one thing, deliberately: the counter orders the picker cheaply and
+>   the column makes "which wording actually gets used" answerable from the messages, which is the
+>   one that cannot drift. `Restrict` on the FK, so a reply that has been sent is **archived** rather
+>   than deleted.
+> - **`canned_replies_shortcut_shape` is a regex *and* a `length()` test**, not `{1,32}`: Postgres
+>   refuses a regex repetition count above 255 and a quantifier form installs happily before
+>   rejecting every insert — which this phase paid for once already on a template name.
+> - **The sketch's `visibility` is two words, not a free string**: `canned_replies_visibility` fixes
+>   the vocabulary so a second producer cannot invent a third.
+> - **`messages_billable` is a partial index on `(organization_id, created_at DESC) WHERE billable`,
+>   and it *does* carry the `organization_id` prefix** — unlike the sweeps' indexes. The usage meter
+>   is always one workspace asking about itself, so omitting the prefix here would be the mistake
+>   rather than the pattern.
+>
+> `conversations.priority` is now the **only** column in this section with no writer. `tags` gained
+> one in this step (`PUT /conversations/:id/tags`, normalised on the way in), and `lock_user_id`,
+> `lock_expires_at` and `snoozed_until` gained theirs in step 4.
+>
+> **`conversation_participants` is deliberately unbuilt.** The sketch has it carrying
+> `(user_id, role, joined_at, last_read_at)`, and nothing in `FR-WA-7` as built needs it:
+> assignment is one column, a mention is an array on the note that made it, and `unread_count` is
+> per conversation rather than per person. A per-person read cursor is what that table is really
+> for, and it belongs with the realtime/typing-state work that would make it meaningful — building
+> it now would be a table with no reader, which this section already has enough of.
+
 Indexes: `(organization_id, channel_account_id, status, last_message_at DESC)` for the inbox list;
 `(organization_id, assigned_user_id, status, last_message_at DESC)` for "my conversations";
 `(organization_id, conversation_id, created_at DESC)` for message paging;

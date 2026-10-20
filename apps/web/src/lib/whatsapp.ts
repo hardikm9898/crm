@@ -116,6 +116,27 @@ export interface ConversationLock {
   message: string | null;
 }
 
+export interface CannedReply {
+  id: string;
+  shortcut: string;
+  body: string;
+  visibility: string;
+  owner: { id: string; name: string };
+  /** Times **sent**, which is what orders the picker — not times clicked. */
+  usageCount: number;
+  lastUsedAt: string | null;
+}
+
+export interface WhatsAppUsage {
+  from: string;
+  to: string;
+  /** Meta bills per **conversation**; one message in each is marked billable with its category. */
+  billableConversations: number;
+  byCategory: { category: string; conversations: number }[];
+  messagesSent: number;
+  note: string;
+}
+
 export interface ConversationNote {
   id: string;
   body: string;
@@ -560,4 +581,44 @@ function tomorrowAt(now: Date, hour: number): string {
   // costs nothing and the alternative is a choice that answers 400.
   if (next.getTime() <= now.getTime()) next.setDate(next.getDate() + 1);
   return next.toISOString();
+}
+
+/**
+ * The canned replies this person may use.
+ *
+ * Swallowing, because it sits beside a conversation: an agent whose shortcut list failed to load
+ * can still type a reply, and a thread that will not open because of it is worse. The same
+ * division as the template picker.
+ */
+export async function loadCannedReplies(token: string | null): Promise<CannedReply[]> {
+  if (!token) return [];
+  try {
+    return (await request<CannedReply[]>('/canned-replies', { token })).data;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The same list, throwing.
+ *
+ * On `/settings/whatsapp/replies` "none" is itself information — a workspace with ten replies told
+ * to write its first is the permanent, silent lie the product catalogue paid for.
+ */
+export async function loadCannedRepliesOrThrow(token: string | null): Promise<CannedReply[]> {
+  return (await request<CannedReply[]>('/canned-replies', { token })).data;
+}
+
+/** What WhatsApp cost this workspace this month (`FR-BIL-4`). Throwing: a figure is why you came. */
+export async function loadWhatsAppUsage(
+  token: string | null,
+  query = '',
+): Promise<WhatsAppUsage> {
+  return (await request<WhatsAppUsage>(`/whatsapp/usage${query}`, { token })).data;
+}
+
+/** `service` → `Service`, and a category Meta did not send → `Not classified`. */
+export function describeUsageCategory(category: string): string {
+  if (category === 'unknown') return 'Not classified';
+  return category.charAt(0).toUpperCase() + category.slice(1);
 }

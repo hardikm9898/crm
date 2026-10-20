@@ -14,6 +14,7 @@ import {
   retryMessage,
   sendAttachment,
   sendMessage,
+  setConversationTags,
   snoozeConversation,
   transferConversation,
 } from '../actions';
@@ -56,10 +57,13 @@ export function Composer({
   windowIsOpen,
   windowSummary,
   templates,
+  cannedReplies = [],
 }: {
   conversationId: string;
   windowIsOpen: boolean;
   windowSummary: string;
+  /** The shortcuts this person may use, most-used first (`FR-WA-7`). */
+  cannedReplies?: readonly { id: string; shortcut: string; body: string }[];
   templates: readonly {
     id: string;
     name: string;
@@ -73,7 +77,21 @@ export function Composer({
 }) {
   const [state, submit, pending] = useActionState(sendMessage, IDLE);
   const [templateId, setTemplateId] = useState('');
+  const [body, setBody] = useState(state.status === 'error' ? (state.values?.['body'] ?? '') : '');
+  // Which canned reply the text came from, so the count means "times sent". Cleared the moment
+  // somebody types past it: a count that credited a reply for a message nobody recognised would be
+  // worse than no count.
+  const [usedReply, setUsedReply] = useState<string | null>(null);
   const chosen = templates.find((template) => template.id === templateId) ?? null;
+  // Offered while the shortcut is still being typed, and only when the message **is** the shortcut:
+  // "call me on /price-list" is a sentence, which is the same whole-message rule the opt-out
+  // keywords use. Mirrored from `matchingShortcuts` in `@leados/shared`, which this app may not
+  // import at runtime — a spec reconciles the two.
+  const typed = body.trim().toLowerCase();
+  const suggestions =
+    typed.startsWith('/') && !/\s/u.test(typed)
+      ? cannedReplies.filter((reply) => reply.shortcut.startsWith(typed)).slice(0, 5)
+      : [];
 
   return (
     <form action={submit} className="flex flex-col gap-2" data-composer={conversationId}>
@@ -110,19 +128,54 @@ export function Composer({
       )}
 
       {chosen === null ? (
-        <textarea
-          name="body"
-          rows={3}
-          disabled={!windowIsOpen}
-          defaultValue={state.status === 'error' ? (state.values?.['body'] ?? '') : ''}
-          placeholder={
-            windowIsOpen
-              ? 'Write a reply…'
-              : 'The 24-hour window has closed — choose a template above.'
-          }
-          className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-sm text-[var(--color-text)] disabled:opacity-60"
-          data-composer-body={conversationId}
-        />
+        <>
+          <textarea
+            name="body"
+            rows={3}
+            disabled={!windowIsOpen}
+            value={body}
+            onChange={(event) => {
+              setBody(event.target.value);
+              // A canned reply is edited before sending more often than not; the credit survives
+              // that, and goes only when the text no longer has the reply's wording in it at all.
+              setUsedReply((current) => {
+                if (current === null) return null;
+                const reply = cannedReplies.find((candidate) => candidate.id === current);
+                return reply && event.target.value.includes(reply.body.slice(0, 12))
+                  ? current
+                  : null;
+              });
+            }}
+            placeholder={
+              windowIsOpen
+                ? 'Write a reply, or type / for a saved one…'
+                : 'The 24-hour window has closed — choose a template above.'
+            }
+            className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-sm text-[var(--color-text)] disabled:opacity-60"
+            data-composer-body={conversationId}
+          />
+          <input type="hidden" name="cannedReplyId" value={usedReply ?? ''} />
+          {suggestions.length > 0 && (
+            <ul className="flex flex-col gap-1" data-reply-suggestions={conversationId}>
+              {suggestions.map((reply) => (
+                <li key={reply.id}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBody(reply.body);
+                      setUsedReply(reply.id);
+                    }}
+                    className="w-full rounded-md border border-[var(--color-border)] px-2 py-1 text-left text-xs text-[var(--color-text-muted)]"
+                    data-reply-suggestion={reply.shortcut}
+                  >
+                    <code className="font-semibold">{reply.shortcut}</code>{' '}
+                    <span className="break-words">{reply.body.slice(0, 80)}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
       ) : (
         <div className="flex flex-col gap-2 rounded-md border border-[var(--color-border)] px-3 py-2">
           <p className="text-sm" data-template-preview={chosen.id}>
@@ -552,5 +605,51 @@ export function NotesPanel({
         </ol>
       )}
     </div>
+  );
+}
+
+/**
+ * A conversation's tags (`FR-WA-7`).
+ *
+ * One comma-separated box rather than a chip editor with an add button: the API cleans whatever
+ * arrives — `Site Visit, pricing` becomes `site-visit`, `pricing` — so the component that would
+ * add nothing but ceremony is the one not built. The cleaned values come back in the server tree,
+ * which is how somebody sees what was actually saved.
+ */
+export function TagsForm({
+  conversationId,
+  tags,
+}: {
+  conversationId: string;
+  tags: readonly string[];
+}) {
+  const [state, submit, pending] = useActionState(setConversationTags, IDLE);
+  return (
+    <form action={submit} className="flex flex-col gap-2" data-tags-form={conversationId}>
+      <input type="hidden" name="conversationId" value={conversationId} />
+      {state.status === 'error' && <ErrorNotice>{state.message}</ErrorNotice>}
+      {/* Printed as text, not only inside the input: a value that lives only in a form field is
+          one nobody can read at a glance and nothing can assert — the payment methods lesson. */}
+      <p className="text-xs text-[var(--color-text-muted)]" data-tags={conversationId}>
+        {tags.length === 0 ? 'No tags yet.' : tags.join(' · ')}
+      </p>
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="flex min-w-0 flex-1 flex-col gap-1 text-xs text-[var(--color-text-muted)]">
+          Tags
+          <input
+            name="tags"
+            defaultValue={
+              state.status === 'error' ? (state.values?.['tags'] ?? tags.join(', ')) : tags.join(', ')
+            }
+            placeholder="site-visit, pricing"
+            className="w-full min-w-0 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-sm text-[var(--color-text)]"
+            data-tags-input={conversationId}
+          />
+        </label>
+        <Button type="submit" variant="secondary" disabled={pending}>
+          {pending ? 'Saving…' : 'Save tags'}
+        </Button>
+      </div>
+    </form>
   );
 }

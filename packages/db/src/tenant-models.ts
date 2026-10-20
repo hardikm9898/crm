@@ -131,6 +131,7 @@ export const TENANT_MODELS = [
   // arrived at or was sent from.
   'MessageMedia',
   'ConversationNote',
+  'CannedReply',
 ] as const;
 
 export type TenantModel = (typeof TENANT_MODELS)[number];

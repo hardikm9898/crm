@@ -4396,6 +4396,145 @@ describe('layer 5 — WhatsApp conversations and messages (Phase 5 step 1)', () 
     ).rejects.toThrow(/conversation_notes_mentions_sane/i);
   });
 
+  // ── Phase 5 step 5 — canned replies ──────────────────────────────────────
+
+  it('lets two people each keep their own shortcut, and one shared one claim it', async () => {
+    const reply = (over: Record<string, unknown> = {}) =>
+      h.unscoped.cannedReply.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          shortcut: '/thanks',
+          body: 'Thank you!',
+          ownerUserId: h.orgA.userId,
+          visibility: 'private',
+          ...over,
+        } as never,
+      });
+    await expect(reply()).resolves.toBeTruthy();
+    // The same person cannot have two.
+    await expect(reply()).rejects.toThrow(/canned_replies_live_shortcut|unique/i);
+    // A second person can: the unique carries the owner, which is what makes a private reply
+    // somebody's own.
+    const second = await h.unscoped.membership.findFirst({
+      where: { organizationId: h.orgA.organizationId, userId: { not: h.orgA.userId } },
+      select: { userId: true },
+    });
+    if (second) {
+      await expect(reply({ ownerUserId: second.userId })).resolves.toBeTruthy();
+    }
+  });
+
+  it('frees a shortcut when a reply is archived, which a plain unique would not', async () => {
+    const id = newId();
+    await h.unscoped.cannedReply.create({
+      data: {
+        id,
+        organizationId: h.orgA.organizationId,
+        shortcut: '/retired',
+        body: 'Old wording',
+        ownerUserId: h.orgA.userId,
+      } as never,
+    });
+    const again = () =>
+      h.unscoped.cannedReply.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          shortcut: '/retired',
+          body: 'New wording',
+          ownerUserId: h.orgA.userId,
+        } as never,
+      });
+    await expect(again()).rejects.toThrow(/canned_replies_live_shortcut|unique/i);
+    // A used reply is archived rather than deleted (`messages.canned_reply_id` is `Restrict`), so
+    // the unique has to ignore the archived ones or a workspace could never reuse a shortcut.
+    await h.unscoped.cannedReply.update({ where: { id }, data: { deletedAt: new Date() } });
+    await expect(again()).resolves.toBeTruthy();
+  });
+
+  it('refuses a shortcut nobody could type, a blank body and a word nobody chose', async () => {
+    const reply = (over: Record<string, unknown>) =>
+      h.unscoped.cannedReply.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          shortcut: '/ok-' + newId().slice(-8),
+          body: 'Fine',
+          ownerUserId: h.orgA.userId,
+          ...over,
+        } as never,
+      });
+    await expect(reply({ shortcut: 'Price List' })).rejects.toThrow(
+      /canned_replies_shortcut_shape/i,
+    );
+    await expect(reply({ shortcut: '/Price' })).rejects.toThrow(/canned_replies_shortcut_shape/i);
+    await expect(reply({ body: '   ' })).rejects.toThrow(/canned_replies_body_not_blank/i);
+    await expect(reply({ body: 'a'.repeat(1025) })).rejects.toThrow(
+      /canned_replies_body_not_blank/i,
+    );
+    await expect(reply({ visibility: 'everybody' })).rejects.toThrow(
+      /canned_replies_visibility/i,
+    );
+    await expect(reply({ usageCount: -1 })).rejects.toThrow(/canned_replies_usage_count_sane/i);
+  });
+
+  it('refuses a reply owned by another workspace’s member, and a message naming another’s reply', async () => {
+    await expect(
+      h.unscoped.cannedReply.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          shortcut: '/stranger',
+          body: 'x',
+          ownerUserId: h.orgB.userId,
+        } as never,
+      }),
+    ).rejects.toThrow(/canned_replies_owner_same_org_fk|foreign key/i);
+
+    const theirs = newId();
+    await h.unscoped.cannedReply.create({
+      data: {
+        id: theirs,
+        organizationId: h.orgB.organizationId,
+        shortcut: '/theirs',
+        body: 'x',
+        ownerUserId: h.orgB.userId,
+      } as never,
+    });
+    const own = await number(h.orgA.organizationId);
+    const ours = await conversation(h.orgA.organizationId, own.numberId);
+    await expect(
+      h.unscoped.message.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          conversationId: ours,
+          direction: 'outbound',
+          type: 'text',
+          body: 'hello',
+          cannedReplyId: theirs,
+        } as never,
+      }),
+    ).rejects.toThrow(/messages_canned_reply_same_org_fk|foreign key/i);
+  });
+
+  it('shows one workspace nothing of another’s canned replies', async () => {
+    await h.unscoped.cannedReply.create({
+      data: {
+        id: newId(),
+        organizationId: h.orgA.organizationId,
+        shortcut: '/private-' + newId().slice(-8),
+        body: 'Ours',
+        ownerUserId: h.orgA.userId,
+      } as never,
+    });
+    const theirs = await tenantContext.run(h.orgB.principal, async () => ({
+      replies: await h.db.cannedReply.findMany({}),
+    }));
+    expect(theirs.replies.every((row) => row.organizationId === h.orgB.organizationId)).toBe(true);
+  });
+
   it('shows one workspace nothing of another’s notes', async () => {
     const own = await number(h.orgA.organizationId);
     const ours = await conversation(h.orgA.organizationId, own.numberId);

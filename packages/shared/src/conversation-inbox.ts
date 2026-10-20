@@ -185,3 +185,105 @@ export function noteProblem(body: string): string | null {
   if (text.length > 4000) return 'Up to 4000 characters.';
   return null;
 }
+
+/**
+ * A conversation's tags, cleaned (`FR-WA-7`).
+ *
+ * Lower-cased, hyphenated, de-duplicated and capped — because a tag is a **filter chip**, and a
+ * vocabulary that distinguishes `Site Visit` from `site-visit` from `site visit` is three chips
+ * for one idea and a filter that finds a third of what it should. The same reasoning as mapping a
+ * `select`'s stored value back to its label: what somebody types and what the product matches on
+ * are different things, and exactly one of them may be loose.
+ *
+ * Ten is the cap. A conversation with thirty tags is one nobody tagged deliberately.
+ */
+export function normaliseTags(tags: readonly string[]): string[] {
+  const cleaned = tags
+    .map((tag) =>
+      tag
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/gu, '-')
+        .replace(/^-+|-+$/gu, ''),
+    )
+    .filter((tag) => tag !== '');
+  return [...new Set(cleaned)].slice(0, MAX_TAGS);
+}
+
+export const MAX_TAGS = 10;
+
+/** Why these tags cannot be saved, or null. Checked after cleaning, which is what shortens them. */
+export function tagsProblem(tags: readonly string[]): string | null {
+  const cleaned = normaliseTags(tags);
+  if (tags.length > MAX_TAGS) {
+    return `Up to ${MAX_TAGS} tags. Pick the ones somebody would filter by.`;
+  }
+  if (cleaned.some((tag) => tag.length > 40)) return 'A tag can be up to 40 characters.';
+  // Everything turned into nothing: somebody submitted punctuation, and saying "saved" would be a
+  // lie about a filter that will never match.
+  if (tags.length > 0 && cleaned.length === 0) {
+    return 'Tags need at least one letter or number.';
+  }
+  return null;
+}
+
+/**
+ * A canned reply's shortcut, cleaned.
+ *
+ * `/price-list`, lower-cased, no spaces — because the composer matches what somebody typed against
+ * it, and a shortcut with a capital letter in it is one they will never trigger. The leading slash
+ * is **ours**, added here rather than required of the person: making somebody type punctuation
+ * exactly is how a feature goes unused.
+ */
+export function normaliseShortcut(raw: string): string {
+  const body = raw
+    .trim()
+    .toLowerCase()
+    .replace(/^\/+/u, '')
+    .replace(/[^a-z0-9]+/gu, '-')
+    .replace(/^-+|-+$/gu, '');
+  return body === '' ? '' : `/${body}`;
+}
+
+/** Why this canned reply cannot be saved, or null. */
+export function cannedReplyProblem(input: {
+  readonly shortcut: string;
+  readonly body: string;
+}): { field: string; message: string } | null {
+  const shortcut = normaliseShortcut(input.shortcut);
+  if (shortcut === '') {
+    return { field: 'shortcut', message: 'A shortcut needs at least one letter or number.' };
+  }
+  if (shortcut.length > 32) {
+    return { field: 'shortcut', message: 'Up to 31 characters after the slash.' };
+  }
+  const body = input.body.trim();
+  if (body === '') {
+    return { field: 'body', message: 'Write what this shortcut should say.' };
+  }
+  if (body.length > 1024) {
+    // WhatsApp's own ceiling for a text message body.
+    return { field: 'body', message: 'Up to 1024 characters, which is WhatsApp\'s own limit.' };
+  }
+  return null;
+}
+
+/** Who may see a canned reply. */
+export const CANNED_REPLY_VISIBILITIES = ['shared', 'private'] as const;
+export type CannedReplyVisibility = (typeof CANNED_REPLY_VISIBILITIES)[number];
+
+/**
+ * The reply whose shortcut somebody is typing, if any.
+ *
+ * Matched on a **prefix**, so `/pri` offers `/price-list` while they are still typing — and only
+ * when the message is the shortcut and nothing else, because `call me on /price-list` is a sentence
+ * rather than a shortcut, the same whole-message rule the opt-out keywords use.
+ */
+export function matchingShortcuts<T extends { shortcut: string }>(
+  replies: readonly T[],
+  typed: string,
+): T[] {
+  const text = typed.trim().toLowerCase();
+  if (!text.startsWith('/') || /\s/u.test(text)) return [];
+  return replies.filter((reply) => reply.shortcut.startsWith(text));
+}

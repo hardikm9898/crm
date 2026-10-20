@@ -2848,6 +2848,104 @@ metering** (`FR-BIL-4`) still has no meter, and **bulk sending** is Phase 6's. T
 p95-with-100 k-messages criterion remains **unmeasured** — there is no message fixture at that
 size, which is the one outstanding Phase 5 criterion nothing but measurement can close.
 
+### Step 5 — the measurement, and the inbox's last conveniences ✅ _(landed 2026-10-20)_
+
+The step that closes the phase: a message fixture at the size the exit criterion names, the
+measurement against it, and the three things `FR-WA-7` and `FR-BIL-4` had left.
+
+**The criterion, measured.** `inbox-100k.sql` builds **4 000 conversations and 100 000 messages**
+on one business number, spread across three monthly partitions, a quarter unread, a quarter
+unassigned, an eighth closed, a third tagged, with bodies drawn from a vocabulary of nine so the
+GIN index has nine posting lists rather than one. Against it, with the API and the worker running:
+the list with its two aggregates **p95 56 ms**, the filters 46–58 ms, a message page 20 ms, the
+conversation with its lead context 11 ms, and the body search slowest at **p95 100 ms** — against a
+**500 ms** budget. **Phase 5's eighth exit criterion is met**, and the numbers are in
+`packages/db/perf/README.md` beside the commands that reproduce them.
+
+**And the measurement found a defect four steps of review had not.** `GET /conversations` answered
+`nextCursor: null, hasMore: false` on **every** page, beside a `total` of 4 000 — so a real
+workspace would have been told its inbox held the fifty rows it had loaded, with the other 3 950
+unreachable. With one conversation that response is *correct*, which is exactly why nothing but a
+fixture at this size would have shown it. The list now carries a keyset cursor over
+`(last_message_at, id)` — **both** halves, because `last_message_at` ties and an instant alone
+skips whatever shares it — refuses a cursor it did not issue, and reads `hasMore` from `limit + 1`
+rows rather than inferring it from a full page, which is wrong exactly when the total is a multiple
+of the limit. Forty pages of a hundred now walk 4 000 distinct conversations with no repeats and no
+gaps.
+
+**The fixture had to be made possible before it could be useful.** Its first version added
+37-minute steps to each conversation's `created_at`, which for the conversations created "now" put
+every message in the **future**: "the latest message" was one that had not happened, and the list's
+preview showed it. It also guessed `last_message_at` rather than computing it from the messages it
+wrote. A fixture may be artificial; it may not be impossible.
+
+**Tags are normalised on the way in.** `PUT /conversations/:id/tags` takes the whole set — two
+endpoints for one field is how a screen and an API end up disagreeing about what is on a row — and
+lower-cases, hyphenates and de-duplicates it, because a tag is a **filter chip**: a vocabulary that
+keeps `Site Visit`, `site visit` and `site-visit` apart is three chips for one idea and a filter
+that finds a third of what it should. A submission that cleans to nothing is a 400, not a silent
+save of a filter that will never match. Audited, and deliberately **not** on the timeline: a tag is
+how an agent organises their queue, not something a business owner opens a lead to read.
+
+**A canned reply's count is sends, never clicks**
+([ADR-0040](./decisions/ADR-0040-the-usage-meter-counts-and-does-not-price.md)). The picker is
+ordered by it, so counting clicks would promote whatever is easiest to misclick — and the **body
+that is sent is what the agent typed**, because they edit a saved reply before sending more often
+than not and substituting the stored wording would put words in their mouth. A private reply is
+unique per person and a shared one per workspace, which is one partial unique carrying the owner;
+the `WHERE deleted_at IS NULL` is what lets a workspace reuse a shortcut it retired, where a plain
+unique would have made that impossible for ever. The shortcut is **cleaned, not demanded**:
+`Price List` becomes `/price-list`, because making somebody type punctuation exactly is how a
+feature goes unused.
+
+**The meter counts and does not price.** `messages.billable` and `conversation_category` had been
+written from Meta's receipts since step 2 and read by **nothing** — two columns with no reader,
+which is the same class of defect as a column with no writer and looks exactly like metering that
+exists. `GET /whatsapp/usage` counts billable **conversations** (Meta's unit — it bills per
+conversation and marks one message in each) grouped by the category it billed under, with
+`messagesSent` beside them counting only what reached Meta. **No cost at all**, with the reason in
+the payload: Meta's prices are per-country and change, so a rate card here would be wrong within a
+quarter and wrong **silently**, on somebody's invoice.
+
+**Two screens and two inbox additions** (`frontend-architecture.md` §10.17): the composer offers a
+saved reply while the shortcut is still being typed — and only when the message *is* the shortcut,
+the same whole-message rule the opt-out keywords use — `/settings/whatsapp/replies` prints each
+shortcut as text above its editor with "sent 4 times" beside it, `/settings/whatsapp/usage` shows
+counts and no money, and the conversation card gained a tag box whose saved values are printed
+above it.
+
+**Verified.** **2 752 tests green** — 1 189 unit (664 shared, 348 web, 173 api, 4 db) and 1 563
+integration (882 api e2e, 681 across the schema-object and tenant-isolation suites) — with **41
+new**:
+
+- **9 in `@leados/shared`**, over the tag normaliser (three spellings of one idea becoming one
+  chip, and a submission that cleans to nothing), the shortcut cleaner, and the prefix matcher with
+  its whole-message rule.
+- **2 on the web side**, over the usage category wording and a spec that **reconciles the
+  composer's mirrored shortcut rule with the shared one** — the `TASK_BUCKETS` arrangement, because
+  a client component may not import `@leados/shared` at runtime.
+- **16 api e2e** in a new suite: the cursor that walks every row and the honest "no more", a forged
+  cursor refused, tags cleaned and filtered and audited and emptied, a shortcut cleaned, a clash
+  refused with whose it is, a send counting once and carrying the agent's own words, two people's
+  private `/thanks`, an archive that frees the shortcut, and the meter counting by category,
+  counting the unclassified rather than dropping it, honouring its window and excluding what has
+  not been sent.
+- **14 schema-object and tenant-isolation cases**: the partial unique in both its halves, the
+  archive that frees a shortcut, the shortcut shape, the blank body, the visibility vocabulary, a
+  reply owned by another workspace's member, a message naming another's reply, and the nine new
+  hand-written objects.
+
+Then **21 HTTP checks** against a live API and worker, and browser checks in Chromium.
+
+**Carried forward, named rather than assumed:** **typing state and realtime** are unbuilt, and
+`conversation_participants` stays unbuilt **deliberately** — a per-person read cursor is what that
+table is really for, and it belongs with the realtime work that would make it meaningful rather
+than arriving now as a table with no reader. `conversations.priority` and
+`message_media.scan_status` are the two columns left with no writer. **Bulk sending** is Phase 6's.
+The usage meter has no retention story: it counts `messages`, which §15 keeps for 24 months, so a
+question about three years ago has no answer — a monthly rollup is Phase 8's shape of problem and
+should arrive with the rest of them.
+
 ---
 
 ## Phase 6 — Automation
@@ -3003,11 +3101,11 @@ partially landed, with the specific gaps named.
 ## Immediate next step
 
 _This section names the next step only; what each landed step actually did is in the step entries
-above. Last reviewed 2026-10-20, after Phase 5 step 4._
+above. Last reviewed 2026-10-20, after Phase 5 step 5._
 
 **Phase 4 is finished and all six of its exit criteria are met** — the table recording where each
-one is tested is in its own section above. **Phase 5 is four steps in**, and of its eight exit
-criteria **seven** are now met, with the eighth needing measurement rather than code:
+one is tested is in its own section above. **Phase 5 is finished too: all eight of its exit
+criteria are met**, each with the test or the measurement that shows it:
 
 | Exit criterion                                                               | Status                                                            |
 | ---------------------------------------------------------------------------- | ----------------------------------------------------------------- |
@@ -3018,30 +3116,37 @@ criteria **seven** are now met, with the eighth needing measurement rather than 
 | Two agents see the ownership lock; transfer is audited                        | Not started — the columns exist with no writer.                    |
 | Media round-trip with type/size validation and signed-URL delivery            | **Round trip and validation: done** (`whatsapp-media.e2e-spec.ts`, 30 HTTP checks). **No signed URL**, deliberately and for a named reason: `StoragePort` cannot sign one, so the bytes are served behind `conversation:read` ([ADR-0038](./decisions/ADR-0038-an-attachment-is-served-by-this-product-not-by-a-signed-url.md)). |
 | Opt-out keyword suppresses marketing sends immediately                        | **Done** — applied in the request that carried the message, not by a job; the marketing template is then refused with its own sentence, and a sentence merely *containing* the word changes nothing. |
-| Inbox p95 < 500 ms with 100 k messages                                       | **Unmeasured, and the only one left.** There is no message fixture at that size: `packages/db/perf/work-100k.sql` has no conversations. |
+| Inbox p95 < 500 ms with 100 k messages                                       | **Done** — `inbox-100k.sql` builds 4 000 conversations and 100 000 messages across three partitions; the list's p95 is **56 ms** and the body search, the slowest, **100 ms**. Numbers and commands in `packages/db/perf/README.md`. |
 
-**The next step is Phase 5 step 5 — the last of the phase**: a 100 k-message fixture and the
-measurement that closes the final exit criterion, plus the inbox's remaining conveniences (tags,
-canned replies) and the usage meter `FR-BIL-4` asks for. Four things from step 4 decide how it
-starts:
+**Phase 5 is complete.** WhatsApp is connected, receives, replies, carries files both ways, is
+shared between agents with an advisory lock and an audited transfer, honours a `STOP`, has tags and
+canned replies, and reports what it cost — measured at the size the criterion names. What is
+deliberately **not** built, said once rather than implied: typing state and realtime,
+`conversation_participants` (a per-person read cursor, which belongs with the realtime work that
+would make it meaningful), bulk sending, and a usage rollup for questions older than the 24-month
+message retention.
 
-- **The p95 criterion is the only one that cannot be closed by code**, and it is the one that has
-  been outstanding since the phase began. `work-100k.sql` creates leads, tasks and SLA clocks and
-  **no conversations**, so the three inbox queries that cost anything — the list with its two
-  aggregates, the message page, and the body search through `messages_body_search` — have never
-  been measured against anything but a demo. A performance fixture has to contain the rows the
-  expensive query reads, which that file already learnt once about answered SLA work.
-- **The two aggregates on the list are the suspects.** `meta.unread` and `meta.open` are separate
-  counts over the whole filter, which is right — a badge that counts its page lies — and two counts
-  plus a page is three statements per request. Whether `conversations_unread` serves the first is
-  a question only `EXPLAIN ANALYZE` on the fixture answers; both versions are correct and only one
-  is fast.
-- **`messages` is partitioned monthly, so a fixture has to span months to be honest.** A hundred
-  thousand messages all in October measure one partition; the inbox's real query reads the newest
-  and the search reads all of them.
-- **Usage metering has its columns and no meter.** `messages.billable` and `conversation_category`
-  are written from Meta's receipts and nothing reads them, which is the same shape as the lock
-  columns this step found missing — so the meter should arrive with the reading, not before it.
+**The next step is Phase 6 — Automation**, whose scope and exit criteria are in its own section
+below. Four things from Phase 5 decide how it starts:
+
+- **The outbox is already the trigger source, and nothing consumes it for automation yet.** Every
+  write in this product emits its events inside the transaction that made them, which is exactly
+  what a durable step executor needs — and the headline Phase 5 criterion ("one message, one
+  activity, **one automation trigger**") has been two-thirds tested since step 1 with the third
+  part named rather than claimed. Phase 6 is what makes that sentence finishable.
+- **The registry pattern has now held three times** — providers, notification types, activity
+  describers — and each time the boot check that reconciles a declaration against its
+  implementation is what turned a silent gap into a failed startup. The automation registry's
+  exit criterion is "adding an action type requires no engine change and no frontend release",
+  which is the same shape and should get the same reconciliation.
+- **A sweep that re-checks its subject before acting is the pattern for a delayed step.** The
+  notification release, the conversation wake and the media retry all read their row again rather
+  than trusting what the schedule remembered; Phase 6's "deliberately dropped delayed job is
+  recovered by the reconciliation sweep" is that pattern with a workflow's state instead of a
+  conversation's.
+- **Every automation decision, including "skipped because", goes on the timeline** — which means
+  the activity vocabulary and its describers grow with the engine, and the describer-coverage spec
+  is what will catch an action type that writes an entry nothing can render.
 
 Carried forward from Phase 4, still true: `sync_cursors` is built and has **no user** (the ads
 insight pulls are Phase 9); `integration_health_checks` and `provider_events` are pruned by nothing

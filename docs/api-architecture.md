@@ -566,6 +566,46 @@ POST /whatsapp/campaigns                     consent-checked bulk (FR-WA-10)
 >   rather than assumed. **No backfill migration**, because a verified no-op migration is worse than
 >   none.
 
+> **Amendment, 2026-10-20 (implementation, Phase 5 step 5 — tags, replies, the meter).** Six more,
+> which completes `FR-WA-7` apart from typing state and realtime, and gives `FR-BIL-4` its first
+> reader:
+>
+> ```
+> PUT    /conversations/{id}/tags     { tags: string[] } — the whole set, normalised on the way in
+> GET    /canned-replies              · POST { shortcut, body, visibility? }
+> PATCH  /canned-replies/{id}         · DELETE (archives; the row stays)
+> GET    /whatsapp/usage              ?from=&to= — counts, never cost
+> ```
+>
+> - **`GET /conversations` is pageable at last.** It answered `nextCursor: null, hasMore: false` on
+>   every page, so a workspace with 4 000 conversations was told its inbox held 50 — with `total`
+>   sitting beside the lie saying 4 000. It now issues a keyset cursor over
+>   `(last_message_at, id)`, **both** halves because `last_message_at` ties, and refuses a cursor it
+>   did not issue (400) rather than paging through a shape a client invented. `hasMore` is read from
+>   `limit + 1` rows rather than inferred from a full page, which is wrong exactly when the total is
+>   a multiple of the limit. Found by measuring against the 100 k-message fixture
+>   ([ADR-0040](./decisions/ADR-0040-the-usage-meter-counts-and-does-not-price.md)); with one
+>   conversation the old response was correct.
+> - **`?tag=` is a new filter on the same endpoint.** One tag, because a filter chip is one tag.
+> - **Tags are `PUT`, not add-one/remove-one.** Two endpoints for one field is how a screen and an
+>   API end up disagreeing about what is on a row. The values are lower-cased, hyphenated and
+>   de-duplicated on the way in, so a filter on `site-visit` cannot miss a conversation somebody
+>   typed `Site Visit` on — and a submission that cleans to **nothing** is a **400** rather than a
+>   silent save of a filter that will never match.
+> - **Canned replies are behind `conversation:reply`, not `whatsapp:manage`.** A canned reply is an
+>   agent's shorthand; a template is the business's reviewed wording, which is why templates need
+>   the manage permission. A **shared** reply can be edited by anybody who may reply, because a typo
+>   in the wording everybody sends should not be something only one person can correct; a
+>   **private** one answers 404 to anybody else.
+> - **`DELETE /canned-replies/{id}` archives.** `messages.canned_reply_id` is `Restrict`, so a reply
+>   that has been sent has history pointing at it. The shortcut is then free again, which the
+>   partial unique is what makes possible.
+> - **`GET /whatsapp/usage` is behind `billing:read`** — an invoice question, and the person who
+>   reconciles an invoice is not necessarily the one who connects a number. It answers **counts by
+>   category and no cost at all**, with the reason in the payload: Meta's prices are per-country and
+>   change, and a rate card here would be wrong within a quarter and wrong silently on somebody's
+>   bill. Defaults to this month, which is the period an invoice covers.
+
 ### Capture, integrations, developer platform
 
 ```

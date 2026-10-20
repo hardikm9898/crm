@@ -308,3 +308,25 @@ export async function addConversationNote(
   if (result.status === 'success') revalidatePath('/inbox');
   return result;
 }
+
+/** Replaces a conversation's tags (`FR-WA-7`). The whole set, because a tag editor is a set. */
+export async function setConversationTags(
+  _previous: ActionState,
+  form: FormData,
+): Promise<ActionState> {
+  const id = String(form.get('conversationId') ?? '');
+  // Comma-separated in one box, because a chip editor with an add button is a React component this
+  // step does not need — and the API cleans whatever arrives, so `Site Visit, pricing` works.
+  const tags = (text(form, 'tags') ?? '')
+    .split(',')
+    .map((tag) => tag.trim())
+    .filter((tag) => tag !== '');
+  const result = await callApi(
+    `/conversations/${id}/tags`,
+    { method: 'PUT', body: { tags } },
+    'Tags saved.',
+    form,
+  );
+  if (result.status === 'success') revalidatePath('/inbox');
+  return result;
+}

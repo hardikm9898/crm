@@ -198,6 +198,9 @@ const REQUIRED_INDEXES = [
   'message_media_awaiting',
   'conversations_locked',
   'conversations_snoozed',
+  'canned_replies_live_shortcut',
+  'canned_replies_offerable',
+  'messages_billable',
 ];
 
 /**
@@ -650,6 +653,12 @@ const REQUIRED_CONSTRAINTS = [
   'message_media_attempts_sane',
   'message_media_scan_status',
   'message_media_message_same_org_fk',
+  'canned_replies_shortcut_shape',
+  'canned_replies_body_not_blank',
+  'canned_replies_visibility',
+  'canned_replies_usage_count_sane',
+  'canned_replies_owner_same_org_fk',
+  'messages_canned_reply_same_org_fk',
   'conversations_lock_is_whole',
   'conversations_snoozed_says_when',
   'conversation_notes_body_not_blank',

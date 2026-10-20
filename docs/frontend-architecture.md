@@ -1070,3 +1070,39 @@ plus `mention.created` — in the vocabulary since Phase 1 with nothing writing 
 types, which the deferred list had down for Phase 13 until `FR-WA-10` arrived. Each says **who** and,
 where there is one, **why**: a row reading "Conversation assigned" would make a manager open the
 audit log for the two things they came for.
+
+
+### 10.17 As built — Phase 5, step 5 (shortcuts, tags and what it cost)
+
+Two settings screens and two additions to the inbox. Five decisions:
+
+- **The composer offers a saved reply while the shortcut is still being typed.** `/pri` lists
+  `/price-list` and `/pricing`, and only when the message **is** the shortcut — `call me on
+  /price-list` is a sentence, which is the same whole-message rule the opt-out keywords use. The
+  rule lives in `matchingShortcuts` in `@leados/shared`, which a client component may not import
+  (it reaches `node:async_hooks` through the tenant context and the Next build fails), so the
+  composer mirrors it and a **spec reconciles the two** — the `TASK_BUCKETS` arrangement again.
+- **Clicking a shortcut fills the box and remembers which reply it was.** The hidden
+  `cannedReplyId` is what makes `usage_count` mean "times sent"; it is **cleared** the moment the
+  text no longer contains the reply's opening words, because a count that credited a reply for a
+  message nobody would recognise is worse than no count. An agent editing before sending is the
+  ordinary case, and the credit survives that.
+- **The tag editor is one comma-separated box.** The API cleans whatever arrives — `Site Visit,
+  pricing` becomes `site-visit`, `pricing` — so a chip component with an add button would be
+  ceremony, and a screen doing its own cleaning would be a second answer to one question. The saved
+  values are printed as **text** above the input, not only inside it: a value that lives only in a
+  form field is one nobody can read at a glance and nothing can assert, which the payment methods
+  screen paid for.
+- **`/settings/whatsapp/replies` prints each shortcut as text above its editor**, for the same
+  reason, with "sent once" / "sent 4 times" beside it — the count that orders the picker, said in
+  words rather than as a number nobody can interpret.
+- **`/settings/whatsapp/usage` shows counts and no money.** Billable **conversations** (Meta's
+  unit) by the category it billed under, the messages that actually reached WhatsApp beside them,
+  and the API's own sentence explaining why there is no cost: prices are per-country and change, so
+  "about ₹4,200" would be wrong within a quarter and wrong silently on somebody's bill. An empty
+  month says why it can be empty — a reply inside the 24-hour window is free — rather than reading
+  as a broken screen.
+
+Both settings screens read through **throwing** loaders, because "none" is information on a screen
+whose whole job is to list something; the composer's own list is swallowed, because an agent whose
+shortcut list failed to load can still type a reply and a thread that will not open is worse.

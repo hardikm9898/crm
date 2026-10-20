@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { IntegrationsModule } from '../integrations/integrations.module.js';
 import { LeadsModule } from '../leads/leads.module.js';
 import { NotificationsModule } from '../notifications/notifications.module.js';
+import { CannedRepliesService } from './canned-replies.service.js';
 import { ConversationNotesService } from './conversation-notes.service.js';
 import { ConversationOwnershipService } from './conversation-ownership.service.js';
 import { ConversationSweepProcessor } from './conversation-sweep.processor.js';
@@ -26,10 +27,13 @@ import {
   WhatsAppSyncTemplatesProcessor,
 } from './whatsapp-status.processor.js';
 import { WhatsAppTemplatesService } from './whatsapp-templates.service.js';
+import { WhatsAppUsageService } from './whatsapp-usage.service.js';
 import {
+  CannedRepliesController,
   ConversationsController,
   WhatsAppController,
   WhatsAppTemplatesController,
+  WhatsAppUsageController,
 } from './whatsapp.controller.js';
 import { MediaUploadInstaller } from '../../infra/http/media-body.js';
 import { WhatsAppIngestMessageProcessor } from './whatsapp.processor.js';
@@ -58,7 +62,13 @@ import { WhatsAppIngestMessageProcessor } from './whatsapp.processor.js';
  */
 @Module({
   imports: [IntegrationsModule, LeadsModule, NotificationsModule],
-  controllers: [ConversationsController, WhatsAppController, WhatsAppTemplatesController],
+  controllers: [
+    ConversationsController,
+    WhatsAppController,
+    WhatsAppTemplatesController,
+    CannedRepliesController,
+    WhatsAppUsageController,
+  ],
   providers: [
     WhatsAppInboundService,
     WhatsAppAccountsService,
@@ -70,6 +80,8 @@ import { WhatsAppIngestMessageProcessor } from './whatsapp.processor.js';
     WhatsAppConsentService,
     ConversationOwnershipService,
     ConversationNotesService,
+    CannedRepliesService,
+    WhatsAppUsageService,
     WhatsAppRateLimiter,
     MediaUploadInstaller,
     WhatsAppIngestMessageProcessor,
@@ -96,6 +108,8 @@ import { WhatsAppIngestMessageProcessor } from './whatsapp.processor.js';
     WhatsAppConsentService,
     ConversationOwnershipService,
     ConversationNotesService,
+    CannedRepliesService,
+    WhatsAppUsageService,
     WhatsAppDownloadMediaProcessor,
     WhatsAppMediaRetryProcessor,
     ConversationSweepProcessor,

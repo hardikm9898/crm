@@ -7,6 +7,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Headers,
   Query,
   Res,
@@ -16,6 +17,7 @@ import type { FastifyReply } from 'fastify';
 import { RequirePermission } from '../../infra/authz/permission.decorator.js';
 import { withMessage } from '../../infra/http/envelope.interceptor.js';
 import { zodBody, ZodBody } from '../../infra/http/zod-validation.pipe.js';
+import { CannedRepliesService } from './canned-replies.service.js';
 import { ConversationNotesService } from './conversation-notes.service.js';
 import { ConversationOwnershipService } from './conversation-ownership.service.js';
 import { ConversationsService } from './conversations.service.js';
@@ -23,20 +25,25 @@ import { WhatsAppAccountsService } from './whatsapp-accounts.service.js';
 import { WhatsAppMediaService } from './whatsapp-media.service.js';
 import { WhatsAppSendService } from './whatsapp-send.service.js';
 import { WhatsAppTemplatesService } from './whatsapp-templates.service.js';
+import { WhatsAppUsageService } from './whatsapp-usage.service.js';
 import {
   assignConversationSchema,
   attachmentQuerySchema,
   closeConversationSchema,
   connectWabaSchema,
+  createCannedReplySchema,
   createNoteSchema,
   createTemplateSchema,
   listConversationsSchema,
   listMessagesSchema,
   listTemplatesSchema,
   previewTemplateSchema,
+  setTagsSchema,
   snoozeConversationSchema,
   syncTemplatesSchema,
   transferConversationSchema,
+  updateCannedReplySchema,
+  usageQuerySchema,
   sendMessageSchema,
   setDefaultAgentSchema,
   updateTemplateSchema,
@@ -44,6 +51,7 @@ import {
   type AttachmentQuery,
   type CloseConversationInput,
   type ConnectWabaInput,
+  type CreateCannedReplyInput,
   type CreateNoteInput,
   type CreateTemplateInput,
   type ListConversationsQuery,
@@ -52,9 +60,12 @@ import {
   type PreviewTemplateQuery,
   type SendMessageInput,
   type SetDefaultAgentInput,
+  type SetTagsInput,
   type SnoozeConversationInput,
   type SyncTemplatesInput,
   type TransferConversationInput,
+  type UpdateCannedReplyInput,
+  type UsageQuery,
   type UpdateTemplateInput,
 } from './whatsapp.dto.js';
 
@@ -261,6 +272,19 @@ export class ConversationsController {
   }
 
   /**
+   * Replaces a conversation's tags (`FR-WA-7`).
+   *
+   * `PUT`, because it is the whole set: two endpoints for one field is how a screen and an API end
+   * up disagreeing about what is on a row. The values are lower-cased and hyphenated on the way in,
+   * so a filter on `site-visit` cannot miss a conversation somebody typed `Site Visit` on.
+   */
+  @Put(':id/tags')
+  @RequirePermission(PERMISSIONS.CONVERSATION_REPLY)
+  async setTags(@Param('id') id: string, @Body(zodBody(setTagsSchema)) body: SetTagsInput) {
+    return withMessage(await this.ownership.setTags(id, body.tags), 'Tags saved.');
+  }
+
+  /**
    * Sends a file (`FR-WA-3`).
    *
    * The body **is** the bytes — one file and nothing else, so the name and the caption travel in
@@ -460,5 +484,75 @@ export class WhatsAppTemplatesController {
         ? 'Nothing has changed at WhatsApp.'
         : `Updated ${result.updated} and found ${result.adopted} new.`,
     );
+  }
+}
+
+/**
+ * Canned replies (`FR-WA-7`).
+ *
+ * Behind `conversation:reply` rather than `whatsapp:manage`: a canned reply is an agent's own
+ * shorthand for something they say often, not the business's reviewed wording — that is a template,
+ * and templates are behind `whatsapp:manage` for exactly that reason. A **shared** reply can be
+ * edited by anybody who may reply, because a typo in the wording everybody sends should not be
+ * something only one person can correct; a **private** one is its owner's.
+ */
+@Controller('canned-replies')
+export class CannedRepliesController {
+  constructor(private readonly replies: CannedRepliesService) {}
+
+  @Get()
+  @RequirePermission(PERMISSIONS.CONVERSATION_REPLY)
+  async list() {
+    return this.replies.list();
+  }
+
+  @Post()
+  @HttpCode(201)
+  @RequirePermission(PERMISSIONS.CONVERSATION_REPLY)
+  async create(@Body(zodBody(createCannedReplySchema)) body: CreateCannedReplyInput) {
+    return withMessage(
+      await this.replies.create(body),
+      `Saved. Type ${body.shortcut.startsWith('/') ? body.shortcut : `/${body.shortcut}`} in the composer to use it.`,
+    );
+  }
+
+  @Patch(':id')
+  @RequirePermission(PERMISSIONS.CONVERSATION_REPLY)
+  async update(
+    @Param('id') id: string,
+    @Body(zodBody(updateCannedReplySchema)) body: UpdateCannedReplyInput,
+  ) {
+    return withMessage(await this.replies.update(id, body), 'Saved.');
+  }
+
+  /** Archives it. Never deletes: a reply that has been sent has messages pointing at it. */
+  @Delete(':id')
+  @RequirePermission(PERMISSIONS.CONVERSATION_REPLY)
+  async archive(@Param('id') id: string) {
+    return withMessage(await this.replies.archive(id), 'Removed from the picker.');
+  }
+}
+
+/**
+ * What WhatsApp cost this workspace (`FR-BIL-4`).
+ *
+ * Behind `billing:read`, not `whatsapp:manage`: this is an invoice question, and the person who
+ * reconciles an invoice is not necessarily the person who connects a number. Counts only — Meta's
+ * prices are per-country and change, and a rate card in this codebase would be wrong within a
+ * quarter and wrong silently on somebody's bill.
+ */
+@Controller('whatsapp/usage')
+export class WhatsAppUsageController {
+  constructor(private readonly usage: WhatsAppUsageService) {}
+
+  @Get()
+  @RequirePermission(PERMISSIONS.BILLING_READ)
+  async summary(@Query(new ZodBody(usageQuerySchema)) query: UsageQuery) {
+    // This month by default, because that is the period an invoice covers and the only reason
+    // anybody opens this screen.
+    const now = new Date();
+    const from = query.from ?? new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const to = query.to ?? new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+    return this.usage.summary({ from, to });
   }
 }

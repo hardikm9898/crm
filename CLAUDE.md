@@ -1056,3 +1056,57 @@ report something as done that is not done.
   the fixture has to use. The general shape: when a permission check and a feature meet, a check
   aimed at the wrong fixture fails in a way that looks like the feature, and the only clue is the
   status code.
+- **A list that answers `hasMore: false` on every page is a list whose other rows are unreachable.**
+  `GET /conversations` returned `nextCursor: null, hasMore: false` beside a `total` of 4 000, so a
+  workspace was told its inbox held the 50 rows it had loaded. With one conversation the response is
+  **correct**, which is why four steps of review and a full e2e suite never saw it — only the 100 k
+  fixture did. Two rules came out of it: `hasMore` is read from `limit + 1` rows rather than inferred
+  from a full page (which is wrong exactly when the total is a multiple of the limit), and a keyset
+  cursor carries **both** halves of its sort key, because `last_message_at` ties and an instant alone
+  skips whatever shares it.
+- **A performance fixture may be artificial; it may not be impossible.** `inbox-100k.sql` first
+  dated messages by adding 37-minute steps to each conversation's `created_at` — and for the
+  conversations created "now" that put every message in the **future**, so "the latest message" was
+  one that had not happened, the list's preview showed it, and a browser check asserting on the
+  newest message read a row the product could never produce. It also guessed `last_message_at`
+  rather than computing it from the messages it wrote, so the sort order under measurement was one
+  no real workspace has. Offset the whole thing into the past and derive the summary columns from
+  the rows they summarise.
+- **Two columns with no reader are the same class of defect as a column with no writer.**
+  `messages.billable` and `conversation_category` were written from Meta's receipts for three steps
+  and read by nothing, which looks exactly like metering that exists. The meter that reads them
+  **counts rows** rather than keeping a running total: a counter incremented on every receipt would
+  be a second answer to a question the messages already answer, and the first time the two disagreed
+  nobody would know which to believe.
+- **A product that reports somebody else's prices will report them wrong, silently.** The usage
+  meter deliberately answers counts and no cost: Meta's WhatsApp prices are per-country and Meta
+  changes them, so a rate card in this codebase would be out of date within a quarter — and out of
+  date on an invoice, where nobody would catch it. The response carries the sentence that says so,
+  rather than leaving the screen to invent an explanation for a missing number.
+- **A usage figure must exclude what has not happened.** `messagesSent` counts `accepted`, `sent`,
+  `delivered` and `read` — not `queued`, and not `failed`. A message still in the queue is not one
+  that was sent, and a meter that counted it would flatter the figure an owner reconciles against a
+  bill. The e2e asserts the **zero** this produces in a suite that never drives the send job,
+  because seeing why it is zero is the point.
+- **A counter incremented by a user action should count the action that matters, not the click.**
+  `canned_replies.usage_count` counts **sends**: the picker is ordered by it, so a count of clicks
+  would promote whatever is easiest to misclick. The send carries the id, the message keeps it in a
+  column, and the body that goes out is what the agent typed — an agent edits a saved reply before
+  sending more often than not, and substituting the stored text would put words in their mouth.
+- **A partial unique is what lets something be retired and its name reused.**
+  `canned_replies_live_shortcut` is `(organization_id, owner_user_id, shortcut) WHERE deleted_at IS
+  NULL`. The owner is in the key because a private reply is somebody's own — two agents may each
+  keep their own `/thanks` — and the `WHERE` is what lets a workspace reuse a shortcut it retired. A
+  plain unique reads identically in review and makes that impossible for ever, which
+  `integration_connections_live_provider` already paid for once.
+- **A value normalised by the API must not also be normalised by the screen.** The canned-reply
+  shortcut box sends what somebody typed and the API adds the slash and hyphenates it. A screen
+  doing its own cleaning would be a second answer to one question, and the two would eventually
+  disagree about what `Price List` becomes — the `ERROR_COPY` shape, in a field rather than a
+  message.
+- **A combined locator's `.first()` reads whichever element is earlier in the DOM, not the one you
+  meant.** `page.locator('[data-shortcut-error], main [role="alert"]').first()` read the **summary**
+  notice rather than the field error, and reported "a taken shortcut says whose it is" as failing
+  while the product was rendering both correctly. Worse, the same locator written the other way
+  round would have *passed* on a screen that had lost the field error entirely. Assert on the
+  specific node, and assert the summary separately — the two carry different sentences on purpose.

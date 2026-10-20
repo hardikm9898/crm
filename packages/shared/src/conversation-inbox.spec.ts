@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CANNED_REPLY_VISIBILITIES,
   CONSENT_OPT_IN_WORDS,
   CONSENT_OPT_OUT_WORDS,
   CONVERSATION_LOCK_TTL_MS,
@@ -7,8 +8,14 @@ import {
   consentKeyword,
   conversationLock,
   conversationLockExpiry,
+  MAX_TAGS,
+  cannedReplyProblem,
+  matchingShortcuts,
+  normaliseShortcut,
+  normaliseTags,
   noteProblem,
   snoozeProblem,
+  tagsProblem,
 } from './conversation-inbox.js';
 
 const NOW = new Date('2026-10-20T09:00:00.000Z');
@@ -170,5 +177,76 @@ describe('an internal note', () => {
   it('has a ceiling the CHECK constraint also has', () => {
     expect(noteProblem('a'.repeat(4000))).toBeNull();
     expect(noteProblem('a'.repeat(4001))).toMatch(/4000/);
+  });
+});
+
+describe('a conversation’s tags (`FR-WA-7`)', () => {
+  it('turns three spellings of one idea into one chip', () => {
+    // A tag is a filter chip: a vocabulary that keeps `Site Visit`, `site visit` and `site-visit`
+    // apart is three chips for one idea and a filter that finds a third of what it should.
+    expect(normaliseTags(['Site Visit', 'site visit', 'site-visit', '  SITE   VISIT '])).toEqual([
+      'site-visit',
+    ]);
+  });
+
+  it('drops what cleans to nothing, and keeps the order somebody typed', () => {
+    expect(normaliseTags(['pricing', '!!!', '  ', 'documents'])).toEqual(['pricing', 'documents']);
+  });
+
+  it('caps the set, because thirty tags is nobody tagging deliberately', () => {
+    expect(normaliseTags(Array.from({ length: 30 }, (_, i) => `tag-${i}`))).toHaveLength(MAX_TAGS);
+  });
+
+  it('refuses a submission that would silently become nothing', () => {
+    // Answering "saved" to `###` would be a lie about a filter that will never match.
+    expect(tagsProblem(['###'])).toMatch(/letter or number/);
+    expect(tagsProblem([])).toBeNull();
+    expect(tagsProblem(['site-visit'])).toBeNull();
+    expect(tagsProblem(Array.from({ length: 11 }, (_, i) => `t${i}`))).toMatch(/Up to 10/);
+  });
+});
+
+describe('a canned reply (`FR-WA-7`)', () => {
+  it('adds the slash and hyphenates, rather than demanding punctuation', () => {
+    // Making somebody type punctuation exactly is how a feature goes unused — and a shortcut with
+    // a capital in it is one the composer would never match.
+    expect(normaliseShortcut('Price List')).toBe('/price-list');
+    expect(normaliseShortcut('/price-list')).toBe('/price-list');
+    expect(normaliseShortcut('//Price   LIST!!')).toBe('/price-list');
+    expect(normaliseShortcut('   ')).toBe('');
+    expect(normaliseShortcut('!!!')).toBe('');
+  });
+
+  it('refuses a shortcut or a body nothing could use', () => {
+    expect(cannedReplyProblem({ shortcut: '!!!', body: 'x' })?.field).toBe('shortcut');
+    expect(cannedReplyProblem({ shortcut: '/ok', body: '   ' })?.field).toBe('body');
+    expect(cannedReplyProblem({ shortcut: '/ok', body: 'a'.repeat(1025) })?.message).toMatch(
+      /1024/,
+    );
+    expect(cannedReplyProblem({ shortcut: '/ok', body: 'a'.repeat(1024) })).toBeNull();
+    expect(cannedReplyProblem({ shortcut: '/' + 'a'.repeat(40), body: 'x' })?.field).toBe(
+      'shortcut',
+    );
+  });
+
+  it('offers a reply while somebody is still typing its shortcut', () => {
+    const replies = [{ shortcut: '/price-list' }, { shortcut: '/pricing-note' }, { shortcut: '/thanks' }];
+    expect(matchingShortcuts(replies, '/pri').map((r) => r.shortcut)).toEqual([
+      '/price-list',
+      '/pricing-note',
+    ]);
+    expect(matchingShortcuts(replies, '/thanks')).toEqual([{ shortcut: '/thanks' }]);
+  });
+
+  it('offers nothing for a sentence that merely contains one', () => {
+    // The same whole-message rule the opt-out keywords use: "call me on /price-list" is a sentence.
+    const replies = [{ shortcut: '/price-list' }];
+    expect(matchingShortcuts(replies, 'call me on /price-list')).toEqual([]);
+    expect(matchingShortcuts(replies, 'price-list')).toEqual([]);
+    expect(matchingShortcuts(replies, '')).toEqual([]);
+  });
+
+  it('has exactly two visibilities, and the schema and the CHECK agree on them', () => {
+    expect([...CANNED_REPLY_VISIBILITIES]).toEqual(['shared', 'private']);
   });
 });

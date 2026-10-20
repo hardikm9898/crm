@@ -803,6 +803,7 @@ model Organization {
   messageStatusEvents MessageStatusEvent[]
   messageMedia        MessageMedia[]
   conversationNotes   ConversationNote[]
+  cannedReplies       CannedReply[]
   syncCursors         SyncCursor[]
   integrationChecks   IntegrationHealthCheck[]
   providerEvents      ProviderEvent[]
@@ -961,6 +962,7 @@ model Membership {
   closedConversations     Conversation[]          @relation("conversation_closer")
   lockedConversations     Conversation[]          @relation("conversation_locker")
   conversationNotes       ConversationNote[]      @relation("conversation_note_author")
+  cannedReplies           CannedReply[]           @relation("canned_reply_owner")
   sentMessages            Message[]               @relation("message_sender")
   whatsappTemplatesWritten WhatsAppTemplate[]     @relation("whatsapp_template_author")
 
@@ -4294,6 +4296,11 @@ model Message {
   /// is what stops a retry loop from being invisible.
   sendAttempts Int @default(0) @map("send_attempts")
 
+  /// Which canned reply this message came from, when it came from one. `SetNull` would null a
+  /// NOT NULL `organization_id` on a composite FK, so this is `Restrict` and a used reply is
+  /// archived rather than deleted — the same arrangement `template_id` already has.
+  cannedReplyId String? @map("canned_reply_id") @db.Uuid
+
   /// The message this one answers or reacts to, by the provider's id rather than ours: the subject
   /// may not have arrived yet, and a composite FK into a partitioned table would need its instant.
   replyToProviderId String? @map("reply_to_provider_id")
@@ -4320,6 +4327,8 @@ model Message {
   conversation Conversation @relation(fields: [organizationId, conversationId], references: [organizationId, id], onDelete: Cascade, map: "messages_conversation_same_org_fk")
   sender       Membership?  @relation("message_sender", fields: [organizationId, senderUserId], references: [organizationId, userId], onDelete: Restrict, map: "messages_sender_same_org_fk")
   template     WhatsAppTemplate? @relation(fields: [organizationId, templateId], references: [organizationId, id], onDelete: Restrict, map: "messages_template_same_org_fk")
+
+  cannedReply  CannedReply?      @relation(fields: [organizationId, cannedReplyId], references: [organizationId, id], onDelete: Restrict, map: "messages_canned_reply_same_org_fk")
 
   statusEvents MessageStatusEvent[]
   media        MessageMedia[]
@@ -4907,4 +4916,43 @@ model ConversationNote {
   /// The panel's own read: one conversation's notes, newest first.
   @@index([organizationId, conversationId, createdAt(sort: Desc)])
   @@map("conversation_notes")
+}
+
+/// A canned reply: a shortcut an agent types and the wording it stands for (`FR-WA-7`).
+///
+/// `usage_count` is incremented when a reply is **sent**, not when somebody clicks it in a picker:
+/// the count orders the list, and a count of clicks would promote whatever is easiest to misclick.
+/// The send carries the id it used, which is also what makes "which wording actually works" a
+/// question this table can answer later.
+model CannedReply {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  /// `/price-list`, lower-cased and hyphenated by `normaliseShortcut`. Unique per workspace for a
+  /// shared reply; a private one is unique per person, which is why the unique carries the owner.
+  shortcut String
+  body     String
+
+  visibility String @default("shared")
+
+  /// Who wrote it. Always set — a reply nobody owns is one nobody can edit — and what makes a
+  /// `private` reply somebody's own.
+  ownerUserId String @map("owner_user_id") @db.Uuid
+
+  usageCount Int       @default(0) @map("usage_count")
+  lastUsedAt DateTime? @map("last_used_at") @db.Timestamptz(6)
+
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  owner        Membership   @relation("canned_reply_owner", fields: [organizationId, ownerUserId], references: [organizationId, userId], onDelete: Restrict, map: "canned_replies_owner_same_org_fk")
+
+  messages Message[]
+
+  @@unique([organizationId, id], name: "canned_reply_tenant_key")
+  /// The picker's own read: what this workspace has, most-used first.
+  @@index([organizationId, usageCount(sort: Desc)])
+  @@map("canned_replies")
 }

@@ -62,3 +62,58 @@ swallowed it. Remove and reload `work-100k.sql` before measuring — a re-run on
 which is the price of its being idempotent.
 
 Measured this way, `GET /my/today` answers with p95 = 60 ms against its 400 ms budget.
+
+## The inbox on top of the leads
+
+`inbox-100k.sql` adds **4 000 conversations and 100 000 messages** on one business number, which is
+what Phase 5's own exit criterion needs: "inbox p95 < 500 ms with 100 k messages in the tenant
+fixture". That criterion stayed unmeasured for four steps because `work-100k.sql` creates no
+conversations at all — the three inbox queries that cost anything had only ever run against a demo
+workspace with one conversation in it.
+
+```bash
+# After leads-100k.sql (about 2½ minutes)
+psql "$DATABASE_URL" -v slug=acme-realty -f packages/db/perf/inbox-100k.sql
+
+# Remove it first of the three: the conversations point at `Perf Lead` rows
+psql "$DATABASE_URL" -v slug=acme-realty -f packages/db/perf/inbox-100k-remove.sql
+```
+
+Each part of it is varied for a reason:
+
+- **4 000 conversations × 25 messages.** Fewer conversations with more messages each would let the
+  list's `ORDER BY last_message_at DESC LIMIT 50` stop at the first index page and measure nothing;
+  more conversations with two messages each would make the message page free.
+- **Spread across three monthly partitions.** `messages` is partitioned by `created_at`, and the
+  planner's job on the real query — the newest page of one conversation — is to prune to one
+  partition out of many.
+- **A quarter unread, a quarter unassigned, an eighth closed, a sixteenth snoozed, a third tagged.**
+  The list's two aggregates are counts over the whole filter, and a fixture where every row matches
+  makes a partial index look pointless.
+- **Bodies drawn from a vocabulary of nine**, so `messages_body_search` has nine posting lists of
+  about eleven thousand rows each: a term that matches a *slice*, which is what a search measures.
+  One repeated string would make the search either free or useless.
+- **`last_message_at` computed from the messages**, in a third pass. The first version guessed it,
+  and also dated messages **in the future** — a conversation created "now" plus 37-minute steps — so
+  "the latest message" was one that had not happened and the list's preview showed it. A fixture may
+  be artificial; it may not be impossible.
+
+Measured this way, with the API and the worker running:
+
+| Request                                      | p50   | p95    |
+| -------------------------------------------- | ----- | ------ |
+| `GET /conversations` (list + two aggregates) | 42 ms | 56 ms  |
+| `?unread=true`                               | 36 ms | 55 ms  |
+| `?assigned=unassigned`                       | 36 ms | 46 ms  |
+| `?status=open`                               | 40 ms | 58 ms  |
+| `?q=` (GIN body search)                      | 71 ms | 100 ms |
+| `?q=` (a phone number)                       | 17 ms | 24 ms  |
+| `GET /conversations/:id` (+ lead context)    | 9 ms  | 11 ms  |
+| `GET /conversations/:id/messages`            | 14 ms | 20 ms  |
+
+Against the 500 ms budget, with the body search the slowest at **100 ms**.
+
+**The measurement found a defect nothing else would have.** `GET /conversations` answered
+`nextCursor: null, hasMore: false` on every page — so this workspace was told its inbox held 50
+conversations with the other 3 950 unreachable, and `total` sat beside that saying 4 000. With one
+conversation the response is correct, which is exactly why a fixture at this size exists.

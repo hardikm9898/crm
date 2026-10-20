@@ -20,11 +20,17 @@ import { JOBS, QUEUES } from '../../infra/queue/queue.constants.js';
 import { QueueService } from '../../infra/queue/queue.service.js';
 import { presentMessage } from './whatsapp-presenters.js';
 import type { StoredUpload } from './whatsapp-media.service.js';
+import { CannedRepliesService } from './canned-replies.service.js';
 import { WhatsAppTemplatesService } from './whatsapp-templates.service.js';
 
 /** What somebody is asking us to send. */
 export type OutboundRequest =
-  | { readonly kind: 'text'; readonly body: string }
+  | {
+      readonly kind: 'text';
+      readonly body: string;
+      /** The canned reply it came from, for the usage count. The body is still what is sent. */
+      readonly cannedReplyId?: string;
+    }
   | {
       readonly kind: 'template';
       readonly templateId: string;
@@ -64,6 +70,7 @@ export class WhatsAppSendService {
     private readonly db: DbService,
     private readonly scopes: DataScopeService,
     private readonly templates: WhatsAppTemplatesService,
+    private readonly canned: CannedRepliesService,
     private readonly queues: QueueService,
     @Inject(LOGGER) private readonly logger: Logger,
   ) {}
@@ -121,6 +128,12 @@ export class WhatsAppSendService {
         senderUserId: principal.actorId,
         status: 'queued',
         ...(prepared.templateId === null ? {} : { templateId: prepared.templateId }),
+        // Which wording this came from, when it came from one: the composite FK makes another
+        // workspace's reply unrepresentable, and the column is what makes "which canned reply
+        // actually gets used" answerable from the messages rather than from a counter alone.
+        ...(request.kind === 'text' && request.cannedReplyId !== undefined
+          ? { cannedReplyId: request.cannedReplyId }
+          : {}),
         createdAt: now,
       },
     });
@@ -144,6 +157,14 @@ export class WhatsAppSendService {
           downloadStatus: 'stored',
         },
       });
+    }
+
+    // The canned reply's count, if this came from one — after the message is written, because a
+    // count is a statistic and a message is the thing somebody is waiting for. Refused silently
+    // when the id names a reply this person cannot use: the message is already sent, and a 400
+    // about a counter would be a refusal of something that already happened.
+    if (request.kind === 'text' && request.cannedReplyId !== undefined) {
+      await this.canned.recordUse(request.cannedReplyId);
     }
 
     // The thread's order, immediately: a message that appears only once Meta has accepted it makes

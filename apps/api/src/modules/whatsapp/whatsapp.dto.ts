@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  CANNED_REPLY_VISIBILITIES,
   CONVERSATION_STATUSES,
   WHATSAPP_TEMPLATE_CATEGORIES,
   WHATSAPP_TEMPLATE_STATUSES,
@@ -24,7 +25,26 @@ export const listConversationsSchema = z
       .transform((value) => (value === undefined ? undefined : value === 'true')),
     /** Matches a message body or the contact's number. */
     q: z.string().trim().max(200).optional(),
+    /** A tag the conversation carries. One, because a filter chip is one tag (`FR-WA-7`). */
+    tag: z.string().trim().min(1).max(40).optional(),
     limit: z.coerce.number().int().min(1).max(100).default(25),
+    /**
+     * The last row of the previous page, as `<lastMessageAt ISO>_<id>`.
+     *
+     * **Both halves**, because `last_message_at` ties: two conversations whose newest message
+     * arrived in the same second would otherwise make one page's last row the next page's first,
+     * and a row in between would be skipped. The same reason a cursor over `messages` carries the
+     * partition key — an id alone selects the wrong page.
+     *
+     * Opaque to the client by convention: it is the `nextCursor` the previous response gave.
+     */
+    cursor: z
+      .string()
+      .regex(
+        /^\d{4}-\d{2}-\d{2}T[\d:.]+Z_[0-9a-f-]{36}$/,
+        'That is not a cursor this endpoint issued.',
+      )
+      .optional(),
   })
   .strict();
 
@@ -67,7 +87,21 @@ export type SetDefaultAgentInput = z.infer<typeof setDefaultAgentSchema>;
  */
 export const sendMessageSchema = z
   .discriminatedUnion('kind', [
-    z.object({ kind: z.literal('text'), body: z.string().trim().min(1).max(4096) }).strict(),
+    z
+      .object({
+        kind: z.literal('text'),
+        body: z.string().trim().min(1).max(4096),
+        /**
+         * The canned reply this came from, when it came from one (`FR-WA-7`).
+         *
+         * The **body** is still what is sent, not the reply's own wording: an agent edits a canned
+         * reply before sending it more often than not, and a send that silently used the stored
+         * text would put words in their mouth. This is only what increments `usage_count`, which
+         * is why that count means "times sent" rather than "times clicked".
+         */
+        cannedReplyId: z.string().uuid().optional(),
+      })
+      .strict(),
     z
       .object({
         kind: z.literal('template'),
@@ -122,6 +156,49 @@ export const syncTemplatesSchema = z.object({ accountId: z.string().uuid() }).st
 
 export const previewTemplateSchema = z
   .object({ leadId: z.string().uuid().optional() })
+  .strict();
+
+/**
+ * A conversation's tags, as a whole set (`FR-WA-7`).
+ *
+ * The set and not add-one/remove-one: a tag editor is a row of chips, and two endpoints for one
+ * field is how a screen and an API end up disagreeing about what is on a row. `normaliseTags` then
+ * lower-cases and hyphenates, so `Site Visit` and `site-visit` cannot be two chips for one idea.
+ */
+export const setTagsSchema = z
+  .object({ tags: z.array(z.string().trim().max(60)).max(20) })
+  .strict();
+
+export const createCannedReplySchema = z
+  .object({
+    /** `/price-list`. The slash is added for you — making somebody type punctuation exactly is how
+     * a feature goes unused. */
+    shortcut: z.string().trim().min(1).max(40),
+    body: z.string().trim().min(1).max(1024),
+    visibility: z.enum(CANNED_REPLY_VISIBILITIES).default('shared'),
+  })
+  .strict();
+
+export const updateCannedReplySchema = z
+  .object({
+    shortcut: z.string().trim().min(1).max(40).optional(),
+    body: z.string().trim().min(1).max(1024).optional(),
+    visibility: z.enum(CANNED_REPLY_VISIBILITIES).optional(),
+  })
+  .strict()
+  .refine((value) => Object.keys(value).length > 0, { message: 'Nothing to update' });
+
+/**
+ * The usage window (`FR-BIL-4`).
+ *
+ * Both ends, defaulting to this month — the period an invoice covers, which is the only reason
+ * anybody opens this screen. `z.coerce.date()` because a query string carries strings.
+ */
+export const usageQuerySchema = z
+  .object({
+    from: z.coerce.date().optional(),
+    to: z.coerce.date().optional(),
+  })
   .strict();
 
 /**
@@ -208,3 +285,7 @@ export type TransferConversationInput = z.infer<typeof transferConversationSchem
 export type CloseConversationInput = z.infer<typeof closeConversationSchema>;
 export type SnoozeConversationInput = z.infer<typeof snoozeConversationSchema>;
 export type CreateNoteInput = z.infer<typeof createNoteSchema>;
+export type SetTagsInput = z.infer<typeof setTagsSchema>;
+export type CreateCannedReplyInput = z.infer<typeof createCannedReplySchema>;
+export type UpdateCannedReplyInput = z.infer<typeof updateCannedReplySchema>;
+export type UsageQuery = z.infer<typeof usageQuerySchema>;
