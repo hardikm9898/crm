@@ -19,6 +19,13 @@ const MEDIA_CONTENT_TYPE = 'application/octet-stream';
 // it would give every such client a 16 MB body limit on the one path that allows uploads. A type
 // nobody listed is refused by Fastify with a bare 415 rather than by the hook, which is a less
 // helpful sentence and the honest one — this product has no parser for it.
+//
+// `application/vnd.ms-excel` is absent for a harder reason: **a content-type parser is global, so
+// two features cannot both register one**. The CSV import already claims that type (it is what
+// Excel calls a CSV), and adding it here made the whole application die at boot with
+// `Content type parser 'application/vnd.ms-excel' already present` — every route gone, on a change
+// that type-checked and that no unit test touched. `MEDIA_CONTENT_TYPES` and `CSV_CONTENT_TYPES`
+// must stay disjoint, which `media-body.spec.ts` asserts.
 export const MEDIA_CONTENT_TYPES = [
   MEDIA_CONTENT_TYPE,
   'image/jpeg',
@@ -34,7 +41,6 @@ export const MEDIA_CONTENT_TYPES = [
   'audio/amr',
   'application/pdf',
   'application/msword',
-  'application/vnd.ms-excel',
   'application/vnd.ms-powerpoint',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

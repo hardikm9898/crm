@@ -984,3 +984,18 @@ report something as done that is not done.
   as a field rather than leaving the screen to read a status word, the thread renders a **sentence**
   for anything not stored, and the browser check asserts `naturalWidth > 0` — "it is there" and "it
   loaded" are two different claims.
+- **Two features cannot both register a parser for one content type, and the second one kills the
+  app at boot.** Adding `application/vnd.ms-excel` to `MEDIA_CONTENT_TYPES` — reasonably, since
+  WhatsApp accepts old Excel files — collided with the CSV import, which already claims that type
+  because it is what Excel calls a CSV. The whole application died with
+  `Content type parser 'application/vnd.ms-excel' already present`: every route gone, from a
+  one-line change that type-checked, that lint passed, and that no unit test touched.
+  `media-body.spec.ts` now asserts the two lists are disjoint. The general lesson is the one this
+  file keeps paying for — **a content-type parser is global** — and the specific one is that
+  "which types may carry a raw body" is a single registry across the product, not a list per
+  feature.
+- **A verification run started before an edit does not verify that edit.** `pnpm test:int` was
+  launched, came back green at 1 489, and was reported — while the parser collision above had been
+  written into the tree after the run began. The suite had never seen it. A green result is only
+  evidence about the tree the run actually read, so a change made during a run means the run is
+  spent: start it again, or name exactly which suites were re-run against the final tree.
