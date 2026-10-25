@@ -15,6 +15,7 @@ import {
 import type { Logger } from 'pino';
 import { DbService } from '../../infra/db/db.service.js';
 import { LOGGER } from '../../infra/observability/logger.module.js';
+import { OutboxService } from '../../infra/outbox/outbox.service.js';
 import { TimelineService } from '../../infra/timeline/timeline.service.js';
 import { LeadsService } from '../leads/leads.service.js';
 import { deterministicEventId } from './whatsapp-ids.js';
@@ -71,6 +72,7 @@ export class WhatsAppInboundService {
     private readonly timeline: TimelineService,
     private readonly media: WhatsAppMediaService,
     private readonly consent: WhatsAppConsentService,
+    private readonly outbox: OutboxService,
     @Inject(LOGGER) private readonly logger: Logger,
   ) {}
 
@@ -176,25 +178,60 @@ export class WhatsAppInboundService {
       const conversation = await this.conversationFor(number, message, contactE164, receivedAt);
       const messageId = newId();
 
-      await this.db.client.message.create({
-        data: {
-          id: messageId,
-          organizationId,
-          conversationId: conversation.id,
-          direction: 'inbound',
-          type: message.type,
-          body: message.body,
-          payload: message.raw as never,
-          provider: 'whatsapp_cloud',
-          providerMessageId: message.providerMessageId,
-          replyToProviderId: message.replyToProviderId,
-          // Inbound: it is in our hands, and there is nothing further to wait for. A CHECK refuses
-          // a sender on an inbound row, which is what stops a colleague's name on a customer's words.
-          status: 'delivered',
-          sentAt,
-          deliveredAt: receivedAt,
-          createdAt: receivedAt,
-        },
+      // The message and its event in one transaction, which is rule 5: an event that leaves
+      // outside the write it describes is an event that can exist without the message, or a
+      // message without the event — and here the second one is the expensive direction, because
+      // from Phase 6 a customer's reply is what ends a nurture sequence. The rest of this method
+      // stays outside a transaction deliberately: the capture path reaches Prisma's five-second
+      // ceiling on a cold process, and every step of it is idempotent on the provider's own id.
+      await this.db.client.$transaction(async (tx) => {
+        await tx.message.create({
+          data: {
+            id: messageId,
+            organizationId,
+            conversationId: conversation.id,
+            direction: 'inbound',
+            type: message.type,
+            body: message.body,
+            payload: message.raw as never,
+            provider: 'whatsapp_cloud',
+            providerMessageId: message.providerMessageId,
+            replyToProviderId: message.replyToProviderId,
+            // Inbound: it is in our hands, and there is nothing further to wait for. A CHECK refuses
+            // a sender on an inbound row, which is what stops a colleague's name on a customer's words.
+            status: 'delivered',
+            sentAt,
+            deliveredAt: receivedAt,
+            createdAt: receivedAt,
+          },
+        });
+
+        // Only when there is a lead to be about. Every automation trigger's subject is a lead
+        // (`WORKFLOW_TRIGGERS[].subject`), so an event naming a conversation nobody has matched to
+        // one is an event nothing can act on — and the conversation is the thing to look at by
+        // hand in that case, not a workflow.
+        if (conversation.leadId !== null) {
+          await this.outbox.emit(tx, [
+            {
+              name: 'whatsapp.message_received',
+              // The **lead**, because a processor reads its subject from `payload.aggregateId` and
+              // the subject of this event is the person who wrote.
+              aggregateType: 'lead',
+              aggregateId: conversation.leadId,
+              payload: {
+                conversationId: conversation.id,
+                messageId,
+                leadId: conversation.leadId,
+                messageType: message.type,
+                preview: describeMessagePreview(message.type, message.body),
+                from: contactE164 ?? message.fromWaId,
+                // Theirs, not ours: the same instant the timeline and the window are measured
+                // from, so a workflow branching on "did they reply" agrees with the screen.
+                sentAt: sentAt.toISOString(),
+              },
+            },
+          ]);
+        }
       });
 
       // The conversation's own counters, after the message rather than with it: `unread_count` is

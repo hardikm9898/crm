@@ -907,6 +907,35 @@ CRUD /segments  POST /segments/{id}/recompute
 CRUD /seo/keywords  GET /seo/rankings
 ```
 
+> **Amendment, 2026-10-25 (implementation, Phase 6 step 1).** The registry, workflows, versions and
+> publish are built, all behind `automation:manage`. The paths differ from the sketch above and the
+> differences are decisions, not drift:
+>
+> | Built                                      | Sketched                      | Why                                                                                          |
+> | ------------------------------------------ | ----------------------------- | -------------------------------------------------------------------------------------------- |
+> | `GET /automation/catalogue`                | `GET /automation/registry`    | It is what the editor renders from, not a list of what exists                                 |
+> | `/automation/workflows…`                   | `/workflows…`                 | One prefix for the module, beside `/automation/catalogue`                                     |
+> | `PUT /automation/workflows/{id}/definition` | `CRUD /steps`                 | A graph is edited as one thing; a `PATCH` on part of a tree is a merge nobody can predict      |
+> | `PATCH /automation/workflows/{id}`          | `POST .../{activate\|deactivate\|kill}` | Status and the kill switch are fields, so there is one writer and one audit trail             |
+>
+> - **`GET /automation/catalogue`** answers the triggers, condition fields, actions, operators,
+>   reference kinds **with the endpoint behind each one**, the statuses, the re-entry policies and
+>   the step limits. The source paths are in the response because a declaration the screen cannot
+>   act on is half a feature: the picker would render and be empty, which looks exactly like a
+>   workspace with no statuses. `automation.e2e-spec.ts` calls every one of them.
+> - **`PUT :id/definition` saves an incomplete draft** and answers the problem list beside it;
+>   `POST :id/publish` is where that list becomes a **400** with the problems as field errors
+>   (`[{ field, code, message }]`). A validation refusal is 400; the 422s here are the business
+>   rules — "nothing to publish", "publish it before switching it on", "that workflow is archived".
+> - **`POST :id/publish`** stamps the draft, points the workflow at it, and rewrites the dispatch
+>   index in the same transaction. A workflow published for the first time becomes `active`; a
+>   **paused** one stays paused, because publishing is not a way to restart something somebody
+>   deliberately stopped.
+> - **`GET :id/versions/{versionId}`** is how a run's pinned version stays readable after the
+>   workflow has moved on (`FR-AUT-5`).
+> - `/workflows/{id}/runs`, `/automation-runs/{id}`, `POST :id/test-run` and
+>   `POST :id/{retry|kill}` remain unbuilt: there is no executor yet.
+
 ### Dashboards, billing, notifications
 
 ```

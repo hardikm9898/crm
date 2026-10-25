@@ -102,6 +102,12 @@ interface Tenant {
   // Phase 5, step 5. A **shared** reply, because that is the one anybody who may reply can edit —
   // a private one would answer 404 for a reason that has nothing to do with the tenant.
   cannedReplyId: string;
+  // Phase 6, step 1 — automation. The workflow is created **with a publishable definition** and
+  // left as a draft: `POST :id/publish` on a workflow with nothing to publish answers 422 before
+  // the guard matters, and the sweep would record a refusal it never earned — the lesson
+  // `POST /calls/:id/outcome` on an already-settled call taught this file.
+  workflowId: string;
+  workflowVersionId: string;
 }
 
 let orgA: Tenant;
@@ -573,6 +579,30 @@ async function createTenant(label: string): Promise<Tenant> {
     } as never,
   });
 
+  const workflowId = newId();
+  const workflowVersionId = newId();
+  await ctx.db.workflow.create({
+    data: {
+      id: workflowId,
+      organizationId,
+      name: `Swept ${label} ${SUFFIX}`,
+      createdById: userId,
+    } as never,
+  });
+  await ctx.db.workflowVersion.create({
+    data: {
+      id: workflowVersionId,
+      organizationId,
+      workflowId,
+      version: 1,
+      definition: {
+        trigger: { type: 'lead.created' },
+        steps: [{ id: 'note', action: 'add_note', params: { body: 'Swept' } }],
+      },
+      createdById: userId,
+    } as never,
+  });
+
   const slaClock = await ctx.db.slaClock.findFirstOrThrow({
     where: { organizationId, leadId: lead.body.data.id },
   });
@@ -652,6 +682,8 @@ async function createTenant(label: string): Promise<Tenant> {
     whatsappTemplateId,
     outboundMessageId,
     cannedReplyId,
+    workflowId,
+    workflowVersionId,
   };
 }
 
@@ -983,6 +1015,12 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       // Phase 5, step 5 — tags, canned replies and the usage meter
       '/conversations/:id/tags': `/conversations/${orgA.conversationId}/tags`,
       '/canned-replies/:id': `/canned-replies/${orgA.cannedReplyId}`,
+      // Phase 6, step 1 — automation
+      '/automation/workflows/:id': `/automation/workflows/${orgA.workflowId}`,
+      '/automation/workflows/:id/definition': `/automation/workflows/${orgA.workflowId}/definition`,
+      '/automation/workflows/:id/publish': `/automation/workflows/${orgA.workflowId}/publish`,
+      '/automation/workflows/:id/versions': `/automation/workflows/${orgA.workflowId}/versions`,
+      '/automation/workflows/:id/versions/:versionId': `/automation/workflows/${orgA.workflowId}/versions/${orgA.workflowVersionId}`,
     };
 
     // An unmapped parameter would test nothing meaningful, so it is reported instead.
@@ -1073,6 +1111,8 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       ['whatsappTemplateId', orgA.whatsappTemplateId],
       ['outboundMessageId', orgA.outboundMessageId],
       ['cannedReplyId', orgA.cannedReplyId],
+      ['workflowId', orgA.workflowId],
+      ['workflowVersionId', orgA.workflowVersionId],
     ];
 
     const problems: string[] = [];
@@ -1412,6 +1452,17 @@ function bodyFor(
       return { shortcut: `/x-${SUFFIX}`, body: 'Written by another workspace' };
     case '/canned-replies/:id':
       return { body: 'Edited by another workspace' };
+    // Phase 6, step 1 — automation. Both carry a body that would be *accepted*, so the refusal
+    // comes from the guard rather than from validation.
+    case '/automation/workflows/:id':
+      return { name: `Renamed by another workspace ${SUFFIX}` };
+    case '/automation/workflows/:id/definition':
+      return {
+        definition: {
+          trigger: { type: 'lead.created' },
+          steps: [{ id: 'note', action: 'add_note', params: { body: 'Written by a stranger' } }],
+        },
+      };
     case '/whatsapp/templates':
       return {
         accountId: target.whatsappAccountId,

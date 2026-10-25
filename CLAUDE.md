@@ -1104,6 +1104,74 @@ report something as done that is not done.
   doing its own cleaning would be a second answer to one question, and the two would eventually
   disagree about what `Price List` becomes — the `ERROR_COPY` shape, in a field rather than a
   message.
+- **A trigger a screen offers with no event behind it is a feature that can never run, and looks
+  built.** The automation registry declared `whatsapp.received` with the event
+  `whatsapp.message_received`, which **nothing in the product emitted** — a workflow somebody could
+  write, publish and watch do nothing for ever. It is the `WEBHOOK_EVENT_TYPES` lesson in a third
+  place, so the check is now the same one: `event-subscriptions.spec.ts` asserts every
+  `WORKFLOW_TRIGGERS[].event` is a key of `EVENT_SUBSCRIPTIONS`, which is also the registry of
+  *known* events — and listing an event there with `[]` subscribers is the honest way to say "the
+  consumer arrives next step", because an unlisted name reads identically to a typo.
+- **A declaration a screen cannot act on is half a feature.** A parameter saying `reference:
+  'lead_status'` is right — rule 4 forbids naming a workspace's statuses — but a picker with no
+  list behind it renders empty, which looks exactly like a workspace with no statuses. So the kind
+  and the **endpoint** behind it are declared together (`REFERENCE_SOURCES`), the same reasoning as
+  "a screen's figures and the links behind them belong in one definition", and the e2e calls every
+  path in that table. The one thing such a declaration cannot carry is which field of the answer is
+  the *name*, which is a fact about `/users` rather than about automation — so a new **kind** costs
+  one label function while a new **action** costs nothing, and that is the honest boundary of "no
+  frontend release".
+- **An empty value is "not chosen yet", not "unknown".** A new workflow starts with
+  `trigger: { type: '' }`, and the validator read that as an unknown key: “There is nothing called
+  “” that can start a workflow”, in front of somebody who had not filled the field in. The Zod-copy
+  lesson in a hand-written sentence. Found by an e2e that created a workflow and read its own
+  problem list back.
+- **A biconditional CHECK is right when both directions are contradictions, and one-way when only
+  one is.** `workflows_cooldown_matches_policy` is a `CASE` biconditional — a cooldown policy with
+  no cooldown cannot be evaluated, and hours on any other policy are a number nothing reads — while
+  `workflow_versions_publisher_published_it` is one-way on purpose: a publisher implies a
+  publication, and the mirror would make a version published by the **system** (an industry
+  template's starter workflow) unrepresentable, which is `webhook_deliveries_pending_is_untried`'s
+  mirror all over again. The test is never "does it sound symmetrical" but "is the mirror a state
+  anything could honestly be in".
+- **A projection may be an index; it may not be a copy.** `workflow_triggers` exists because
+  dispatch asks "which workflows listen to `lead.created` here" on every event and digging that out
+  of JSONB is a scan — so it is derived from the published definition by one writer, inside the
+  publish transaction. What it deliberately does **not** carry is `status` or `kill_switch`: those
+  live on `workflows` and dispatch joins them, because a projection holding a copy of them is two
+  answers to "is this live". The same reasoning killed `workflow_steps`, which `database-design.md`
+  §9 had sketched **beside** `definition JSONB` — the graph described twice, which is
+  `notification_preferences`' quiet-hours defect arriving as a plan. When a doc describes one thing
+  twice, one of the two is the bug.
+- **A form whose fields repeat cannot echo its submission, so a graph travels as one field.** The
+  workflow editor holds the definition in React state and submits a single hidden JSON string.
+  `submittedValues` keeps one value per name, which is how the mapping editor came back from a
+  refusal having silently dropped every row but the last; one field means a refusal echoes the
+  whole graph.
+- **Saving is not publishing, and an editor that refuses to save loses an afternoon.**
+  `PUT :id/definition` records whatever parses as an object and answers the problem list beside it;
+  `POST :id/publish` is where that list becomes a refusal. The corollary is that the problems have
+  to be printed **against the rows they name** (`[{ field: 'definition.steps[0].params.body' }]`),
+  not only as a summary — the mapping editor's lesson, which this screen inherited rather than
+  re-paid.
+- **A controlled input filled before React has hydrated keeps its value in the DOM and not in the
+  component's state.** The sign-in form posted two empty strings and answered "Enter your email and
+  password" while the boxes visibly held an email and a password — the `127.0.0.1` trap's quieter
+  cousin, and wide enough to lose against a dev server compiling `/login` on demand. Wait for
+  hydration (React attaches a `__react*` property to each node) before filling anything
+  controlled.
+- **A `<select>` the rest of a form depends on must be reactive, which is the opposite of the
+  payment-method rule.** `key` + `defaultValue` is right for a select whose value only has to
+  survive a refusal; it is **wrong** when choosing an option should reveal another field. The
+  guardrails form reused that shape, so picking "Again after a wait" revealed no hours box and
+  saving answered "Say how long to wait before a lead can enter again" with nowhere to say it.
+  Hold such a value in state, seed it from the echo, and reset it in render when the echo changes.
+  Found by the browser check, which is the only thing that would have.
+- **`findMany` with no `orderBy` plus an assertion on `.at(-1)` is an order-dependent test.**
+  `flushSends()` drains every queued message and a check read "the last thing sent", which is a
+  different message the moment an earlier test leaves one queued — green on its own and red in a
+  full run, which is the shape that looks like a flake and is not. Order the drain, and assert on
+  the request that names **this** test's subject rather than on whichever was last.
 - **A combined locator's `.first()` reads whichever element is earlier in the DOM, not the one you
   meant.** `page.locator('[data-shortcut-error], main [role="alert"]').first()` read the **summary**
   notice rather than the field error, and reported "a taken shortcut says whose it is" as failing

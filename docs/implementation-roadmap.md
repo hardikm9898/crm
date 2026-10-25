@@ -2968,6 +2968,104 @@ sweep); guardrails (re-entry, caps, loop detection, kill switch, per-org concurr
   reply) and abandoned checkout (wait 30 m → reminder → wait 24 h → second reminder → stop on payment).
 - Every automation decision, including "skipped because", is on the lead timeline.
 
+### Step 1 — the registry, the workflow, and the version a run will pin to ✅ _(landed 2026-10-25)_
+
+The step that decides the shape of the whole phase, because Phase 6's first exit criterion does:
+**"adding a new action type requires no engine change and no frontend release."** That rules out
+the two obvious designs — a `switch` in an executor is an engine change, and a Zod schema per
+action is one too, because a browser cannot read a Zod object and the editor would need a
+hand-written form, and therefore a release, per action.
+
+What is left is a **declaration the API serves and both halves read**. `packages/shared/src/automation.ts`
+declares 11 triggers, 11 condition fields and 13 actions, each with a list of parameter fields
+carrying a type, a label, a hint and — where the value is a row in this workspace — which *kind* of
+row. `GET /automation/catalogue` hands that to the editor, which branches on a parameter's **type**
+and never on an action's key; `validateWorkflowDefinition` checks a saved graph against the same
+declarations, pure and in `@leados/shared` so a preview and a refusal cannot disagree. The proof is
+a test rather than a sentence: `apps/web/src/lib/automation.spec.ts` **invents an action**
+(`send_pigeon`, with a text, a duration and a boolean), hands it to the editor's form model, and
+asserts it renders and collects correctly. If the editor knew its actions, that test could not be
+written.
+
+**The doc was wrong, and was corrected rather than followed.** `database-design.md` §9 described the
+workflow graph **twice** — as `workflow_versions.definition JSONB` and again as `workflow_steps`
+rows — which is the defect `notification_preferences` already paid for: a column a feature reads has
+to be read by one thing. `workflow_steps` is not built and will not be. `workflow_triggers` survives
+for the opposite reason and earns its place by being an **index**: dispatch asks "which workflows
+listen to `lead.created` in this workspace" on every event, and digging that out of JSONB is a scan.
+It is keyed on the workflow (one row, because a definition has one trigger), written by one method
+inside the publish transaction, and carries **no status of its own** — `status` and `kill_switch`
+live on `workflows` and dispatch joins them, so "is this workflow live" has one answer. §9's
+`entity_type` and `is_draft` are gone too: one value and a derivable boolean are columns with no
+reader.
+
+**A trigger with nothing behind it was found by a test.** The registry offered "a customer replies",
+and `whatsapp.message_received` was emitted by **nothing** — a trigger a screen offers that can
+never fire, which looks built. `event-subscriptions.spec.ts` now insists every
+`WORKFLOW_TRIGGERS[].event` is a known event, and the inbound WhatsApp path emits it inside the
+same transaction as the message insert, which is also the first transaction that write has had.
+
+**Files changed.** `packages/shared/src/automation.ts` (+`automation.spec.ts`);
+`packages/db/prisma/schema.prisma` and migration `20261025183137_phase6_workflows`;
+`packages/db/src/tenant-models.ts`, `schema-objects.int-spec.ts`, `tenant-isolation.int-spec.ts`;
+`apps/api/src/modules/automation/` (controller, service, DTOs, catalogue, module, README);
+`apps/api/src/modules/whatsapp/whatsapp-inbound.service.ts`;
+`apps/api/src/infra/outbox/event-subscriptions.ts` (+spec); `apps/api/src/app.module.ts`;
+`apps/api/test/automation.e2e-spec.ts`; `apps/web/src/lib/automation.ts` (+spec), `lib/nav.ts`,
+`app/(app)/settings/automation/` (list, `[id]`, actions, two component files);
+ADR-0041; `database-design.md` §9, `api-architecture.md`, `frontend-architecture.md` §10.18.
+
+**Database changes.** Three tables — `workflows`, `workflow_versions`, `workflow_triggers` — all
+registered in `TENANT_MODELS`. The migration arrived with **fifteen** spurious DROPs (two
+three-column FKs, six GIN, five trigram, two partial indexes), removed by hand as in every
+migration since Phase 1 step 2. Hand-written and listed in `schema-objects.int-spec.ts`: the partial
+unique `workflows_live_name` on `(organization_id, lower(btrim(name))) WHERE deleted_at IS NULL` —
+the `WHERE` is what lets a deleted workflow's name be reused — and **twelve CHECKs**. Two are worth
+reading: `workflows_cooldown_matches_policy` is a `CASE` biconditional because *both* directions are
+contradictions, while `workflow_versions_publisher_published_it` is deliberately **one-way**, since
+the mirror would make a version published by the system (an industry template's starter workflow)
+unrepresentable. **No grant migration**: `automation:manage` has been in the catalogue since Phase 1
+and had 328 grants before this step, so one written out of habit would have inserted nothing and
+claimed otherwise.
+
+**API changes.** `GET /automation/catalogue`; `GET|POST /automation/workflows`;
+`GET|PATCH|DELETE /automation/workflows/:id`; `PUT :id/definition`; `POST :id/publish`;
+`GET :id/versions` and `:id/versions/:versionId`. All behind `automation:manage`.
+
+**UI changes.** `/settings/automation` lists the workflows with what starts each one in words and
+four distinguishable states (draft has never run; paused ran and was stopped; **stopped** is the
+kill switch, which leaves everything configured; archived is finished).
+`/settings/automation/{id}` is the editor, the publish button carrying the API's own refusal
+underneath it, the guardrails and the version history. Nested branches are not editable yet — the
+API, the validator and the schema carry them three deep, and the visual builder arrives with the
+executor.
+
+**Tests run.** `pnpm lint typecheck build` clean. **1 227 unit** (686 shared, 363 web, 174 api, 4 db)
+and **1 622 integration** (910 api e2e, 712 db). New: **22** registry and validator cases in
+`@leados/shared`, **15** in the web lib, **28 e2e** across the catalogue, the draft, publishing, the
+dispatch index, reference checking, the list and cross-tenant refusal, **11 cross-tenant isolation
+cases** and **20 schema-object entries**. Then **55 HTTP checks** against a live API, worker and
+scheduler, and **29 browser checks** in Chromium.
+
+Two defects in existing tests came out of the full run rather than out of the new code, and both
+are fixed here. `whatsapp-sending.e2e-spec.ts` drained queued sends with no `orderBy` and then
+asserted on `sentMessages().at(-1)` — green on its own, red in a full run, which is the shape that
+looks like a flake and is not; the drain is ordered and the assertion now names *this* test's
+template. And the inbound suite had no assertion that `whatsapp.message_received` reaches the
+outbox at all: a side effect with no record is one nobody can count, which is how two verification
+emails per registration survived four phases.
+
+**Carried forward, named rather than assumed.** **Nothing runs.** There is no executor, no
+enrollment, no run log, no guardrail counter and no loop detection: `reentry_policy`,
+`cooldown_hours` and `max_runs_per_entity` are written by this step and read by the next, and
+`automation_enrollments`, `automation_runs`, `automation_run_steps` and
+`automation_guardrail_counters` are unbuilt, which is why `tasks.automation_run_id` is still absent.
+Nothing reaches a lead's timeline yet either, by the same reasoning rule 6 allows: a workflow is
+configuration, and the entries the rule asks for are what *runs* write, where there is a lead to
+write them about. Configuration is audited instead. The `manual` trigger has no button yet, and
+`FR-AUT-7`'s per-lead run view and retry-from-failed-step, the dry run, and the starter workflow
+templates per industry all wait for something to run.
+
 ---
 
 ## Phase 7 — Websites & landing pages
@@ -3126,8 +3224,14 @@ deliberately **not** built, said once rather than implied: typing state and real
 would make it meaningful), bulk sending, and a usage rollup for questions older than the 24-month
 message retention.
 
-**The next step is Phase 6 — Automation**, whose scope and exit criteria are in its own section
-below. Four things from Phase 5 decide how it starts:
+**Phase 6 is under way: step 1 landed on 2026-10-25** — the registry, workflows, versions and
+publish, with no executor. Its own entry is in the Phase 6 section below. **The next step is Phase 6
+step 2 — the durable step executor**: the thing that consumes an event, finds the workflows whose
+dispatch row names it, pins the published version, walks the steps, suspends on a `wait` and is
+recovered by a reconciliation sweep when the delayed job is lost. Everything it needs from step 1
+exists: a published version to pin to, and an indexed answer to "who listens to this event".
+
+Four things from Phase 5 decided how Phase 6 started, and all four held:
 
 - **The outbox is already the trigger source, and nothing consumes it for automation yet.** Every
   write in this product emits its events inside the transaction that made them, which is exactly

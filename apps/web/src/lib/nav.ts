@@ -156,6 +156,14 @@ export const NAV_SECTIONS: readonly NavSection[] = [
         href: '/settings/whatsapp/templates',
         permissions: ['whatsapp:manage'],
       },
+      // Automation sits in settings rather than in the working sections, because writing a
+      // workflow is a thing somebody does once and then leaves alone — and because the screen it
+      // acts on is every other screen.
+      {
+        label: 'Automation',
+        href: '/settings/automation',
+        permissions: ['automation:manage'],
+      },
       { label: 'Your security', href: '/settings/security', permissions: [] },
     ],
   },

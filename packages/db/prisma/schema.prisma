@@ -813,6 +813,9 @@ model Organization {
   webhookAttempts     WebhookAttempt[]
   ingestionErrors     IngestionError[]
   idempotencyKeys     IdempotencyKey[]
+  workflows           Workflow[]
+  workflowVersions    WorkflowVersion[]
+  workflowTriggers    WorkflowTrigger[]
 
   @@index([status])
   @@index([createdAt])
@@ -949,22 +952,25 @@ model Membership {
 
   slaClocks SlaClock[] @relation("sla_clock_assignee")
 
-  createdForms            Form[]                  @relation("form_creator")
-  createdApiKeys          ApiKey[]                @relation("api_key_creator")
-  createdWebhookEndpoints WebhookEndpoint[]       @relation("webhook_endpoint_creator")
+  createdForms              Form[]                  @relation("form_creator")
+  createdApiKeys            ApiKey[]                @relation("api_key_creator")
+  createdWebhookEndpoints   WebhookEndpoint[]       @relation("webhook_endpoint_creator")
   // Named, because `prisma format` writes this back-relation without the name and then refuses to
   // validate the schema it just wrote — the trap `industryTemplateKey` paid for, one step along.
-  connectedIntegrations   IntegrationConnection[] @relation("integration_connector")
+  connectedIntegrations     IntegrationConnection[] @relation("integration_connector")
   // Named by hand, every one of them: `prisma format` writes a back-relation without its
   // `@relation` name and then refuses to validate the schema it just wrote.
-  whatsappDefaultFor      WhatsAppNumber[]        @relation("whatsapp_default_agent")
-  assignedConversations   Conversation[]          @relation("conversation_assignee")
-  closedConversations     Conversation[]          @relation("conversation_closer")
-  lockedConversations     Conversation[]          @relation("conversation_locker")
-  conversationNotes       ConversationNote[]      @relation("conversation_note_author")
-  cannedReplies           CannedReply[]           @relation("canned_reply_owner")
-  sentMessages            Message[]               @relation("message_sender")
-  whatsappTemplatesWritten WhatsAppTemplate[]     @relation("whatsapp_template_author")
+  whatsappDefaultFor        WhatsAppNumber[]        @relation("whatsapp_default_agent")
+  assignedConversations     Conversation[]          @relation("conversation_assignee")
+  closedConversations       Conversation[]          @relation("conversation_closer")
+  lockedConversations       Conversation[]          @relation("conversation_locker")
+  conversationNotes         ConversationNote[]      @relation("conversation_note_author")
+  cannedReplies             CannedReply[]           @relation("canned_reply_owner")
+  workflowsCreated          Workflow[]              @relation("workflow_creator")
+  workflowVersionsWritten   WorkflowVersion[]       @relation("workflow_version_author")
+  workflowVersionsPublished WorkflowVersion[]       @relation("workflow_version_publisher")
+  sentMessages              Message[]               @relation("message_sender")
+  whatsappTemplatesWritten  WhatsAppTemplate[]      @relation("whatsapp_template_author")
 
   @@unique([organizationId, id], name: "membership_tenant_key")
   @@unique([organizationId, userId])
@@ -4291,10 +4297,10 @@ model Message {
   /// Which template this message is, when it is one. A composite FK, so a message cannot name
   /// another workspace's template; `Restrict`, because a template with messages is archived rather
   /// than deleted and its history has to keep reading correctly.
-  templateId String? @map("template_id") @db.Uuid
+  templateId   String? @map("template_id") @db.Uuid
   /// How many times sending has been attempted. A failure is retryable (`FR-WA-9`), and the count
   /// is what stops a retry loop from being invisible.
-  sendAttempts Int @default(0) @map("send_attempts")
+  sendAttempts Int     @default(0) @map("send_attempts")
 
   /// Which canned reply this message came from, when it came from one. `SetNull` would null a
   /// NOT NULL `organization_id` on a composite FK, so this is `Restrict` and a used reply is
@@ -4323,12 +4329,12 @@ model Message {
   /// The partition key. When it arrived or was queued — the only instant this table is pruned by.
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  conversation Conversation @relation(fields: [organizationId, conversationId], references: [organizationId, id], onDelete: Cascade, map: "messages_conversation_same_org_fk")
-  sender       Membership?  @relation("message_sender", fields: [organizationId, senderUserId], references: [organizationId, userId], onDelete: Restrict, map: "messages_sender_same_org_fk")
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  conversation Conversation      @relation(fields: [organizationId, conversationId], references: [organizationId, id], onDelete: Cascade, map: "messages_conversation_same_org_fk")
+  sender       Membership?       @relation("message_sender", fields: [organizationId, senderUserId], references: [organizationId, userId], onDelete: Restrict, map: "messages_sender_same_org_fk")
   template     WhatsAppTemplate? @relation(fields: [organizationId, templateId], references: [organizationId, id], onDelete: Restrict, map: "messages_template_same_org_fk")
 
-  cannedReply  CannedReply?      @relation(fields: [organizationId, cannedReplyId], references: [organizationId, id], onDelete: Restrict, map: "messages_canned_reply_same_org_fk")
+  cannedReply CannedReply? @relation(fields: [organizationId, cannedReplyId], references: [organizationId, id], onDelete: Restrict, map: "messages_canned_reply_same_org_fk")
 
   statusEvents MessageStatusEvent[]
   media        MessageMedia[]
@@ -4711,7 +4717,6 @@ enum WebhookDeliveryStatus {
   @@map("webhook_delivery_status")
 }
 
-
 /// One WhatsApp message template, and its standing with Meta (`FR-WA-5`).
 ///
 /// Authored here, submitted to Meta, and then **reconciled** by a sweep rather than trusted: Meta
@@ -4725,16 +4730,16 @@ model WhatsAppTemplate {
   accountId String @map("account_id") @db.Uuid
 
   /// Meta's own naming rule: lower case, digits and underscores.
-  name     String
+  name            String
   /// A WhatsApp language code — `en`, `en_US`.
-  language String
-  category WhatsAppTemplateCategory
-  status   WhatsAppTemplateStatus   @default(draft)
+  language        String
+  category        WhatsAppTemplateCategory
+  status          WhatsAppTemplateStatus   @default(draft)
   /// Why Meta refused it. Null unless it did.
-  rejectionReason String? @map("rejection_reason")
+  rejectionReason String?                  @map("rejection_reason")
 
   /// `{ header?, body, footer?, buttons? }` — the shape `renderTemplate` reads.
-  components Json @db.JsonB
+  components  Json @db.JsonB
   /// `{ "1": "lead.fullName", "2": "custom.course" }` — what fills each variable at send time.
   variableMap Json @default("{}") @map("variable_map") @db.JsonB
 
@@ -4743,9 +4748,9 @@ model WhatsAppTemplate {
   submittedAt        DateTime? @map("submitted_at") @db.Timestamptz(6)
   syncedAt           DateTime? @map("synced_at") @db.Timestamptz(6)
 
-  createdById String?  @map("created_by_id") @db.Uuid
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdById String?   @map("created_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -4774,13 +4779,13 @@ model MessageStatusEvent {
   messageId        String   @map("message_id") @db.Uuid
   messageCreatedAt DateTime @map("message_created_at") @db.Timestamptz(6)
 
-  status MessageStatus
+  status     MessageStatus
   /// Meta's instant for the transition, never ours: a receipt that arrives late still happened when
   /// it happened, and a median "time to read" computed from our clock would measure our queue.
-  occurredAt DateTime @map("occurred_at") @db.Timestamptz(6)
+  occurredAt DateTime      @map("occurred_at") @db.Timestamptz(6)
 
-  errorCode    String? @map("error_code")
-  errorMessage String? @map("error_message")
+  errorCode            String? @map("error_code")
+  errorMessage         String? @map("error_message")
   /// What Meta charged this conversation as, when it says.
   conversationCategory String? @map("conversation_category")
   billable             Boolean @default(false)
@@ -4839,14 +4844,14 @@ model MessageMedia {
   /// Meta's id for the file. Null for an outbound attachment until Meta has been given it.
   providerMediaId String? @map("provider_media_id")
   /// The storage driver's key, once the bytes are ours. Opaque above the port.
-  fileKey  String? @map("file_key")
-  fileName String? @map("file_name")
-  mimeType String? @map("mime_type")
-  sizeBytes Int?   @map("size_bytes")
+  fileKey         String? @map("file_key")
+  fileName        String? @map("file_name")
+  mimeType        String? @map("mime_type")
+  sizeBytes       Int?    @map("size_bytes")
   /// Meta's own hash for an inbound file, ours for an outbound one.
-  sha256   String?
+  sha256          String?
   /// Whether Meta distinguishes this audio as a voice note.
-  voice    Boolean @default(false)
+  voice           Boolean @default(false)
 
   downloadStatus MediaDownloadStatus @default(pending) @map("download_status")
   /// Why it will not be stored, in the words somebody reads. Null unless refused or failed.
@@ -4955,4 +4960,130 @@ model CannedReply {
   /// The picker's own read: what this workspace has, most-used first.
   @@index([organizationId, usageCount(sort: Desc)])
   @@map("canned_replies")
+}
+
+// ─── Phase 6 — automation (`FR-AUT-1`, `FR-AUT-4`, `FR-AUT-5`, `FR-AUT-8`) ────────────────────
+//
+// §9 of database-design sketched the graph **twice**: as `workflow_versions.definition JSONB` and
+// again as `workflow_steps` rows. That is the "a column a feature reads has to be read by one
+// thing" defect before anything was written, so the doc was corrected rather than followed.
+// The definition is the one source: a run pins to it, it is versioned atomically, and a graph
+// edited as a whole is saved as a whole. `workflow_triggers` is the one exception, and it earns
+// its place by being an **index** rather than a copy — dispatch asks "which workflows in this
+// workspace listen to `lead.created`" on every event, and digging that out of JSONB is a scan.
+// ADR-0041 records both halves of that.
+
+model Workflow {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  name        String
+  description String?
+
+  /// `WORKFLOW_STATUSES`. Only `active` dispatches; `paused` keeps its published version, which is
+  /// the whole point of pausing.
+  status String @default("draft")
+
+  /// The version a new run pins to (`FR-AUT-5`). Null until the first publish, and left alone by
+  /// editing — a draft saved over a live workflow changes nothing until it is published.
+  currentVersionId String? @map("current_version_id") @db.Uuid
+
+  /// `FR-AUT-6`'s emergency stop, separate from `status` on purpose: flipping it is one write that
+  /// does not disturb what a manager had configured, and unflipping restores it exactly.
+  killSwitch Boolean @default(false) @map("kill_switch")
+
+  /// Guardrails the executor (step 2) reads. Here now because a workflow published without them
+  /// is a workflow whose caps arrive later — and a cap that arrives after the runs is no cap.
+  maxRunsPerEntity Int?   @map("max_runs_per_entity")
+  reentryPolicy    String @default("once") @map("reentry_policy")
+  cooldownHours    Int?   @map("cooldown_hours")
+
+  createdById String @map("created_by_id") @db.Uuid
+
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  creator        Membership       @relation("workflow_creator", fields: [organizationId, createdById], references: [organizationId, userId], onDelete: Restrict, map: "workflows_creator_same_org_fk")
+  currentVersion WorkflowVersion? @relation("workflow_current_version", fields: [organizationId, currentVersionId], references: [organizationId, id], onDelete: Restrict, map: "workflows_current_version_same_org_fk")
+
+  versions WorkflowVersion[] @relation("workflow_versions")
+  trigger  WorkflowTrigger?  @relation("workflow_trigger")
+
+  @@unique([organizationId, id], name: "workflow_tenant_key")
+  /// The list screen's own read.
+  @@index([organizationId, status, updatedAt(sort: Desc)])
+  @@map("workflows")
+}
+
+model WorkflowVersion {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+  workflowId     String @map("workflow_id") @db.Uuid
+
+  /// 1, 2, 3… within the workflow. `UNIQUE (organization_id, workflow_id, version)`.
+  version Int
+
+  /// The whole graph, as the editor saved it and `validateWorkflowDefinition` checked it.
+  definition Json @db.JsonB
+
+  /// Set once, when this version becomes the live one. A version is immutable from that moment:
+  /// editing a published workflow writes a **new** version, which is what makes "editing a live
+  /// workflow does not alter in-flight runs" true rather than hoped for.
+  publishedAt   DateTime? @map("published_at") @db.Timestamptz(6)
+  /// Nullable because a version published by the system — an industry template's starter
+  /// workflow — was published by nobody. A CHECK requiring a publisher would make that
+  /// unrepresentable, so the constraint runs the other way: a publisher implies a publication.
+  publishedById String?   @map("published_by_id") @db.Uuid
+
+  createdById String   @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  workflow     Workflow     @relation("workflow_versions", fields: [organizationId, workflowId], references: [organizationId, id], onDelete: Cascade, map: "workflow_versions_workflow_same_org_fk")
+  author       Membership   @relation("workflow_version_author", fields: [organizationId, createdById], references: [organizationId, userId], onDelete: Restrict, map: "workflow_versions_author_same_org_fk")
+  publisher    Membership?  @relation("workflow_version_publisher", fields: [organizationId, publishedById], references: [organizationId, userId], onDelete: Restrict, map: "workflow_versions_publisher_same_org_fk")
+
+  currentFor Workflow[]        @relation("workflow_current_version")
+  triggers   WorkflowTrigger[] @relation("workflow_trigger_version")
+
+  @@unique([organizationId, id], name: "workflow_version_tenant_key")
+  @@unique([organizationId, workflowId, version], name: "workflow_version_number_key")
+  @@index([organizationId, workflowId, version(sort: Desc)])
+  @@map("workflow_versions")
+}
+
+/// The dispatch index, derived from the published version by one writer (`syncTrigger`).
+///
+/// One row per workflow that has something published, deleted when it has not. It carries no
+/// status of its own: `status` and `kill_switch` live on `workflows` and dispatch joins them, so
+/// "is this workflow live" has exactly one answer.
+model WorkflowTrigger {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+  workflowId     String @map("workflow_id") @db.Uuid
+  versionId      String @map("version_id") @db.Uuid
+
+  /// The registry key — `lead.created`, `manual`.
+  triggerType String  @map("trigger_type")
+  /// The outbox event that fires it, copied from the registry at publish time. Null for `manual`,
+  /// which nothing dispatches, so the index simply never matches it.
+  event       String?
+  params      Json    @default("{}") @db.JsonB
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  workflow     Workflow        @relation("workflow_trigger", fields: [organizationId, workflowId], references: [organizationId, id], onDelete: Cascade, map: "workflow_triggers_workflow_same_org_fk")
+  version      WorkflowVersion @relation("workflow_trigger_version", fields: [organizationId, versionId], references: [organizationId, id], onDelete: Cascade, map: "workflow_triggers_version_same_org_fk")
+
+  @@unique([organizationId, id], name: "workflow_trigger_tenant_key")
+  /// One row per workflow: a definition has exactly one trigger, and two rows would be two answers.
+  @@unique([organizationId, workflowId], name: "workflow_trigger_workflow_key")
+  /// The whole reason this table exists: one indexed lookup per domain event.
+  @@index([organizationId, event])
+  @@map("workflow_triggers")
 }

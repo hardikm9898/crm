@@ -100,6 +100,14 @@ export const EVENT_SUBSCRIPTIONS: Readonly<Record<string, readonly EventSubscrip
   'payment.received': [WEBHOOK],
   'payment.refunded': [WEBHOOK],
   'onboarding.industry_template_applied': [],
+  /**
+   * A customer's own reply (Phase 5 step 1's write, Phase 6 step 1's event). Listed with no
+   * subscriber: the automation dispatcher that consumes it is step 2's, and an event recorded with
+   * nothing listening is the outbox working as designed — what it must not be is *unlisted*, which
+   * `isKnownEvent` reports identically to a typo. It is a `WORKFLOW_TRIGGERS` event, and
+   * `event-subscriptions.spec.ts` now insists every one of those appears here.
+   */
+  'whatsapp.message_received': [],
 };
 
 export function subscribersFor(eventName: string): readonly EventSubscription[] {

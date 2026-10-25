@@ -1334,10 +1334,9 @@ message search (`FR-VIEW-1`).
 
 | Table                           | Key columns / notes                                                                                                                                                       |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `workflows`                     | org, name, description, `is_active`, `current_version_id?`, `entity_type`, `kill_switch BOOL`, `max_runs_per_entity?`, `reentry_policy (once                              | cooldown  | always)`, `cooldown_hours?`, created_by, deleted_at |
-| `workflow_versions`             | workflow_id, `version INT`, `definition JSONB` (normalized graph snapshot), `published_at?`, `published_by_id?`, `is_draft`. `UNIQUE (workflow_id, version)` (`FR-AUT-5`) |
-| `workflow_steps`                | version_id, `step_key`, `kind (trigger                                                                                                                                    | condition | action                                              | delay                                                                                                                                                                               | branch                                                                                             | exit)`, `type`(registry key, e.g.`action.send_whatsapp_template`), `config JSONB`, `sort_order`, `parent_step_key?`, `branch_label?` |
-| `workflow_triggers`             | version_id, `event_name`, `filters JSONB`, `schedule_cron?`, `is_active` — indexed by `(organization_id, event_name)` so dispatch is a single lookup                      |
+| `workflows`                     | org, name, description, `status (draft                                                                                                                                    | active    | paused                                              | archived)`, `current_version_id?`, `kill_switch BOOL`, `max_runs_per_entity?`, `reentry_policy (once                                                                                 | cooldown                                                                                           | always)`, `cooldown_hours?`, created_by, deleted_at |
+| `workflow_versions`             | org, workflow_id, `version INT`, `definition JSONB` (**the** graph), `published_at?`, `published_by_id?`, created_by. `UNIQUE (organization_id, workflow_id, version)` (`FR-AUT-5`) |
+| `workflow_triggers`             | org, workflow_id, version_id, `trigger_type`, `event?`, `params JSONB` — one row per published workflow, indexed by `(organization_id, event)` so dispatch is a single lookup       |
 | `automation_enrollments`        | org, workflow_id, `version_id`, `entity_type`, `entity_id`, `status (active                                                                                               | completed | exited                                              | failed)`, `enrolled_at`, `completed_at?`. `UNIQUE (organization_id, workflow_id, entity_id, enrollment_cycle)` enforces re-entry policy                                             |
 | `automation_runs`               | org, workflow_id, version_id, enrollment_id, `trigger_event_id?`, `entity_type`, `entity_id`, `status (running                                                            | waiting   | completed                                           | failed                                                                                                                                                                              | cancelled)`, `current_step_key?`, `resume_at?`, `context JSONB`, started_at, finished_at, `error?` |
 | `automation_run_steps`          | run_id, `step_key`, `attempt`, `status (pending                                                                                                                           | succeeded | skipped                                             | failed)`, `input JSONB`, `output JSONB`, `decision?`, `error?`, `started_at`, `finished_at`, `idempotency_key UQ per (run_id, step_key, attempt)`. Partitioned monthly (`FR-AUT-7`) |
@@ -1345,6 +1344,44 @@ message search (`FR-VIEW-1`).
 
 Waiting runs are resumed by BullMQ delayed jobs _and_ a reconciliation sweep over
 `status='waiting' AND resume_at <= now()`, so a lost Redis job cannot strand a workflow.
+
+> **Amended, Phase 6 step 1 (2026-10-25) — and the amendment corrects this section rather than
+> only adding to it.** This table previously described the workflow graph **twice**: as
+> `workflow_versions.definition JSONB` _and_ as `workflow_steps` rows. That is the defect
+> `notification_preferences` already paid for — a column a feature reads has to be read by _one_
+> thing — arriving as a plan. `workflow_steps` is **not built and will not be**: the definition is
+> what a run pins to, it is versioned atomically, and a graph edited as a whole is saved as a
+> whole. Rows would be a second copy that can disagree with the JSON, and nothing queries a step
+> independently of its version.
+>
+> `workflow_triggers` survives for the opposite reason, and its columns changed: it is keyed on the
+> **workflow** (one row, `UNIQUE (organization_id, workflow_id)`) rather than on the version,
+> because a definition has exactly one trigger and two rows would be two answers. It carries
+> `trigger_type` and the registry's `event`, and deliberately **no** `is_active`: `status` and
+> `kill_switch` live on `workflows`, dispatch joins them, and a projection holding a copy of them
+> would be the same defect one layer down. Archiving or deleting a workflow deletes the row, in the
+> same transaction, because the row's presence is what an event looks at.
+>
+> `workflows.entity_type` and `workflow_versions.is_draft` are gone as well. Every trigger's
+> subject is a lead today (`WORKFLOW_TRIGGERS[].subject`), so a column with one value is a column
+> with no reader; and "is this a draft" is `published_at IS NULL`, which cannot disagree with
+> itself. `is_active` became the four-state `status`, because "a draft that has never run" and "a
+> workflow somebody deliberately paused" are different things and a boolean cannot tell them apart.
+>
+> **Hand-written objects** (all in `packages/db/src/schema-objects.int-spec.ts`): the partial
+> unique `workflows_live_name` on `(organization_id, lower(btrim(name)))
+> WHERE deleted_at IS NULL` — the partial `WHERE` is what lets a deleted workflow's name be reused,
+> as `integration_connections_live_provider` already established — plus twelve CHECKs. Two are
+> worth reading: `workflows_cooldown_matches_policy` is a `CASE` biconditional because **both**
+> directions are contradictions (a cooldown policy with no cooldown cannot be evaluated; hours on
+> any other policy are a number nothing reads), while
+> `workflow_versions_publisher_published_it` is deliberately **one-way** — a publisher implies a
+> publication, and the mirror would make a version published by the *system* (an industry
+> template's starter workflow) unrepresentable.
+>
+> `automation_enrollments`, `automation_runs`, `automation_run_steps` and
+> `automation_guardrail_counters` remain unbuilt: they are step 2's, and `tasks.automation_run_id`
+> stays absent until `automation_runs` exists.
 
 ---
 

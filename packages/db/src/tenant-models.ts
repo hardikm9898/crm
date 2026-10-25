@@ -132,6 +132,13 @@ export const TENANT_MODELS = [
   'MessageMedia',
   'ConversationNote',
   'CannedReply',
+  // Phase 6, step 1 — automation. All three are tenant-scoped: a workflow is a workspace's own
+  // process. `WorkflowTrigger` is a derived dispatch index rather than a record, and it carries
+  // `organization_id` for the same reason `WebhookAttempt` does — without it the row would be
+  // outside the registry, and the scoping extension cannot narrow what it cannot see.
+  'Workflow',
+  'WorkflowVersion',
+  'WorkflowTrigger',
 ] as const;
 
 export type TenantModel = (typeof TENANT_MODELS)[number];

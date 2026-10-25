@@ -4570,3 +4570,214 @@ describe('layer 5 — WhatsApp conversations and messages (Phase 5 step 1)', () 
     expect(theirs.media.every((row) => row.organizationId === h.orgB.organizationId)).toBe(true);
   });
 });
+
+describe('layer 6 — a workflow cannot be stitched to another tenant (FR-AUT-4, FR-AUT-5)', () => {
+  async function workflowIn(organizationId: string, userId: string) {
+    const id = newId();
+    await h.unscoped.workflow.create({
+      data: {
+        id,
+        organizationId,
+        name: `Isolation ${id.slice(-8)}`,
+        createdById: userId,
+      } as never,
+    });
+    return id;
+  }
+
+  async function versionIn(organizationId: string, workflowId: string, userId: string, version = 1) {
+    const id = newId();
+    await h.unscoped.workflowVersion.create({
+      data: {
+        id,
+        organizationId,
+        workflowId,
+        version,
+        definition: { trigger: { type: 'lead.created' }, steps: [] },
+        createdById: userId,
+      } as never,
+    });
+    return id;
+  }
+
+  it('refuses a workflow created by a member of another workspace', async () => {
+    await expect(
+      h.unscoped.workflow.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          name: `Stolen ${newId().slice(-8)}`,
+          createdById: h.orgB.userId,
+        } as never,
+      }),
+    ).rejects.toThrow(/workflows_creator_same_org_fk|foreign key/i);
+  });
+
+  it("refuses a version attached to another workspace's workflow", async () => {
+    const theirs = await workflowIn(h.orgB.organizationId, h.orgB.userId);
+    await expect(
+      h.unscoped.workflowVersion.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          workflowId: theirs,
+          version: 1,
+          definition: {},
+          createdById: h.orgA.userId,
+        } as never,
+      }),
+    ).rejects.toThrow(/workflow_versions_workflow_same_org_fk|foreign key/i);
+  });
+
+  it("refuses a workflow pointing at another workspace's version as its live one", async () => {
+    const theirWorkflow = await workflowIn(h.orgB.organizationId, h.orgB.userId);
+    const theirVersion = await versionIn(h.orgB.organizationId, theirWorkflow, h.orgB.userId);
+    const ours = await workflowIn(h.orgA.organizationId, h.orgA.userId);
+    await expect(
+      h.unscoped.workflow.update({
+        where: { id: ours },
+        data: { currentVersionId: theirVersion, status: 'active' } as never,
+      }),
+    ).rejects.toThrow(/workflows_current_version_same_org_fk|foreign key/i);
+  });
+
+  it('refuses an active workflow with nothing published', async () => {
+    const ours = await workflowIn(h.orgA.organizationId, h.orgA.userId);
+    // The CHECK, not the service: a workflow dispatch finds and cannot run is unrepresentable
+    // rather than merely refused by a code path somebody might bypass.
+    await expect(
+      h.unscoped.workflow.update({ where: { id: ours }, data: { status: 'active' } as never }),
+    ).rejects.toThrow(/workflows_active_has_a_version/i);
+  });
+
+  it('refuses a cooldown policy with no cooldown, and a cooldown on a policy that has none', async () => {
+    const ours = await workflowIn(h.orgA.organizationId, h.orgA.userId);
+    await expect(
+      h.unscoped.workflow.update({
+        where: { id: ours },
+        data: { reentryPolicy: 'cooldown' } as never,
+      }),
+    ).rejects.toThrow(/workflows_cooldown_matches_policy/i);
+    await expect(
+      h.unscoped.workflow.update({
+        where: { id: ours },
+        data: { reentryPolicy: 'always', cooldownHours: 12 } as never,
+      }),
+    ).rejects.toThrow(/workflows_cooldown_matches_policy/i);
+  });
+
+  it('refuses a publisher on a version nobody published', async () => {
+    const ours = await workflowIn(h.orgA.organizationId, h.orgA.userId);
+    const version = await versionIn(h.orgA.organizationId, ours, h.orgA.userId);
+    await expect(
+      h.unscoped.workflowVersion.update({
+        where: { id: version },
+        data: { publishedById: h.orgA.userId } as never,
+      }),
+    ).rejects.toThrow(/workflow_versions_publisher_published_it/i);
+    // And the honest asymmetry: a version published by the **system** carries no publisher, which
+    // the mirror of that constraint would have made unrepresentable.
+    await expect(
+      h.unscoped.workflowVersion.update({
+        where: { id: version },
+        data: { publishedAt: new Date() } as never,
+      }),
+    ).resolves.toBeTruthy();
+  });
+
+  it('allows a deleted workflow’s name to be used again, and refuses a live duplicate', async () => {
+    const name = `Shared name ${newId().slice(-8)}`;
+    const first = newId();
+    await h.unscoped.workflow.create({
+      data: { id: first, organizationId: h.orgA.organizationId, name, createdById: h.orgA.userId } as never,
+    });
+    await expect(
+      h.unscoped.workflow.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          // The same name in a different case: `workflows_live_name` is keyed on
+          // `lower(btrim(name))`, because a list where two rows read the same is unusable.
+          name: ` ${name.toUpperCase()} `,
+          createdById: h.orgA.userId,
+        } as never,
+      }),
+    ).rejects.toThrow(/workflows_live_name|unique/i);
+    await h.unscoped.workflow.update({ where: { id: first }, data: { deletedAt: new Date() } });
+    await expect(
+      h.unscoped.workflow.create({
+        data: { id: newId(), organizationId: h.orgA.organizationId, name, createdById: h.orgA.userId } as never,
+      }),
+    ).resolves.toBeTruthy();
+  });
+
+  it('allows the same name in two workspaces', async () => {
+    const name = `Nurture ${newId().slice(-8)}`;
+    await h.unscoped.workflow.create({
+      data: { id: newId(), organizationId: h.orgA.organizationId, name, createdById: h.orgA.userId } as never,
+    });
+    await expect(
+      h.unscoped.workflow.create({
+        data: { id: newId(), organizationId: h.orgB.organizationId, name, createdById: h.orgB.userId } as never,
+      }),
+    ).resolves.toBeTruthy();
+  });
+
+  it('keeps one dispatch row per workflow', async () => {
+    const ours = await workflowIn(h.orgA.organizationId, h.orgA.userId);
+    const version = await versionIn(h.orgA.organizationId, ours, h.orgA.userId);
+    await h.unscoped.workflowTrigger.create({
+      data: {
+        id: newId(),
+        organizationId: h.orgA.organizationId,
+        workflowId: ours,
+        versionId: version,
+        triggerType: 'lead.created',
+        event: 'lead.created',
+      } as never,
+    });
+    await expect(
+      h.unscoped.workflowTrigger.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          workflowId: ours,
+          versionId: version,
+          triggerType: 'lead.assigned',
+          event: 'lead.assigned',
+        } as never,
+      }),
+    ).rejects.toThrow(/workflow_trigger|unique/i);
+  });
+
+  it('refuses a dispatch row with an event nobody can match', async () => {
+    const ours = await workflowIn(h.orgA.organizationId, h.orgA.userId);
+    const version = await versionIn(h.orgA.organizationId, ours, h.orgA.userId);
+    await expect(
+      h.unscoped.workflowTrigger.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          workflowId: ours,
+          versionId: version,
+          triggerType: 'lead.created',
+          // An empty string sits in the index matching nothing — a NULL is the honest way to say
+          // "this trigger has no event", and the CHECK is what keeps the two from being confused.
+          event: '  ',
+        } as never,
+      }),
+    ).rejects.toThrow(/workflow_triggers_event_not_blank/i);
+  });
+
+  it('shows one workspace nothing of another’s workflows', async () => {
+    await workflowIn(h.orgA.organizationId, h.orgA.userId);
+    const theirs = await tenantContext.run(h.orgB.principal, async () => ({
+      workflows: await h.db.workflow.findMany({}),
+      versions: await h.db.workflowVersion.findMany({}),
+      triggers: await h.db.workflowTrigger.findMany({}),
+    }));
+    expect(theirs.workflows.every((row) => row.organizationId === h.orgB.organizationId)).toBe(true);
+    expect(theirs.versions.every((row) => row.organizationId === h.orgB.organizationId)).toBe(true);
+    expect(theirs.triggers.every((row) => row.organizationId === h.orgB.organizationId)).toBe(true);
+  });
+});

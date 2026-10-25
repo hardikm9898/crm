@@ -201,6 +201,9 @@ const REQUIRED_INDEXES = [
   'canned_replies_live_shortcut',
   'canned_replies_offerable',
   'messages_billable',
+  // Phase 6, step 1 — automation. The partial unique is what lets a deleted workflow's name be
+  // reused, and `lower(btrim(...))` is why Prisma cannot express it either way.
+  'workflows_live_name',
 ];
 
 /**
@@ -666,6 +669,27 @@ const REQUIRED_CONSTRAINTS = [
   'conversations_locker_same_org_fk',
   'conversation_notes_conversation_same_org_fk',
   'conversation_notes_author_same_org_fk',
+  // Phase 6, step 1 — automation: twelve CHECKs and the composite FKs, including the circular
+  // pair (a workflow points at its live version; a version points back at its workflow).
+  'workflows_status_is_known',
+  'workflows_reentry_is_known',
+  'workflows_name_not_blank',
+  'workflows_cooldown_matches_policy',
+  'workflows_max_runs_positive',
+  'workflows_active_has_a_version',
+  'workflow_versions_version_positive',
+  'workflow_versions_definition_is_an_object',
+  'workflow_versions_publisher_published_it',
+  'workflow_triggers_event_not_blank',
+  'workflow_triggers_type_not_blank',
+  'workflow_triggers_params_is_an_object',
+  'workflows_creator_same_org_fk',
+  'workflows_current_version_same_org_fk',
+  'workflow_versions_workflow_same_org_fk',
+  'workflow_versions_author_same_org_fk',
+  'workflow_versions_publisher_same_org_fk',
+  'workflow_triggers_workflow_same_org_fk',
+  'workflow_triggers_version_same_org_fk',
 ];
 
 describe('hand-written indexes survive every generated migration', () => {

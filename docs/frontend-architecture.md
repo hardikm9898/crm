@@ -1106,3 +1106,49 @@ Two settings screens and two additions to the inbox. Five decisions:
 Both settings screens read through **throwing** loaders, because "none" is information on a screen
 whose whole job is to list something; the composer's own list is swallowed, because an agent whose
 shortcut list failed to load can still type a reply and a thread that will not open is worse.
+
+### 10.18 As built — Phase 6, step 1 (an editor that knows no actions)
+
+Two screens, `/settings/automation` and `/settings/automation/{id}`, and one claim worth making
+carefully: **the editor knows no trigger and no action.** Everything on it — the trigger list, the
+actions somebody can add, and every input inside a step — is rendered from the catalogue
+`GET /automation/catalogue` serves. `workflow-editor.tsx` branches on a parameter's **type**, never
+on an action's key, so a new action's fields are drawn by code written before it existed.
+
+- **`lib/automation.ts` copies nothing.** Its siblings each hand-write a copy of a list that lives
+  in `@leados/shared` — they have to, because that package reaches `node:async_hooks` and a client
+  component importing it fails `next build` — and each pays for the copy with a reconciling spec.
+  Here the vocabulary arrives as data, so there is nothing to drift. What
+  `lib/automation.spec.ts` reconciles instead is the one thing a declaration cannot carry: how a
+  row of each reference kind reads in a picker (`REFERENCE_LABELS`), asserted against
+  `REFERENCE_KINDS` — a kind with no label function is a dropdown full of UUIDs.
+- **The proof is a test, not a sentence.** `automation.spec.ts` invents an action
+  (`send_pigeon`, with a text, a duration and a boolean), hands it to `blankStep` and
+  `coerceParam`, and asserts the form model renders and collects it. If the editor knew its
+  actions, that test could not be written — which is Phase 6's first exit criterion, checkable.
+- **The graph travels as one hidden JSON field.** A form whose fields repeat cannot echo its
+  submission through `submittedValues`: it keeps one value per name, which is how the mapping
+  editor came back from a refusal having silently dropped every row but the last. One field means a
+  refusal echoes the whole graph, and the editor holds it in React state meanwhile.
+- **A problem is printed against the row it names.** The API answers
+  `[{ field: 'definition.steps[0].params.body', … }]` and `problemsAt` puts each sentence under its
+  own input, with the summary list separately at the top. The mapping editor paid for the version
+  where only the summary reached the screen — "two fields both write to phone" is the sentence
+  somebody can act on, and "that mapping cannot be used" is not.
+- **The publish button carries the API's own refusal**, never a paraphrase: "There are details to
+  correct before this can be published" is what it says, and `ERROR_COPY` replacing such a sentence
+  with four words cost this product a dead end on every refusal in it.
+- **A step whose action the catalogue no longer describes renders a sentence**, not an empty row —
+  the timeline-registry lesson — and the one thing somebody can do with it is remove it.
+- **The list distinguishes four states, because a boolean cannot.** "Draft" has never run, "Paused"
+  ran and was stopped, "Stopped" is the kill switch (which is not the same as paused: it leaves
+  everything configured), and "Archived" is finished. Each row also says what starts it in words.
+- **Both screens read through throwing loaders.** "No workflows yet" on a workspace whose
+  automation is live would invite somebody to build a second one, which is the `loadProducts`
+  lesson. The *reference lists* are the exception and are swallowed per kind: a workspace with no
+  WhatsApp connection has no templates, and "nothing to choose from yet" is the truth.
+- **The screen says that nothing runs.** One card at the top, because a product that explains its
+  own half-built state is better than one that looks finished and does nothing.
+
+Nested branches are not editable yet: the API, the validator and the schema carry them three deep,
+and the visual builder that edits them arrives with the executor.

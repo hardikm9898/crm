@@ -428,6 +428,24 @@ describe('an inbound message', () => {
     // Inbound is `delivered` the moment we have it: it is in our hands and there is nothing
     // further to wait for.
     expect(messages[0]?.status).toBe('delivered');
+
+    // And the event, in the outbox, inside the transaction that wrote the message (rule 5). It is
+    // asserted here rather than taken on trust because a side effect with no record is a side
+    // effect nobody can count — the lesson two verification emails per registration taught — and
+    // from Phase 6 this event is what a nurture sequence branches on when somebody replies.
+    const events = await ctx.db.outboxEvent.findMany({
+      where: { organizationId: orgA.organizationId, eventName: 'whatsapp.message_received' },
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]?.aggregateType).toBe('lead');
+    // The **lead**, because a processor reads its subject from `payload.aggregateId` and the
+    // subject of this event is the person who wrote.
+    expect(events[0]?.aggregateId).toBe(conversation?.lead?.id);
+    const eventPayload = events[0]?.payload as Record<string, unknown>;
+    expect(eventPayload['conversationId']).toBe(conversation?.id);
+    expect(eventPayload['preview']).toBe('Is the 3BHK still available?');
+    // Their clock, not ours: the same instant the timeline and the window are measured from.
+    expect(eventPayload['sentAt']).toBe(new Date(Number(message.timestamp) * 1000).toISOString());
   });
 
   /**

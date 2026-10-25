@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { EVENT_SUBSCRIPTIONS, isKnownEvent, subscribersFor } from './event-subscriptions.js';
 import { JOBS, QUEUE_NAMES, QUEUES } from '../queue/queue.constants.js';
-import { WEBHOOK_EVENT_TYPES } from '@leados/shared';
+import { WEBHOOK_EVENT_TYPES, WORKFLOW_TRIGGERS } from '@leados/shared';
 
 describe('event subscriptions', () => {
   it('routes each subscribed event to a declared queue', () => {
@@ -69,6 +69,19 @@ describe('event subscriptions', () => {
       'onboarding.industry_template_applied',
     ]) {
       expect(isKnownEvent(name), name).toBe(true);
+    }
+  });
+
+  /**
+   * Phase 6, step 1. A trigger the automation editor offers with no event behind it is a workflow
+   * that can never run and looks built — the same failure `WEBHOOK_EVENT_TYPES` is checked for
+   * two cases above, one layer along. `whatsapp.message_received` was found by exactly this
+   * assertion: the registry offered "a customer replies" and nothing emitted it.
+   */
+  it('knows every event an automation trigger listens to', () => {
+    for (const trigger of WORKFLOW_TRIGGERS) {
+      if (trigger.event === null) continue;
+      expect(isKnownEvent(trigger.event), `${trigger.key} → ${trigger.event}`).toBe(true);
     }
   });
 

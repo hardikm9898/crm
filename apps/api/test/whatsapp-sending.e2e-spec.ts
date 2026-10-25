@@ -147,6 +147,11 @@ async function flushSends(): Promise<void> {
   const rows = await ctx.db.message.findMany({
     where: { organizationId: orgA.organizationId, status: 'queued', direction: 'outbound' },
     select: { id: true },
+    // Oldest first, so the message *this* test queued is the last one sent. Without the order
+    // a `findMany` returns whatever the planner hands over, and an assertion reading
+    // `sentMessages().at(-1)` can be looking at a message some earlier test left queued — which
+    // is exactly how this suite failed once in a full run and passed on its own.
+    orderBy: [{ createdAt: 'asc' }],
   });
   for (const row of rows) {
     await processor.handle(orgA.organizationId, row.id).catch(() => {
@@ -781,10 +786,14 @@ describe('templates (`FR-WA-5`)', () => {
     });
     expect(typed.statusCode).toBe(202);
     await flushSends();
-    const payload = JSON.parse(sentMessages().at(-1)?.body ?? '{}') as {
-      template: { components: { parameters: { text: string }[] }[] };
-    };
-    expect(payload.template.components[0]?.parameters[0]?.text).toBe('Pune');
+    // The request for **this** template, not merely the most recent one: `at(-1)` reads whatever
+    // was sent last, which is a different message the moment anything else is queued.
+    const payload = sentMessages()
+      .map((request) => JSON.parse(request.body) as {
+        template?: { name?: string; components?: { parameters: { text: string }[] }[] };
+      })
+      .findLast((body) => body.template?.name === `needs_city_${SUFFIX}`);
+    expect(payload?.template?.components?.[0]?.parameters[0]?.text).toBe('Pune');
   });
 
   it('shows another workspace nothing of these templates', async () => {

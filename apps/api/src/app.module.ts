@@ -17,6 +17,7 @@ import { PermissionGuard } from './infra/authz/permission.guard.js';
 import { EntitlementsModule } from './infra/entitlements/entitlements.module.js';
 import { EntitlementGuard } from './infra/entitlements/entitlement.guard.js';
 import { SubscriptionGuard } from './infra/entitlements/subscription.guard.js';
+import { AutomationModule } from './modules/automation/automation.module.js';
 import { AuthModule } from './modules/auth/auth.module.js';
 import { UsersModule } from './modules/users/users.module.js';
 import { IamModule } from './modules/iam/iam.module.js';
@@ -100,6 +101,7 @@ import { HealthModule } from './modules/health/health.module.js';
     IntegrationsModule,
     WebhooksModule,
     WhatsAppModule,
+    AutomationModule,
     SlaModule,
     TodayModule,
     OversightModule,
