@@ -1053,6 +1053,9 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       // Phase 6, step 2 — the engine
       '/automation/workflows/:id/start': `/automation/workflows/${orgA.workflowId}/start`,
       '/automation/runs/:id': `/automation/runs/${orgA.automationRunId}`,
+      // Phase 6, step 3 — the preview and the retry
+      '/automation/workflows/:id/test-run': `/automation/workflows/${orgA.workflowId}/test-run`,
+      '/automation/runs/:id/retry': `/automation/runs/${orgA.automationRunId}/retry`,
     };
 
     // An unmapped parameter would test nothing meaningful, so it is reported instead.
@@ -1492,6 +1495,10 @@ function bodyFor(
     // A lead of the **caller's own** workspace: a manual start names a lead, and the sweep's
     // cross-tenant pass has to be refused by the workflow's tenancy rather than by the lead's.
     case '/automation/workflows/:id/start':
+      return { leadId: target.leadId };
+    // The preview takes the same body for the same reason: the refusal has to come from the
+    // workflow's tenancy rather than from a lead id that is not readable either.
+    case '/automation/workflows/:id/test-run':
       return { leadId: target.leadId };
     case '/automation/workflows/:id/definition':
       return {

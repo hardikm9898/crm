@@ -864,6 +864,64 @@ prisma migrate deploy` after generating a migration.
   assertions read `body.message` and got `undefined`, because the envelope only lifts what
   `withMessage()` sets. The public lead API's family of endpoints deliberately carries its sentence
   **inside** the payload; whichever a handler does, the test has to look where that handler put it.
+- **A rate-limit fixture that spends exactly the limit races the wall clock.** The per-number send
+  limiter's window is the current second, and the test exhausted it with 101 sequential `take()`
+  calls — which fit inside one second when the file runs alone and do not in a full suite: the
+  window rolls over mid-loop, the last bucket is empty, the message is sent, and the failure reads
+  as the limiter being broken. Write the counter directly, for this second **and** the next, because
+  the second can tick between the fixture and the thing being tested.
+- **A sentence about what the product cannot do yet has to be deleted by the step that makes it
+  untrue.** The automation list screen said "Nothing runs yet — the part that carries them out
+  arrives in the next release" for a whole release after the engine shipped: a screen telling a
+  business owner their published workflow is not working, while it was. No test can catch this, and
+  nobody reads a card they wrote themselves. The step that lands the capability owns the sentence
+  that denied it.
+- **A `data-` attribute passed to a component that does not spread its props never reaches the
+  DOM.** `Badge` takes `children` and `tone`; `<Badge data-run-preview>` type-checks (JSX allows
+  hyphenated attributes), renders, and the attribute is simply gone — so a browser check asserting
+  it fails on a screen that is correct. Put the hook on a wrapper element, or make the component
+  take it.
+- **A preview that re-implements the thing it previews is two implementations.** The dry run is the
+  **same** interpreter with one branch in it: a `previewWorkflow()` beside the executor would agree
+  with it on the day it was written and not afterwards, which the import's dry run (validating with
+  a schema the write path does not use) and the ingestion test tool (echoing a number the write path
+  would transform) have each already paid for. The branch count is the measure — one on the path to
+  a handler, plus one per control shape that would otherwise reach outside the process.
+- **A preview that takes an enrolment breaks the policy it was checking.** Under the `once`
+  re-entry policy a lead has one cycle; a dry run that spent it would make the real run afterwards
+  refuse, which is the tool for checking a workflow breaking the workflow. `automation_runs`
+  therefore has a nullable `enrollment_id` paired with `dry_run` by a `CASE` biconditional — and the
+  partial index the guard reads (`automation_runs_live`) excludes previews, because an interrupted
+  inline preview leaves a `running` row that would block the lead for ever.
+- **A schema-object spec that only checks a constraint's *name* misses half a meaning.** A later
+  migration can keep `automation_runs_real_run_is_enrolled` and lose one direction of it, and
+  nothing in the application would notice because the service never writes either forbidden
+  combination. `schema-objects.int-spec.ts` now reads `pg_get_constraintdef` and the index
+  `indexdef` for the objects whose *predicate* is the guarantee, not just their presence.
+- **A boolean condition field offers `equals`, not `is_true`.** The registry declares the operators
+  per field and `validateWorkflowDefinition` refuses the rest, so a graph written with the wrong one
+  is caught by `publish` — which is the registry working. Read `CONDITION_FIELDS[].operators` rather
+  than guessing from the type.
+- **A test that needs a provider's fixtures belongs in the suite that has them.** The new-lead
+  nurture flow (`send_whatsapp_template` → `wait` → `create_task` → `branch`) needs a connected
+  WhatsApp account, an approved template, a conversation opened by a real inbound delivery and a
+  fake Graph API. Building all four in an automation suite to assert the one step that matters is
+  four fixtures to keep in step; the test lives in `whatsapp-sending.e2e-spec.ts` instead, and the
+  automation suites assert the graph. A nurture flow whose send step skipped for want of a
+  conversation would be the flow with its point removed.
+- **Applying an industry template writes a catalogue, so it needs an explicit transaction
+  timeout.** This file predicted it ("`industry-templates.service.ts` is the next one of that
+  shape") and step 3 made it true by adding the starter workflows to the same transaction:
+  `TEMPLATE_TRANSACTION` (30 s), beside provisioning's 30 s and the capture's 20 s, with the reason
+  written next to it.
+- **A template cannot carry ids, so a parameter names a row and the apply path resolves it.** The
+  statuses and task types a starter workflow points at are created in the same transaction that
+  applies the template. `{ $taskType: 'Site visit' }` and `{ $status: 'Site visit scheduled' }` are
+  the two placeholder kinds; an unresolvable one **throws** rather than installing a draft that can
+  never be published, and `packages/db/src/seeding/industry-templates.spec.ts` is what stops that
+  ever firing — it asserts every placeholder names a row the template or the common provisioning
+  seed creates, and that every starter passes the validator `publish` runs. It lives in
+  `@leados/db` because that is the only package that can see both halves of the question.
 
 ## Reporting work
 

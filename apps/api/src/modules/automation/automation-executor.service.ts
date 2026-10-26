@@ -3,6 +3,7 @@ import type { Logger } from 'pino';
 import {
   ACTIVITY_TYPES,
   MAX_STEPS_PER_RUN,
+  workflowAction,
   addBusinessMinutes,
   automationPrincipal,
   evaluateAutomationConditions,
@@ -120,9 +121,10 @@ export class AutomationExecutorService {
       organizationId: string;
       workflowId: string;
       leadId: string;
-      enrollmentId: string;
+      enrollmentId: string | null;
       stepsRun: number;
       context: unknown;
+      dryRun: boolean;
     },
     step: WorkflowStep,
   ): Promise<{ status: string }> {
@@ -166,21 +168,23 @@ export class AutomationExecutorService {
       const outcome = evaluateAutomationConditions(step.conditions, facts);
       const arm = outcome.passed ? 'then' : 'otherwise';
       await record({ status: 'succeeded', decision: arm, reason: outcome.reason });
-      await this.timeline.record({
-        type: ACTIVITY_TYPES.AUTOMATION_ACTION_EXECUTED,
-        leadId: run.leadId,
-        occurredAt: startedAt,
-        payload: {
-          runId: run.id,
-          workflowId: run.workflowId,
-          action: 'branch',
-          decision: arm,
-          reason: outcome.reason,
-          summary: outcome.passed ? 'the condition matched' : 'the condition did not match',
-        },
-        visibility: 'internal',
-        actorType: 'automation',
-      });
+      if (!run.dryRun) {
+        await this.timeline.record({
+          type: ACTIVITY_TYPES.AUTOMATION_ACTION_EXECUTED,
+          leadId: run.leadId,
+          occurredAt: startedAt,
+          payload: {
+            runId: run.id,
+            workflowId: run.workflowId,
+            action: 'branch',
+            decision: arm,
+            reason: outcome.reason,
+            summary: outcome.passed ? 'the condition matched' : 'the condition did not match',
+          },
+          visibility: 'internal',
+          actorType: 'automation',
+        });
+      }
       return this.continueAfter(run, step.id);
     }
 
@@ -194,14 +198,16 @@ export class AutomationExecutorService {
         where: { id: run.id },
         data: { currentStepId: step.id, stepsRun: { increment: 1 } },
       });
-      await this.timeline.record({
-        type: ACTIVITY_TYPES.AUTOMATION_EXITED,
-        leadId: run.leadId,
-        occurredAt: startedAt,
-        payload: { runId: run.id, workflowId: run.workflowId, reason },
-        visibility: 'internal',
-        actorType: 'automation',
-      });
+      if (!run.dryRun) {
+        await this.timeline.record({
+          type: ACTIVITY_TYPES.AUTOMATION_EXITED,
+          leadId: run.leadId,
+          occurredAt: startedAt,
+          payload: { runId: run.id, workflowId: run.workflowId, reason },
+          visibility: 'internal',
+          actorType: 'automation',
+        });
+      }
       return this.finish(run.id, run.enrollmentId, 'completed', null, reason);
     }
 
@@ -214,6 +220,11 @@ export class AutomationExecutorService {
         output: { resumeAt: resumeAt.toISOString(), workingHoursOnly },
         reason: workingHoursOnly ? 'counted in working hours' : 'counted on the clock',
       });
+
+      // A **preview** records the instant it would have waited until and carries straight on: the
+      // whole point is to see the rest of the graph, and a dry run that suspended for two days
+      // would answer nothing anybody asked.
+      if (run.dryRun) return this.continueAfter(run, step.id);
       await this.db.client.automationRun.update({
         where: { id: run.id },
         data: {
@@ -247,6 +258,14 @@ export class AutomationExecutorService {
         await record({ status: 'skipped', reason: 'no workflow was chosen' });
         return this.continueAfter(run, step.id);
       }
+      if (run.dryRun) {
+        await record({
+          status: 'succeeded',
+          output: { wouldRun: 'enroll', workflowId },
+          reason: 'would hand the lead to the other workflow’s own guards',
+        });
+        return this.continueAfter(run, step.id);
+      }
       await record({
         status: 'succeeded',
         output: { workflowId },
@@ -270,6 +289,21 @@ export class AutomationExecutorService {
     }
 
     // ── A handler ────────────────────────────────────────────────────────────
+
+    // A preview takes no action, so it neither spends the daily cap nor calls a handler. This is
+    // the **one** branch in the interpreter: everything above — the conditions, the branch
+    // decisions, the wait arithmetic, the step log, the ordering — is the same code the real run
+    // uses, which is what keeps a dry run an honest answer rather than a second implementation
+    // that drifts (ADR-0042 said two paths through this subsystem is how one of them does).
+    if (run.dryRun) {
+      const spec = workflowAction(step.action);
+      await record({
+        status: 'succeeded',
+        output: { wouldRun: step.action, params: step.params ?? {} },
+        reason: `would ${(spec?.label ?? step.action).toLowerCase()}`,
+      });
+      return this.continueAfter(run, step.id);
+    }
 
     const cap = await this.guardrails.capFor(run.organizationId);
     const counted = await this.guardrails.countAction({
@@ -333,7 +367,7 @@ export class AutomationExecutorService {
   // ── Moving on ──────────────────────────────────────────────────────────────
 
   private async continueAfter(
-    run: { id: string; organizationId: string; enrollmentId: string },
+    run: { id: string; organizationId: string; enrollmentId: string | null; dryRun?: boolean },
     stepId: string,
     output: Record<string, unknown> = {},
   ): Promise<{ status: string }> {
@@ -352,14 +386,19 @@ export class AutomationExecutorService {
       select: { id: true },
     });
 
-    await this.queues.enqueue(
-      QUEUES.AUTOMATION,
-      JOBS.AUTOMATION_STEP,
-      { organizationId: run.organizationId, aggregateId: updated.id },
-      // The step id is in the job id, so "the next step after this one" is enqueued once however
-      // many times this job is delivered — BullMQ refuses a duplicate custom id.
-      { jobId: `automation-step-${run.id}-after-${stepId}` },
-    );
+    // A **preview** is driven inline by the endpoint that asked for it, in one request, so it
+    // enqueues nothing: a dry run whose next step arrived as a job would answer the caller before
+    // it had finished, and the screen would show half a graph.
+    if (run.dryRun !== true) {
+      await this.queues.enqueue(
+        QUEUES.AUTOMATION,
+        JOBS.AUTOMATION_STEP,
+        { organizationId: run.organizationId, aggregateId: updated.id },
+        // The step id is in the job id, so "the next step after this one" is enqueued once however
+        // many times this job is delivered — BullMQ refuses a duplicate custom id.
+        { jobId: `automation-step-${run.id}-after-${stepId}` },
+      );
+    }
     return { status: 'running' };
   }
 
@@ -382,7 +421,7 @@ export class AutomationExecutorService {
 
   private async finish(
     runId: string,
-    enrollmentId: string,
+    enrollmentId: string | null,
     status: 'completed' | 'failed',
     error: string | null,
     reason: string | null = null,
@@ -394,14 +433,18 @@ export class AutomationExecutorService {
       // the record of when it was due, which is why the CHECK is one-way.
       data: { status, finishedAt, error, currentStepId: undefined },
     });
-    await this.db.client.automationEnrollment.update({
-      where: { id: enrollmentId },
-      data: {
-        status: status === 'failed' ? 'failed' : 'completed',
-        completedAt: finishedAt,
-        ...(reason === null ? {} : { exitReason: reason }),
-      },
-    });
+    // A dry run has no enrolment, which is what "executes nothing" has to mean — a preview that
+    // spent the lead's one allowed cycle would be refused by the thing it was checking.
+    if (enrollmentId !== null) {
+      await this.db.client.automationEnrollment.update({
+        where: { id: enrollmentId },
+        data: {
+          status: status === 'failed' ? 'failed' : 'completed',
+          completedAt: finishedAt,
+          ...(reason === null ? {} : { exitReason: reason }),
+        },
+      });
+    }
     return { status };
   }
 
@@ -465,10 +508,14 @@ export class AutomationExecutorService {
   }
 
   private async writeTimeline(
-    run: { id: string; workflowId: string; leadId: string },
+    run: { id: string; workflowId: string; leadId: string; dryRun?: boolean },
     step: WorkflowStep,
     outcome: { status: 'succeeded' | 'skipped' | 'failed'; reason: string },
   ): Promise<void> {
+    // A preview puts nothing on the lead's timeline. The timeline is the record of what happened
+    // to this customer, and a row saying a workflow acted when it did not would be the one lie
+    // that makes the rest of it unusable. The run log is where a preview is read.
+    if (run.dryRun === true) return;
     const type =
       outcome.status === 'succeeded'
         ? ACTIVITY_TYPES.AUTOMATION_ACTION_EXECUTED

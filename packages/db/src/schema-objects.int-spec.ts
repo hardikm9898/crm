@@ -720,6 +720,9 @@ const REQUIRED_CONSTRAINTS = [
   'automation_runs_enrollment_same_org_fk',
   'automation_runs_lead_same_org_fk',
   'automation_run_steps_run_same_org_fk',
+  // Phase 6, step 3 — the dry run. A preview that enrolled somebody would spend the lead's one
+  // allowed cycle, so the pairing is a CHECK rather than a convention.
+  'automation_runs_real_run_is_enrolled',
 ];
 
 describe('hand-written indexes survive every generated migration', () => {
@@ -910,5 +913,43 @@ describe('the objects Prisma cannot describe at all', () => {
       WHERE tgrelid = 'audit_logs'::regclass AND NOT tgisinternal
     `;
     expect(Number(rows[0]?.count ?? 0)).toBeGreaterThan(0);
+  });
+
+  /**
+   * The dry run's pairing, asserted as a **predicate** rather than as a name.
+   *
+   * A biconditional CHECK is right exactly when both directions are contradictions, and this file
+   * has paid for the other case twice: the two payments constraints that together made a refund
+   * impossible, and `webhook_deliveries_pending_is_untried`'s mirror. Reading the installed
+   * definition is what catches a later migration that keeps the constraint's name and loses half
+   * of its meaning — which no existence check can see, and which nothing in the application would
+   * notice, because the service never writes either forbidden combination.
+   */
+  it('pairs a dry run with no enrolment, in both directions', async () => {
+    const rows = await h.unscoped.$queryRaw<{ definition: string }[]>`
+      SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint
+      WHERE conname = 'automation_runs_real_run_is_enrolled'
+    `;
+    const definition = rows[0]?.definition ?? '';
+    // A preview must not be enrolled…
+    expect(definition).toMatch(/dry_run/);
+    expect(definition).toMatch(/enrollment_id IS NULL/);
+    // …and a real run must be. A one-way version would read just as sensibly and let a run sit
+    // outside the re-entry policy for ever.
+    expect(definition).toMatch(/enrollment_id IS NOT NULL/);
+    // A `CASE`, not an `=` between two IS NULL tests: every sub-expression of a CHECK has to be
+    // non-NULL for the check to bite.
+    expect(definition).toMatch(/CASE/);
+  });
+
+  it('keeps the live-run index blind to previews', async () => {
+    const rows = await h.unscoped.$queryRaw<{ definition: string }[]>`
+      SELECT indexdef AS definition FROM pg_indexes WHERE indexname = 'automation_runs_live'
+    `;
+    // The guardrail reads this index to answer "is this lead already in this workflow". A
+    // predicate that included a preview would make the tool for checking a workflow the thing
+    // that stops it running — and an index whose predicate is wrong is worse than none, because
+    // the planner uses it.
+    expect(rows[0]?.definition ?? '').toMatch(/dry_run = false/);
   });
 });

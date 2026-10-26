@@ -4,8 +4,15 @@ import { useActionState, useState } from 'react';
 import Link from 'next/link';
 import { Button, ErrorNotice, Field, controlClassName } from '@/components/ui';
 import { IDLE } from '@/lib/action-state';
-import type { WorkflowSummary } from '@/lib/automation';
-import { createWorkflow, deleteWorkflow, publishWorkflow, updateWorkflow } from '../actions';
+import type { ParamOption, WorkflowSummary } from '@/lib/automation';
+import {
+  createWorkflow,
+  deleteWorkflow,
+  publishWorkflow,
+  retryRun,
+  testWorkflow,
+  updateWorkflow,
+} from '../actions';
 
 /** A workflow starts as a name and nothing else; the graph is the next screen. */
 export function NewWorkflowForm() {
@@ -205,6 +212,116 @@ export function GuardrailsForm({ workflow }: { workflow: WorkflowSummary }) {
       {state.status === 'error' && <ErrorNotice>{state.message}</ErrorNotice>}
       {state.status === 'success' && (
         <span className="text-xs text-[var(--color-success)]" data-guardrails-result>
+          {state.message}
+        </span>
+      )}
+    </form>
+  );
+}
+
+/**
+ * The dry run (`FR-AUT-6`): pick a lead, see what this would do, send nothing.
+ *
+ * The lead picker is held in state rather than left uncontrolled, because the **button's own
+ * sentence** depends on it — "Test it on Asha Rao" is the confirmation that somebody is about to
+ * preview against the lead they meant, which "Test it" is not. That is the `GuardrailsForm` rule
+ * rather than the payment-method one: a select the rest of the form reads has to be reactive.
+ */
+export function TestRunForm({
+  workflowId,
+  leads,
+}: {
+  workflowId: string;
+  leads: readonly ParamOption[];
+}) {
+  const [state, submit, pending] = useActionState(testWorkflow, IDLE);
+  const echoed = state.status === 'error' ? state.values?.['leadId'] : undefined;
+  const first = leads[0]?.value ?? '';
+  const [leadId, setLeadId] = useState(echoed ?? first);
+  const [seen, setSeen] = useState(echoed ?? first);
+  if (seen !== (echoed ?? first)) {
+    setSeen(echoed ?? first);
+    setLeadId(echoed ?? first);
+  }
+
+  if (leads.length === 0) {
+    return (
+      <p className="text-sm text-[var(--color-text-muted)]" data-test-run-empty>
+        There are no leads to test against yet. Add one, and this will preview what the workflow
+        would do to them without sending anything.
+      </p>
+    );
+  }
+
+  const chosen = leads.find((lead) => lead.value === leadId);
+  return (
+    <form action={submit} className="flex flex-wrap items-end gap-3" data-test-run={workflowId}>
+      <input type="hidden" name="workflowId" value={workflowId} />
+      <Field label="Which lead?" hint="Nothing is sent, and this lead is not enrolled.">
+        <select
+          name="leadId"
+          key={`test-lead-${seen}`}
+          defaultValue={seen}
+          onChange={(event) => setLeadId(event.target.value)}
+          className={controlClassName}
+          data-test-run-lead
+        >
+          {leads.map((lead) => (
+            <option key={lead.value} value={lead.value}>
+              {lead.label}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <Button type="submit" variant="secondary" pending={pending}>
+        {pending ? 'Testing…' : `Test it on ${chosen?.label ?? 'this lead'}`}
+      </Button>
+      {/* The API's own refusal, which on this button is usually the problem list: a definition
+          with a step nobody finished cannot be previewed any more than it can be published. */}
+      {state.status === 'error' && <ErrorNotice>{state.message}</ErrorNotice>}
+      {state.status === 'success' && (
+        <span className="text-xs text-[var(--color-success)]" data-test-run-result>
+          {state.message}
+        </span>
+      )}
+    </form>
+  );
+}
+
+/**
+ * Trying a failed run again, from the step that failed (`FR-AUT-7`).
+ *
+ * Rendered only against a failed run, and it says which step rather than "Retry": somebody
+ * pressing this is about to make the thing that failed happen for real, and the steps before it
+ * are deliberately not repeated.
+ */
+export function RetryRunButton({
+  runId,
+  workflowId,
+  leadId,
+}: {
+  runId: string;
+  workflowId: string;
+  leadId?: string;
+}) {
+  const [state, submit, pending] = useActionState(retryRun, IDLE);
+  return (
+    <form action={submit} className="flex flex-col gap-1" data-retry-run={runId}>
+      <input type="hidden" name="runId" value={runId} />
+      <input type="hidden" name="workflowId" value={workflowId} />
+      {leadId !== undefined && <input type="hidden" name="leadId" value={leadId} />}
+      <div>
+        <Button type="submit" variant="secondary" pending={pending}>
+          {pending ? 'Trying again…' : 'Try the failed step again'}
+        </Button>
+      </div>
+      {state.status === 'error' && (
+        <span className="text-xs text-[var(--color-danger)]" data-retry-error>
+          {state.message}
+        </span>
+      )}
+      {state.status === 'success' && (
+        <span className="text-xs text-[var(--color-success)]" data-retry-result>
           {state.message}
         </span>
       )}

@@ -5145,14 +5145,24 @@ model AutomationEnrollment {
 }
 
 model AutomationRun {
-  id             String @id @db.Uuid
-  organizationId String @map("organization_id") @db.Uuid
-  workflowId     String @map("workflow_id") @db.Uuid
+  id             String  @id @db.Uuid
+  organizationId String  @map("organization_id") @db.Uuid
+  workflowId     String  @map("workflow_id") @db.Uuid
   /// The version this run is **pinned** to, and the row it reads its graph from. Editing the
   /// workflow writes a new version and cannot reach in here (`FR-AUT-5`).
-  versionId      String @map("version_id") @db.Uuid
-  enrollmentId   String @map("enrollment_id") @db.Uuid
-  leadId         String @map("lead_id") @db.Uuid
+  versionId      String  @map("version_id") @db.Uuid
+  /**
+   * Null for a **dry run**, which enrols nobody — that is what "executes nothing" has to mean.
+   * A preview that wrote an enrolment would spend the lead's one allowed cycle under the `once`
+   * policy, so the real run afterwards would be refused by the very thing the preview was
+   * checking. A CHECK pairs the two columns, because a real run with no enrolment is a run outside
+   * the policy and a dry run with one has corrupted it.
+   */
+  enrollmentId   String? @map("enrollment_id") @db.Uuid
+  leadId         String  @map("lead_id") @db.Uuid
+
+  /// A preview: every decision recorded, no handler called (`FR-AUT-6`).
+  dryRun Boolean @default(false) @map("dry_run")
 
   /// The outbox event that started it. The partial unique on it is the whole of "a retried
   /// delivery produces one automation run": the dispatcher is at-least-once by design.
@@ -5180,11 +5190,11 @@ model AutomationRun {
 
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  workflow     Workflow             @relation("workflow_runs", fields: [organizationId, workflowId], references: [organizationId, id], onDelete: Cascade, map: "automation_runs_workflow_same_org_fk")
-  version      WorkflowVersion      @relation("workflow_version_runs", fields: [organizationId, versionId], references: [organizationId, id], onDelete: Restrict, map: "automation_runs_version_same_org_fk")
-  enrollment   AutomationEnrollment @relation("enrollment_runs", fields: [organizationId, enrollmentId], references: [organizationId, id], onDelete: Cascade, map: "automation_runs_enrollment_same_org_fk")
-  lead         Lead                 @relation("lead_automation_runs", fields: [organizationId, leadId], references: [organizationId, id], onDelete: Cascade, map: "automation_runs_lead_same_org_fk")
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  workflow     Workflow              @relation("workflow_runs", fields: [organizationId, workflowId], references: [organizationId, id], onDelete: Cascade, map: "automation_runs_workflow_same_org_fk")
+  version      WorkflowVersion       @relation("workflow_version_runs", fields: [organizationId, versionId], references: [organizationId, id], onDelete: Restrict, map: "automation_runs_version_same_org_fk")
+  enrollment   AutomationEnrollment? @relation("enrollment_runs", fields: [organizationId, enrollmentId], references: [organizationId, id], onDelete: Cascade, map: "automation_runs_enrollment_same_org_fk")
+  lead         Lead                  @relation("lead_automation_runs", fields: [organizationId, leadId], references: [organizationId, id], onDelete: Cascade, map: "automation_runs_lead_same_org_fk")
 
   steps AutomationRunStep[] @relation("run_steps")
 

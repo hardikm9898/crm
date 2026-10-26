@@ -100,8 +100,41 @@ ADR-0041 has both halves of that reasoning.
   over-count an action that then failed, which is the safe direction for a safety limit; an absent
   setting is a default and never "unlimited".
 
+## The preview and the retry (step 3)
+
+- **A preview is a run, not a second implementation.** `POST /automation/workflows/:id/test-run`
+  creates an `automation_runs` row with `dry_run = true` and drives it **inline** through
+  `AutomationExecutorService.advance` until it stops. Everything above the handler call is the same
+  code — the entry conditions, the branch arms, the wait arithmetic, the step log, the ordering —
+  and there is exactly **one** `if (run.dryRun)` on the path to a handler. Three more sit where a
+  *control shape* would otherwise reach outside: the wait continues instead of suspending (a
+  preview that slept for two days answers nothing anybody asked), `enroll` records what it would
+  hand over, and no timeline row is written.
+- **It is enrolled in nothing, and that is a CHECK.** `automation_runs_real_run_is_enrolled` pairs
+  `dry_run` with `enrollment_id` in both directions. A preview that took an enrolment would spend
+  the lead's one allowed cycle under the `once` policy, so the real run afterwards would be refused
+  by the thing the preview was checking.
+- **It is not the live run.** The `automation_runs_live` predicate excludes it. The endpoint cannot
+  leave a preview running, but an interrupted request can, and that row would otherwise block the
+  real event for ever.
+- **It previews the draft** — the unsaved version when there is one, the published one otherwise.
+  A preview that only worked on a published workflow would check something already live.
+- **200 and inline**, where `POST :id/start` is 202 and queued: a preview calls no provider.
+- **The retry reopens the run it failed in.** `current_step_id` points at the last step that
+  *succeeded* — `finish` leaves it alone — so `nextStep` returns the failed one and nothing before
+  it runs again. The new attempt writes a **new** step row rather than overwriting the failure, and
+  `attempt` is what makes the handler's idempotency key different this time. The kill switch and
+  the status are re-asked; the re-entry policy is not, because the lead is already enrolled. A
+  preview cannot be retried — it is tested again.
+- **A starter workflow is a draft.** `applyIndustryTemplate` writes the industry's workflows with
+  their `{ $taskType }` / `{ $status }` placeholders resolved against the rows the same transaction
+  created, and publishes none of them: a template is a guess about a business, and a workflow
+  messaging somebody's customers before they had read it is not a feature.
+
 ## What is not here
 
-No **dry run** and no **retry from the failed step**. `automation_run_steps.attempt` exists for the
-second, and both are named in the roadmap rather than implied. `tasks.automation_run_id` is still
-absent: a workflow-created follow-up is attributed through its step's `output.taskId`.
+`tasks.automation_run_id` is still absent: a workflow-created follow-up is attributed through its
+step's `output.taskId`. Per-org **concurrency** is the queue's (`concurrency: 5`) rather than a
+per-workspace limiter, and a platform-wide emergency stop is Phase 10's. A preview runs against
+**one** lead: there is no "what would this do to my whole database" report, which would be a
+different feature with a different cost.

@@ -1412,6 +1412,41 @@ Waiting runs are resumed by BullMQ delayed jobs _and_ a reconciliation sweep ove
 > the run's step log (`output.taskId`) rather than by a column on `tasks`, and adding one is a
 > migration this step did not need. Said here rather than left to be discovered.
 
+> **Amended a third time, Phase 6 step 3 (2026-10-26) — the dry run.**
+>
+> `automation_runs` gained **`dry_run boolean NOT NULL DEFAULT false`**, and `enrollment_id` became
+> **nullable**. A preview (`FR-AUT-6`) is a real run of the real interpreter that calls no handler,
+> and it is enrolled in nothing: an enrolment would spend the lead's one allowed cycle under the
+> `once` policy, so the real run afterwards would be refused by the very thing the preview was
+> checking.
+>
+> Two hand-written objects carry that, and both are in
+> `packages/db/src/schema-objects.int-spec.ts` — which now reads their **predicates** as well as
+> their names, because a later migration that keeps a constraint's name and loses half of its
+> meaning is invisible to an existence check:
+>
+> - **`automation_runs_real_run_is_enrolled`**, a `CASE` biconditional:
+>   `CASE WHEN dry_run THEN enrollment_id IS NULL ELSE enrollment_id IS NOT NULL END`. Both mirrors
+>   are contradictions — a preview that enrolled somebody has corrupted the policy, and a real run
+>   with no enrolment sits outside it — which is the test this file applies to a biconditional after
+>   the two payments CHECKs that together made a refund impossible. A `CASE` rather than an `=`
+>   between two IS NULL tests, because every sub-expression of a CHECK has to be non-NULL to bite.
+> - **`automation_runs_live`** was dropped and recreated with
+>   `WHERE status IN ('running','waiting') AND dry_run = false`. It is the index the re-entry guard
+>   reads. The endpoint cannot leave a preview running — it is driven inline to completion — but an
+>   interrupted request can, and without the predicate that row would answer "this lead is already
+>   in this workflow" for ever.
+>
+> Nothing else changed. `automation_run_steps.attempt` was already there for the retry, which needs
+> no column of its own: `current_step_id` points at the last step that *succeeded*, so the graph
+> itself says where to resume.
+>
+> **§17's "starter automations wait for Phase 6" is now done, as data rather than as a table.** An
+> industry template's starter workflows are ordinary `workflows` and `workflow_versions` rows,
+> written by `applyIndustryTemplate` as **drafts** (`current_version_id IS NULL`), with their
+> `$taskType` / `$status` placeholders resolved against the rows the same transaction just created.
+> No column marks a row as a template's, exactly as nothing marks a template's statuses.
+
 ---
 
 ## 10. Websites & analytics

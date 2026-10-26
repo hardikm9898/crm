@@ -550,6 +550,7 @@ export default async function LeadDetailPage({
                 runs={runs.items}
                 catalogue={automationCatalogue}
                 emptyTitle="No workflow has run on this lead"
+                leadId={lead.id}
               />
             </Card>
           )}

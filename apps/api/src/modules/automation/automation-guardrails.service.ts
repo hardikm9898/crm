@@ -96,6 +96,10 @@ export class AutomationGuardrailsService {
           workflowId: input.workflowId,
           leadId: input.leadId,
           status: { in: ['running', 'waiting'] },
+          // A **preview** is not a live run (`FR-AUT-6`). A dry run left behind by somebody
+          // pressing "Test it" would otherwise answer "this lead is already in this workflow" and
+          // refuse the real event — the tool for checking a workflow breaking the workflow.
+          dryRun: false,
         },
         select: { id: true },
       }),

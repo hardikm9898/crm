@@ -66,6 +66,14 @@ export const listRunsSchema = z.object({
   leadId: z.string().uuid().optional(),
   workflowId: z.string().uuid().optional(),
   status: z.enum(['running', 'waiting', 'completed', 'failed', 'cancelled']).optional(),
+  /**
+   * Three-way, like `killSwitch` above and for the same reason: absent means "both". Folding it to
+   * `false` would hide every preview from the run log, which is where a preview is *read*.
+   */
+  dryRun: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((value) => (value === undefined ? undefined : value === 'true')),
   limit: z.coerce.number().int().min(1).max(100).default(25),
   cursor: z.string().max(200).optional(),
 });
@@ -73,3 +81,7 @@ export type ListRunsQuery = z.infer<typeof listRunsSchema>;
 
 export const startWorkflowSchema = z.object({ leadId: z.string().uuid() });
 export type StartWorkflowInput = z.infer<typeof startWorkflowSchema>;
+
+/** The dry run takes the same body as a real start: one lead, named. */
+export const testRunSchema = z.object({ leadId: z.string().uuid() });
+export type TestRunInput = z.infer<typeof testRunSchema>;

@@ -1,8 +1,10 @@
 import {
   INDUSTRY_TEMPLATES,
   findIndustryTemplate,
+  isTemplateReference,
   newId,
   type IndustryTemplate,
+  type TemplateWorkflow,
 } from '@leados/shared';
 import type { DbTransactionClient, UnscopedDbClient } from '../client.js';
 
@@ -48,6 +50,7 @@ export interface AppliedTemplate {
   readonly tags: number;
   readonly fields: number;
   readonly views: number;
+  readonly workflows: number;
 }
 
 /**
@@ -74,6 +77,12 @@ export async function applyIndustryTemplate(
   tx: DbTransactionClient,
   organizationId: string,
   key: string,
+  /**
+   * Who the starter workflows are created by. `workflows.created_by_id` carries a composite FK into
+   * `Membership`, so a workflow created by nobody is unrepresentable — which is right: somebody
+   * applied the template, and the automation list says who.
+   */
+  actorId: string,
 ): Promise<AppliedTemplate> {
   const template = findIndustryTemplate(key);
   if (!template) throw new Error(`No industry template with key ${key}`);
@@ -85,6 +94,7 @@ export async function applyIndustryTemplate(
   await replaceTags(tx, organizationId, template);
   await replaceCustomFields(tx, organizationId, template);
   const views = await replaceSavedViews(tx, organizationId, template);
+  const workflows = await replaceWorkflows(tx, organizationId, template, actorId);
 
   await tx.organization.update({
     where: { id: organizationId },
@@ -101,6 +111,7 @@ export async function applyIndustryTemplate(
     tags: template.tags.length,
     fields: template.fields.length,
     views,
+    workflows,
   };
 }
 
@@ -344,4 +355,125 @@ async function replaceSavedViews(
     order += 1;
   }
   return template.views.length;
+}
+
+/**
+ * The starter workflows (`FR-AUT-3`), installed as **drafts**.
+ *
+ * Three decisions, each of which the alternative makes worse:
+ *
+ *  * **A draft, not published.** Publishing a workflow into somebody's workspace during onboarding
+ *    would start it creating follow-ups on their customers before they had read what it does. A
+ *    template is a guess about a business; the whole point is that somebody opens it, changes two
+ *    things and then turns it on.
+ *  * **The references are resolved here**, because this is the only place that knows the ids: the
+ *    statuses this workflow names were created by `replaceStatuses` in this same transaction, and
+ *    a template written with ids in it could not be written at all.
+ *  * **An unresolvable reference throws.** It aborts the apply rather than installing a workflow
+ *    that can never be published, and `industry-templates.spec.ts` asserts every placeholder in
+ *    every template names a row the template or the common provisioning seed creates — so this
+ *    can only fire if somebody deleted the row between provisioning and onboarding.
+ *
+ * Replacing rather than merging, like everything else here: a workspace switching industry gets
+ * the new industry's starters, and the ones it is replacing have never run (they were drafts).
+ */
+async function replaceWorkflows(
+  tx: DbTransactionClient,
+  organizationId: string,
+  template: IndustryTemplate,
+  actorId: string,
+): Promise<number> {
+  const starters = template.workflows ?? [];
+  // Only the drafts this ever created: a workflow somebody published is theirs, and a template
+  // change must not reach in and delete it. `current_version_id IS NULL` is exactly "never
+  // published", and it is the condition rather than a flag because no row here is marked as the
+  // template's (the same rule the rest of this file follows).
+  await tx.workflow.deleteMany({ where: { organizationId, currentVersionId: null } });
+  if (starters.length === 0) return 0;
+
+  for (const starter of starters) {
+    const workflowId = newId();
+    await tx.workflow.create({
+      data: {
+        id: workflowId,
+        organizationId,
+        name: starter.name,
+        description: starter.description,
+        status: 'draft',
+        createdById: actorId,
+      },
+    });
+    await tx.workflowVersion.create({
+      data: {
+        id: newId(),
+        organizationId,
+        workflowId,
+        version: 1,
+        definition: (await resolveWorkflowDefinition(tx, organizationId, starter)) as never,
+        createdById: actorId,
+      },
+    });
+  }
+  return starters.length;
+}
+
+/** The definition with every `{ $taskType }` / `{ $status }` replaced by this workspace's own id. */
+async function resolveWorkflowDefinition(
+  tx: DbTransactionClient,
+  organizationId: string,
+  starter: TemplateWorkflow,
+): Promise<Record<string, unknown>> {
+  const steps = [];
+  for (const step of starter.steps) {
+    steps.push({
+      id: step.id,
+      action: step.action,
+      params: await resolveParams(tx, organizationId, step.params),
+    });
+  }
+  return {
+    trigger: {
+      type: starter.trigger,
+      params: await resolveParams(tx, organizationId, starter.triggerParams),
+    },
+    // No entry conditions: `conditions` is optional and an **empty** group is a validation
+    // problem, not an empty set. A starter workflow that applies to every new lead is also the
+    // honest default — a condition a template guessed is one somebody has to find and remove.
+    steps,
+  };
+}
+
+async function resolveParams(
+  tx: DbTransactionClient,
+  organizationId: string,
+  params: Readonly<Record<string, unknown>> | undefined,
+): Promise<Record<string, unknown>> {
+  const resolved: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(params ?? {})) {
+    resolved[key] = isTemplateReference(value)
+      ? await resolveTemplateReference(tx, organizationId, value)
+      : value;
+  }
+  return resolved;
+}
+
+async function resolveTemplateReference(
+  tx: DbTransactionClient,
+  organizationId: string,
+  reference: { readonly $taskType?: string; readonly $status?: string },
+): Promise<string> {
+  if (reference.$taskType !== undefined) {
+    const row = await tx.taskType.findFirst({
+      where: { organizationId, name: reference.$taskType },
+      select: { id: true },
+    });
+    if (!row) throw new Error(`This workspace has no task type called ${reference.$taskType}`);
+    return row.id;
+  }
+  const row = await tx.leadStatus.findFirst({
+    where: { organizationId, name: reference.$status },
+    select: { id: true },
+  });
+  if (!row) throw new Error(`This workspace has no status called ${reference.$status}`);
+  return row.id;
 }

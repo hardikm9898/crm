@@ -473,6 +473,33 @@ export const WORKFLOW_ACTIONS: readonly ActionSpec[] = [
     params: [{ key: 'tag', label: 'Tag', type: 'text', required: true, max: 40 }],
   },
   {
+    /**
+     * Added in Phase 6 step 3 to **prove** the first exit criterion rather than assert it: one
+     * entry here, one method in `AutomationHandlersService`, and no change to the editor, the
+     * validator, the engine or anything in `apps/web`. The boot check reconciles the pair, and
+     * `automation.spec.ts` asserts the editor renders an action it has never seen.
+     */
+    key: 'change_priority',
+    label: 'Change the priority',
+    group: 'record',
+    hint: 'Moves it up or down the list everybody works from.',
+    control: false,
+    params: [
+      {
+        key: 'priority',
+        label: 'To',
+        type: 'select',
+        required: true,
+        options: [
+          { value: 'low', label: 'Low' },
+          { value: 'medium', label: 'Medium' },
+          { value: 'high', label: 'High' },
+          { value: 'urgent', label: 'Urgent' },
+        ],
+      },
+    ],
+  },
+  {
     key: 'add_note',
     label: 'Add a note',
     group: 'record',

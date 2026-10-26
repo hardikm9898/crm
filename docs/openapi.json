@@ -3059,6 +3059,18 @@
             }
           },
           {
+            "name": "dryRun",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            }
+          },
+          {
             "name": "limit",
             "in": "query",
             "required": false,
@@ -3159,6 +3171,70 @@
           },
           "404": {
             "$ref": "#/components/responses/Error404"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          }
+        },
+        "x-leados-permission": "automation:manage",
+        "security": [
+          {
+            "sessionToken": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      }
+    },
+    "/api/v1/automation/runs/{id}/retry": {
+      "post": {
+        "operationId": "Automation_retryRun",
+        "tags": [
+          "Automation"
+        ],
+        "summary": "Retry run",
+        "description": "Needs the `automation:manage` permission.\n\n```bash\ncurl -X POST \"http://localhost:4000/api/v1/automation/runs/{id}/retry\" \\\n  -H \"Authorization: Bearer $LEADOS_KEY_ID.$LEADOS_SECRET\"\n```",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The resource’s id. A malformed id answers 404, exactly as another workspace’s id does."
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "The envelope, with this endpoint’s payload in `data`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
           },
           "429": {
             "$ref": "#/components/responses/Error429"
@@ -3851,6 +3927,91 @@
         },
         "responses": {
           "202": {
+            "description": "The envelope, with this endpoint’s payload in `data`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          }
+        },
+        "x-leados-permission": "automation:manage",
+        "security": [
+          {
+            "sessionToken": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      }
+    },
+    "/api/v1/automation/workflows/{id}/test-run": {
+      "post": {
+        "operationId": "Automation_testRun",
+        "tags": [
+          "Automation"
+        ],
+        "summary": "Test run",
+        "description": "Needs the `automation:manage` permission.\n\n```bash\ncurl -X POST \"http://localhost:4000/api/v1/automation/workflows/{id}/test-run\" \\\n  -H \"Authorization: Bearer $LEADOS_KEY_ID.$LEADOS_SECRET\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"leadId\":\"00000000-0000-0000-0000-000000000000\"}'\n```",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The resource’s id. A malformed id answers 404, exactly as another workspace’s id does."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "leadId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "leadId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
             "description": "The envelope, with this endpoint’s payload in `data`.",
             "content": {
               "application/json": {

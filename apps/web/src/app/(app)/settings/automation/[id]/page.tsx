@@ -9,6 +9,7 @@ import {
   STATUS_LABELS,
   STATUS_TONES,
   loadCatalogue,
+  loadLeadChoices,
   loadReferenceLists,
   loadRuns,
   loadWorkflow,
@@ -18,7 +19,7 @@ import {
 } from '@/lib/automation';
 import { WorkflowEditor } from '../_components/workflow-editor';
 import { RunList } from '../_components/run-list';
-import { GuardrailsForm, PublishButton } from '../_components/workflow-forms';
+import { GuardrailsForm, PublishButton, TestRunForm } from '../_components/workflow-forms';
 
 /**
  * One workflow: what starts it, what it does, and what has been published (`FR-AUT-5`).
@@ -67,6 +68,7 @@ export default async function WorkflowPage({ params }: { params: Promise<{ id: s
     items: [],
     total: 0,
   }));
+  const leads = await loadLeadChoices(token);
   const editable = workflow.draft ?? workflow.current;
 
   return (
@@ -128,6 +130,13 @@ export default async function WorkflowPage({ params }: { params: Promise<{ id: s
           problems={workflow.problems}
           readOnly={workflow.status === 'archived'}
         />
+
+        <Card
+          title="Try it first"
+          description="Runs every decision against one real lead and sends nothing — no message, no follow-up, and the lead is not enrolled. The preview appears in the run list below."
+        >
+          <TestRunForm workflowId={workflow.id} leads={leads} />
+        </Card>
 
         <Card title="Limits" description="What stops this running more than it should.">
           <div className="flex flex-col gap-2">

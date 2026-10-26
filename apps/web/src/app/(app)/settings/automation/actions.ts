@@ -135,3 +135,45 @@ export async function deleteWorkflow(
   if (result.status === 'success') refresh();
   return result;
 }
+
+/**
+ * The dry run (`FR-AUT-6`), and the one action on this screen whose result is a **row**.
+ *
+ * It reports nothing of its own beyond "tested": a successful test writes a run, the page
+ * revalidates, and the preview appears in "What it has done" with its steps and a Preview badge.
+ * That is the honest record — it survives a refresh, where a message held in `useActionState`
+ * does not — and it is the same list somebody will read the real runs in.
+ */
+export async function testWorkflow(
+  _previous: ActionState,
+  form: FormData,
+): Promise<ActionState> {
+  const id = text(form, 'workflowId');
+  const result = await callApi(
+    `/automation/workflows/${id}/test-run`,
+    { method: 'POST', body: { leadId: text(form, 'leadId') } },
+    'Tested — nothing was sent. The preview is in the run list below.',
+    form,
+  );
+  if (result.status === 'success') refresh(id);
+  return result;
+}
+
+/** Trying a failed run again, from the step that failed (`FR-AUT-7`). */
+export async function retryRun(_previous: ActionState, form: FormData): Promise<ActionState> {
+  const workflowId = text(form, 'workflowId');
+  const result = await callApi(
+    `/automation/runs/${text(form, 'runId')}/retry`,
+    { method: 'POST' },
+    'Trying again from the step that failed.',
+    form,
+  );
+  if (result.status === 'success') {
+    refresh(workflowId);
+    // The lead's own screen carries the same panel, and a retry started from there has to show
+    // there too. `leadId` is sent when the button is rendered on a lead.
+    const leadId = text(form, 'leadId');
+    if (leadId !== undefined) revalidatePath(`/leads/${leadId}`);
+  }
+  return result;
+}

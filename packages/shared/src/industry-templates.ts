@@ -70,6 +70,44 @@ export interface TemplateView {
   readonly filters: Record<string, unknown>;
 }
 
+/**
+ * A starter workflow a template brings with it (`FR-AUT-3`, Phase 6 step 3).
+ *
+ * The definition cannot carry **ids**: a template is applied to a workspace whose statuses and
+ * task types are being created in the same transaction, so there is nothing to point at when the
+ * template is written. A parameter may therefore name a row instead — `{ $taskType: 'Call back' }`
+ * — and the apply path resolves it. Two placeholder kinds, because those are the two a starter
+ * workflow actually needs; a third is a line in `resolveTemplateReference`.
+ *
+ * It is created as a **draft**. Publishing a workflow into somebody's workspace during sign-up
+ * would start it messaging their customers before they had read it, and a template is a guess
+ * about a business — the whole point is that somebody changes it twice rather than throwing it
+ * away.
+ */
+export interface TemplateWorkflow {
+  readonly name: string;
+  /** One sentence, shown in the automation list before anybody opens it. */
+  readonly description: string;
+  readonly trigger: string;
+  /** The trigger's own parameters, which may themselves name a row (`{ $status: '…' }`). */
+  readonly triggerParams?: Readonly<Record<string, unknown>>;
+  readonly steps: readonly {
+    readonly id: string;
+    readonly action: string;
+    readonly params?: Readonly<Record<string, unknown>>;
+  }[];
+}
+
+/** A parameter value that names a row the apply path has to resolve to an id. */
+export type TemplateReference =
+  | { readonly $taskType: string }
+  | { readonly $status: string };
+
+export function isTemplateReference(value: unknown): value is TemplateReference {
+  if (typeof value !== 'object' || value === null) return false;
+  return '$taskType' in value || '$status' in value;
+}
+
 export interface IndustryTemplate {
   readonly key: string;
   readonly name: string;
@@ -82,6 +120,12 @@ export interface IndustryTemplate {
   readonly tags: readonly { name: string; colour: string }[];
   readonly fields: readonly TemplateField[];
   readonly views: readonly TemplateView[];
+  /**
+   * The starter workflows (`FR-AUT-3`). Optional: a template that has none is a template, and the
+   * shape is per concern precisely so this could be added as a content change, which is what
+   * `database-design.md` §17 said when it listed starter automations as waiting for Phase 6.
+   */
+  readonly workflows?: readonly TemplateWorkflow[];
 }
 
 // ── Shared pieces ───────────────────────────────────────────────────────────
@@ -119,6 +163,39 @@ const COMMON_LOST_REASONS: readonly { name: string; requiresNote?: boolean }[] =
   { name: 'Wrong or unreachable number' },
   { name: 'Other', requiresNote: true },
 ];
+
+/**
+ * The one workflow every business wants on day one, in that trade's own words.
+ *
+ * `FR-AUT-3` asks for starter workflows per industry, and the honest shared starter is the thing
+ * every one of the ten loses money on: a lead that arrives and nobody rings. One step, no
+ * references but the task type, and a draft — so it is readable before it is live.
+ */
+function firstFollowUp(input: {
+  readonly name: string;
+  readonly description: string;
+  readonly title: string;
+  readonly minutes: number;
+  readonly taskType?: string;
+}): TemplateWorkflow {
+  return {
+    name: input.name,
+    description: input.description,
+    trigger: 'lead.created',
+    steps: [
+      {
+        id: 'call-back',
+        action: 'create_task',
+        params: {
+          title: input.title,
+          taskTypeId: { $taskType: input.taskType ?? 'Call' },
+          dueInMinutes: input.minutes,
+          assigneeFrom: 'lead_owner',
+        },
+      },
+    ],
+  };
+}
 
 const BUDGET_FIELD: TemplateField = {
   entityType: 'lead',
@@ -222,6 +299,34 @@ export const INDUSTRY_TEMPLATES: readonly IndustryTemplate[] = [
         },
       },
     ],
+    workflows: [
+      firstFollowUp({
+        name: 'Ring a new enquiry within the hour',
+        description:
+          'A property enquiry that sits for a day is one the buyer has already made somewhere else.',
+        title: 'Call {{lead.fullName}} about their enquiry',
+        minutes: 60,
+      }),
+      {
+        name: 'Confirm a site visit the day before',
+        description:
+          'The visit nobody confirms is the visit nobody turns up to, and a salesperson waits on site for an hour.',
+        trigger: 'lead.status_changed',
+        triggerParams: { toStatusId: { $status: 'Site visit scheduled' } },
+        steps: [
+          {
+            id: 'confirm',
+            action: 'create_task',
+            params: {
+              title: 'Confirm the site visit with {{lead.fullName}}',
+              taskTypeId: { $taskType: 'Site visit' },
+              dueInMinutes: 120,
+              assigneeFrom: 'lead_owner',
+            },
+          },
+        ],
+      },
+    ],
   },
   {
     key: 'education',
@@ -306,6 +411,15 @@ export const INDUSTRY_TEMPLATES: readonly IndustryTemplate[] = [
         filters: { conditions: [{ field: 'status.name', operator: 'eq', value: 'Demo attended' }] },
       },
     ],
+    workflows: [
+      firstFollowUp({
+        name: 'Call a parent back the same day',
+        description:
+          'An admissions enquiry is a decision a family is making this week, not this term.',
+        title: 'Call {{lead.fullName}} about the course',
+        minutes: 120,
+      }),
+    ],
   },
   {
     key: 'healthcare',
@@ -384,6 +498,14 @@ export const INDUSTRY_TEMPLATES: readonly IndustryTemplate[] = [
         },
       },
     ],
+    workflows: [
+      firstFollowUp({
+        name: 'Ring a patient enquiry back quickly',
+        description: 'Somebody asking about treatment is usually asking two clinics at once.',
+        title: 'Call {{lead.fullName}} about their enquiry',
+        minutes: 60,
+      }),
+    ],
   },
   {
     key: 'automobile',
@@ -456,6 +578,15 @@ export const INDUSTRY_TEMPLATES: readonly IndustryTemplate[] = [
           conditions: [{ field: 'status.name', operator: 'eq', value: 'Quotation given' }],
         },
       },
+    ],
+    workflows: [
+      firstFollowUp({
+        name: 'Book a test drive while they are still interested',
+        description: 'A test drive booked the same day is the single best predictor of a sale here.',
+        title: 'Offer {{lead.fullName}} a test drive',
+        minutes: 90,
+        taskType: 'Demo',
+      }),
     ],
   },
   {
@@ -530,6 +661,15 @@ export const INDUSTRY_TEMPLATES: readonly IndustryTemplate[] = [
           conditions: [{ field: 'status.name', operator: 'eq', value: 'Cart abandoned' }],
         },
       },
+    ],
+    workflows: [
+      firstFollowUp({
+        name: 'Answer a product question within the hour',
+        description: 'An unanswered question is a basket somebody abandons.',
+        title: 'Reply to {{lead.fullName}}',
+        minutes: 60,
+        taskType: 'WhatsApp',
+      }),
     ],
   },
   {
@@ -610,6 +750,14 @@ export const INDUSTRY_TEMPLATES: readonly IndustryTemplate[] = [
         filters: { conditions: [{ field: 'status.name', operator: 'eq', value: 'Trial done' }] },
       },
     ],
+    workflows: [
+      firstFollowUp({
+        name: 'Invite a new enquiry to a trial session',
+        description: 'People join a gym on the day they decide to, and not the week after.',
+        title: 'Invite {{lead.fullName}} for a trial',
+        minutes: 120,
+      }),
+    ],
   },
   {
     key: 'salon',
@@ -671,6 +819,15 @@ export const INDUSTRY_TEMPLATES: readonly IndustryTemplate[] = [
           conditions: [{ field: 'status.name', operator: 'eq', value: 'Appointment booked' }],
         },
       },
+    ],
+    workflows: [
+      firstFollowUp({
+        name: 'Offer an appointment slot the same day',
+        description: 'An enquiry with no slot offered is an enquiry that books elsewhere.',
+        title: 'Offer {{lead.fullName}} a slot',
+        minutes: 60,
+        taskType: 'WhatsApp',
+      }),
     ],
   },
   {
@@ -743,6 +900,15 @@ export const INDUSTRY_TEMPLATES: readonly IndustryTemplate[] = [
         },
       },
     ],
+    workflows: [
+      firstFollowUp({
+        name: 'Send an itinerary while the plan is warm',
+        description: 'Holiday enquiries go cold in days, and the first quote usually wins.',
+        title: 'Send {{lead.fullName}} an itinerary',
+        minutes: 240,
+        taskType: 'Email',
+      }),
+    ],
   },
   {
     key: 'professional_services',
@@ -812,6 +978,15 @@ export const INDUSTRY_TEMPLATES: readonly IndustryTemplate[] = [
         description: 'Every proposal waiting for an answer.',
         filters: { conditions: [{ field: 'status.name', operator: 'eq', value: 'Proposal sent' }] },
       },
+    ],
+    workflows: [
+      firstFollowUp({
+        name: 'Book a consultation call',
+        description: 'A professional enquiry is somebody with a deadline; the call is the sale.',
+        title: 'Book a consultation with {{lead.fullName}}',
+        minutes: 240,
+        taskType: 'Meeting',
+      }),
     ],
   },
   {
@@ -884,6 +1059,14 @@ export const INDUSTRY_TEMPLATES: readonly IndustryTemplate[] = [
         },
       },
     ],
+    workflows: [
+      firstFollowUp({
+        name: 'Ring a job enquiry back today',
+        description: 'Somebody with a leaking tap rings three people and takes the first to answer.',
+        title: 'Call {{lead.fullName}} about the job',
+        minutes: 60,
+      }),
+    ],
   },
 ];
 
@@ -930,4 +1113,26 @@ export function summariseIndustryTemplate(template: IndustryTemplate): IndustryT
     views: template.views.length,
     fieldLabels: template.fields.map((field) => field.label),
   };
+}
+
+/**
+ * Every row a template's workflows name, so the apply path knows what to look up.
+ *
+ * Here rather than in the API because the **spec** uses it to assert that every placeholder in
+ * every template points at something that template (or the common seed) actually creates — a
+ * starter workflow naming a status the template does not define would be published as a draft that
+ * can never be switched on, and nothing else would notice.
+ */
+export function templateReferencesIn(template: IndustryTemplate): TemplateReference[] {
+  const found: TemplateReference[] = [];
+  const collect = (params: Readonly<Record<string, unknown>> | undefined) => {
+    for (const value of Object.values(params ?? {})) {
+      if (isTemplateReference(value)) found.push(value);
+    }
+  };
+  for (const workflow of template.workflows ?? []) {
+    collect(workflow.triggerParams);
+    for (const step of workflow.steps) collect(step.params);
+  }
+  return found;
 }

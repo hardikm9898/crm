@@ -69,9 +69,13 @@ export default async function AutomationPage() {
       />
 
       <div className="flex flex-col gap-5">
+        {/* This card said "Nothing runs yet" for a release after the engine shipped — a screen
+            telling a business owner their published workflow is not working while it was. A
+            sentence about what the product cannot do yet has to be deleted by the step that makes
+            it untrue, and it was not. */}
         <Card
-          title="Nothing runs yet"
-          description="Workflows can be written, checked and published now. The part that carries them out arrives in the next release — so a published workflow is a workflow that is ready, not one that is working."
+          title="A published workflow is a running workflow"
+          description="Publishing makes it live: the trigger below starts it, each step runs in order, and every decision — including the ones that skipped — is on the lead’s own timeline. Try one against a real lead first; a test sends nothing."
         >
           <p className="text-sm text-[var(--color-text-muted)]" data-executor-notice>
             {`${catalogue.triggers.length} things can start a workflow, and ${catalogue.actions.length} things can happen in one.`}

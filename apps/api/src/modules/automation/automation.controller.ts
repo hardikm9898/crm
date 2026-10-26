@@ -11,12 +11,14 @@ import {
   listWorkflowsSchema,
   saveDefinitionSchema,
   startWorkflowSchema,
+  testRunSchema,
   updateWorkflowSchema,
   type CreateWorkflowInput,
   type ListRunsQuery,
   type ListWorkflowsQuery,
   type SaveDefinitionInput,
   type StartWorkflowInput,
+  type TestRunInput,
   type UpdateWorkflowInput,
 } from './automation.dto.js';
 
@@ -74,6 +76,22 @@ export class AutomationController {
   @RequirePermission(PERMISSIONS.AUTOMATION_MANAGE)
   async run(@Param('id') id: string) {
     return this.runs.findOne(id);
+  }
+
+  /**
+   * Tries a failed run again, from the step that failed (`FR-AUT-7`).
+   *
+   * **202**, unlike the dry run below: this one executes, so the first thing it does may be the
+   * provider call that failed in the first place.
+   */
+  @Post('runs/:id/retry')
+  @HttpCode(202)
+  @RequirePermission(PERMISSIONS.AUTOMATION_MANAGE)
+  async retryRun(@Param('id') id: string) {
+    return withMessage(
+      await this.runs.retry(id),
+      'Trying again from the step that failed — the result will appear in a moment',
+    );
   }
 
   @Post('workflows')
@@ -142,6 +160,23 @@ export class AutomationController {
     return withMessage(
       await this.runs.startManually(id, (body as StartWorkflowInput).leadId),
       'Started — the run will appear in a moment',
+    );
+  }
+
+  /**
+   * The dry run (`FR-AUT-6`): every decision recorded, nothing executed.
+   *
+   * **200 and inline**, where `start` is 202 and queued, because the two differ in exactly the way
+   * that matters: a preview calls no handler, so there is nothing to wait for, and the answer is
+   * the whole point of pressing the button.
+   */
+  @Post('workflows/:id/test-run')
+  @HttpCode(200)
+  @RequirePermission(PERMISSIONS.AUTOMATION_MANAGE)
+  async testRun(@Param('id') id: string, @Body(zodBody(testRunSchema)) body: unknown) {
+    return withMessage(
+      await this.runs.testRun(id, (body as TestRunInput).leadId),
+      'Tested — nothing was sent, and every decision is below',
     );
   }
 

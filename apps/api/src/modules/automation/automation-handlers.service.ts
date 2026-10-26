@@ -84,6 +84,7 @@ export class AutomationHandlersService {
       'change_stage',
       'add_tag',
       'add_note',
+      'change_priority',
       'notify',
       'call_webhook',
     ];
@@ -105,6 +106,8 @@ export class AutomationHandlersService {
         return this.addTag(ctx);
       case 'add_note':
         return this.addNote(ctx);
+      case 'change_priority':
+        return this.changePriority(ctx);
       case 'notify':
         return this.notify(ctx);
       case 'call_webhook':
@@ -349,6 +352,25 @@ export class AutomationHandlersService {
       output: { body: body.slice(0, 200) },
       summary: 'added a note',
     };
+  }
+
+  /**
+   * The action added in step 3 to prove the first exit criterion.
+   *
+   * One registry entry and this method, and nothing else in the product changed: the editor
+   * renders the `select` from the declaration, the validator checks it against the same options,
+   * the boot check pairs the two, and `apps/web` was not rebuilt.
+   */
+  private async changePriority(ctx: StepContext): Promise<StepOutcome> {
+    const priority = text(ctx.params['priority']);
+    if (priority === null) return { status: 'skipped', reason: 'no priority was chosen' };
+    if (text(ctx.facts['lead.priority']) === priority) {
+      return { status: 'skipped', reason: `the lead is already ${priority} priority` };
+    }
+    // Through `update`, so the field-change timeline entry and the event happen as they would if
+    // somebody had edited the lead by hand.
+    await this.leads.update(ctx.leadId, { priority } as Parameters<LeadsService['update']>[1]);
+    return { status: 'succeeded', output: { priority }, summary: `set the priority to ${priority}` };
   }
 
   // ── Plumbing ───────────────────────────────────────────────────────────────

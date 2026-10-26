@@ -71,6 +71,42 @@ describe('the registry itself', () => {
     const control = WORKFLOW_ACTIONS.filter((spec) => spec.control).map((spec) => spec.key).sort();
     expect(control).toEqual(['branch', 'enroll', 'stop', 'wait']);
   });
+
+  /**
+   * Phase 6's first exit criterion, which asks that adding an action take **no engine change and
+   * no frontend release** — "proven by adding one". `change_priority` is that one, and this is the
+   * half of the proof a unit test can carry: it is a declaration, it is not a control shape, and
+   * its parameter is a `select` the editor already knows how to render. The other half is the
+   * engine's own boot check, which refuses to start if nothing handles it.
+   */
+  it('declares change_priority as data the editor can already render', () => {
+    const spec = workflowAction('change_priority');
+    expect(spec?.control).toBe(false);
+    const priority = spec?.params.find((param) => param.key === 'priority');
+    expect(priority?.type).toBe('select');
+    expect(priority?.options?.map((option) => option.value)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'urgent',
+    ]);
+  });
+
+  it('validates a workflow using change_priority without knowing anything about it', () => {
+    expect(
+      validateWorkflowDefinition({
+        trigger: { type: 'lead.score_changed' },
+        steps: [{ id: 'raise', action: 'change_priority', params: { priority: 'high' } }],
+      }),
+    ).toEqual([]);
+    // And refuses a value the declaration does not offer, from the same declaration.
+    expect(
+      validateWorkflowDefinition({
+        trigger: { type: 'lead.score_changed' },
+        steps: [{ id: 'raise', action: 'change_priority', params: { priority: 'blazing' } }],
+      }).map((problem) => problem.field),
+    ).toEqual(['definition.steps[0].params.priority']);
+  });
 });
 
 describe('validateWorkflowDefinition', () => {

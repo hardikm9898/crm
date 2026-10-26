@@ -386,7 +386,13 @@ export interface RunSummary {
   readonly trigger: string;
   readonly workflow: { readonly id: string; readonly name: string };
   readonly lead: { readonly id: string; readonly fullName: string };
-  readonly cycle: number;
+  /**
+   * Null for a **preview**, which is enrolled in nothing — that is what "executes nothing" means.
+   * Nullable here rather than defaulted to 1, because "this is the lead's second time through"
+   * and "this never counted" are different facts and a 1 would state the first of them falsely.
+   */
+  readonly cycle: number | null;
+  readonly dryRun: boolean;
   readonly version: number;
   readonly currentStepId: string | null;
   readonly resumeAt: string | null;
@@ -432,6 +438,35 @@ export async function loadRuns(
   return { items: response.data, total: pagination?.total ?? response.data.length };
 }
 
+/**
+ * The leads a preview can be run against.
+ *
+ * A short list rather than a search box: the dry run is a thing somebody does once or twice while
+ * writing a workflow, against a lead they can see. There is no `reference: 'lead'` kind in the
+ * catalogue on purpose — a lead is the run's **subject**, not a parameter of a step, and declaring
+ * it as a reference would offer it inside every action's parameter list.
+ */
+export async function loadLeadChoices(
+  token: string | null | undefined,
+  limit = 25,
+): Promise<ParamOption[]> {
+  try {
+    const response = await request<{ id: string; fullName: string }[]>(
+      `/leads?limit=${limit}`,
+      { token },
+    );
+    const rows = Array.isArray(response.data) ? response.data : [];
+    return rows.flatMap((row) => {
+      const entry = option(row.id, row.fullName);
+      return entry === null ? [] : [entry];
+    });
+  } catch {
+    // A workspace with no leads yet, or a caller whose scope excludes them all: the form says so
+    // itself rather than the page failing to render.
+    return [];
+  }
+}
+
 export async function loadRun(
   token: string | null | undefined,
   id: string,
@@ -459,6 +494,13 @@ export function describeStep(step: RunStep, catalogue: AutomationCatalogue | nul
 
 /** A sentence for a run's own state, which is the first thing somebody reads. */
 export function describeRun(run: RunSummary): string {
+  // A preview says so **first**. Every sentence below reads as something that happened to this
+  // customer, and the one thing a preview must never be mistaken for is a thing that happened.
+  const prefix = run.dryRun ? 'Preview — nothing was sent. ' : '';
+  return prefix + runState(run);
+}
+
+function runState(run: RunSummary): string {
   switch (run.status) {
     case 'waiting':
       return run.resumeAt === null

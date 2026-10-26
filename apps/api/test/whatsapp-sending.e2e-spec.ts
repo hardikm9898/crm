@@ -12,6 +12,9 @@ import {
   WhatsAppSendMessageProcessor,
   WhatsAppSendRetryProcessor,
 } from '../src/modules/whatsapp/whatsapp-send.processor.js';
+import { AutomationDispatchService } from '../src/modules/automation/automation-dispatch.service.js';
+import { AutomationExecutorService } from '../src/modules/automation/automation-executor.service.js';
+import { AutomationResumeSweepProcessor } from '../src/modules/automation/automation.processor.js';
 import { WhatsAppRateLimiter } from '../src/modules/whatsapp/whatsapp-rate-limiter.service.js';
 import { RedisService } from '../src/infra/redis/redis.service.js';
 import { bootTestApp, call, cleanupUsers, type EnvelopeBody, type TestApp } from './app-harness.js';
@@ -66,7 +69,7 @@ let conversationId: string;
 let leadId: string;
 
 async function api<T>(
-  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   url: string,
   options: { token?: string; payload?: unknown } = {},
 ) {
@@ -80,7 +83,7 @@ async function api<T>(
 
 /** A setup call whose status nobody asserts fails silently and takes the assertion with it. */
 async function setup<T>(
-  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   url: string,
   options: { token?: string; payload?: unknown } = {},
 ): Promise<T> {
@@ -948,19 +951,37 @@ describe('per-number rate limiting (`FR-WA-9`)', () => {
   it('refuses a send over the limit and recovers in the next second', async () => {
     const limiter = ctx.app.get(WhatsAppRateLimiter);
     const number = `limiter-${newToken(6)}`;
-    let refusedAt = 0;
-    for (let attempt = 1; attempt <= 120; attempt += 1) {
-      const allowance = await limiter.take(number);
-      if (!allowance.allowed) {
-        refusedAt = attempt;
-        // Just enough to reach the next window, never a minute: a message somebody typed is
-        // waiting.
-        expect(allowance.retryInMs).toBeGreaterThan(0);
-        expect(allowance.retryInMs).toBeLessThan(1_100);
-        break;
+    const limit = 100;
+    /**
+     * Counted **within the second**, not from the start of the loop.
+     *
+     * The bucket is keyed on the current second, so "the 101st call is refused" is only true of a
+     * loop that fits inside one — which a hundred sequential Redis round-trips do on their own and
+     * do not under a full suite. The first version asserted `refusedAt === 101` and failed in a
+     * full run with nothing wrong with the limiter: the window rolled over mid-loop and the count
+     * started again, which is the limiter being right.
+     */
+    let second = Math.floor(Date.now() / 1000);
+    let allowedThisSecond = 0;
+    let refusedAfter = -1;
+    for (let attempt = 1; attempt <= 400 && refusedAfter < 0; attempt += 1) {
+      const now = Math.floor(Date.now() / 1000);
+      if (now !== second) {
+        second = now;
+        allowedThisSecond = 0;
       }
+      const allowance = await limiter.take(number);
+      if (allowance.allowed) {
+        allowedThisSecond += 1;
+        continue;
+      }
+      refusedAfter = allowedThisSecond;
+      // Just enough to reach the next window, never a minute: a message somebody typed is
+      // waiting.
+      expect(allowance.retryInMs).toBeGreaterThan(0);
+      expect(allowance.retryInMs).toBeLessThan(1_100);
     }
-    expect(refusedAt).toBe(101);
+    expect(refusedAfter).toBe(limit);
     // A different number is a different bucket: Meta limits per number, not per app.
     expect((await limiter.take(`other-${newToken(6)}`)).allowed).toBe(true);
   });
@@ -970,9 +991,23 @@ describe('per-number rate limiting (`FR-WA-9`)', () => {
       token: orgA.token,
       payload: { kind: 'template', templateId: (await approvedTemplate()).id },
     });
-    const limiter = ctx.app.get(WhatsAppRateLimiter);
-    // Exhaust this number's bucket deliberately, rather than depending on how fast the suite runs.
-    for (let attempt = 0; attempt < 101; attempt += 1) await limiter.take(PHONE_NUMBER_ID);
+    const redis = ctx.app.get(RedisService);
+    /**
+     * The bucket is filled **by writing the counter**, for this second and the next.
+     *
+     * Spending the limit one `take()` at a time — which is what this test did at first — depends
+     * on a hundred and one Redis round-trips fitting inside one wall-clock second. Alone they do;
+     * in a full suite they do not, the window rolls over mid-loop, the last bucket is empty and
+     * the message is sent — a failure that reads as the limiter being broken and is the fixture
+     * racing the clock. Two keys rather than one because the second may tick between this and the
+     * handler's own `take`, and `JSON.stringify` of a number is the bare integer `INCR` expects.
+     */
+    const second = Math.floor(Date.now() / 1000);
+    const buckets = [
+      `wa:send-rate:${PHONE_NUMBER_ID}:${second}`,
+      `wa:send-rate:${PHONE_NUMBER_ID}:${second + 1}`,
+    ];
+    for (const bucket of buckets) await redis.setJson(bucket, 10_000, 5);
 
     const before = sentMessages().length;
     await ctx.app.get(WhatsAppSendMessageProcessor).handle(orgA.organizationId, message.id);
@@ -985,8 +1020,8 @@ describe('per-number rate limiting (`FR-WA-9`)', () => {
     // Nobody was handed the message, so nothing was attempted.
     expect(held.sendAttempts).toBe(0);
 
-    // The next window, reached by clearing the counter rather than by sleeping through it.
-    await ctx.app.get(RedisService).del(`wa:send-rate:${PHONE_NUMBER_ID}:${Math.floor(Date.now() / 1000)}`);
+    // The next window, reached by clearing both counters rather than by sleeping through them.
+    await redis.del(...buckets, `wa:send-rate:${PHONE_NUMBER_ID}:${Math.floor(Date.now() / 1000)}`);
     await ctx.app.get(WhatsAppSendMessageProcessor).handle(orgA.organizationId, message.id);
     expect(
       (await ctx.db.message.findFirstOrThrow({ where: { id: message.id }, select: { status: true } }))
@@ -1026,6 +1061,144 @@ describe('the scheduled template sync', () => {
     } finally {
       templateList = () => ({ status: 200, body: JSON.stringify({ data: [] }) });
     }
+  });
+});
+
+/**
+ * Phase 6's fifth exit criterion — the brief's new-lead nurture flow, as one graph.
+ *
+ * It lives in **this** suite rather than with the rest of the automation tests because this is
+ * where its fixtures are: a connected WhatsApp account, an approved template, a conversation
+ * opened by a real inbound delivery, and a fake Graph API to send into. An automation suite would
+ * have had to build all four to assert the one step that matters, and a nurture flow whose send
+ * step skipped for want of a conversation would be the flow with its point removed.
+ */
+describe('the new-lead nurture flow, end to end (Phase 6, `FR-AUT-3`)', () => {
+  it('sends the template, waits, books the follow-up and branches on the reply', async () => {
+    const template = await approvedTemplate();
+    const created = await setup<{ id: string }>('POST', '/automation/workflows', {
+      token: orgA.token,
+      payload: { name: `Nurture ${SUFFIX}` },
+    });
+    await setup('PUT', `/automation/workflows/${created.id}/definition`, {
+      token: orgA.token,
+      payload: {
+        definition: {
+          // `manual`, not `lead.created`: this lead already exists, and a workflow listening for
+          // `lead.created` would also fire on every lead a later test in this file captures.
+          trigger: { type: 'manual' },
+          steps: [
+            { id: 'greet', action: 'send_whatsapp_template', params: { templateId: template.id } },
+            { id: 'pause', action: 'wait', params: { minutes: 120, workingHoursOnly: true } },
+            {
+              id: 'followup',
+              action: 'create_task',
+              params: {
+                title: 'Ring {{lead.fullName}} — no reply yet',
+                dueInMinutes: 60,
+                assigneeFrom: 'specific',
+                userId: orgA.userId,
+              },
+            },
+            {
+              id: 'replied',
+              action: 'branch',
+              // A boolean field offers `equals`, not `is_true`: the registry declares the
+              // operators per field and `publish` refuses the rest.
+              conditions: { all: [{ field: 'lead.consentWhatsapp', operator: 'equals', value: true }] },
+              then: [{ id: 'warm', action: 'change_priority', params: { priority: 'high' } }],
+              otherwise: [{ id: 'cold', action: 'add_note', params: { body: 'Still no reply.' } }],
+            },
+          ],
+        },
+      },
+    });
+    await setup('POST', `/automation/workflows/${created.id}/publish`, { token: orgA.token });
+
+    const dispatch = ctx.app.get(AutomationDispatchService);
+    const executor = ctx.app.get(AutomationExecutorService);
+    const outcome = await dispatch.dispatch({
+      organizationId: orgA.organizationId,
+      leadId,
+      eventName: 'manual',
+      workflowId: created.id,
+    });
+    expect(outcome.started).toBe(1);
+    const run = await ctx.db.automationRun.findFirstOrThrow({
+      where: { workflowId: created.id, leadId },
+    });
+
+    const drive = async (limit = 20) => {
+      let status = 'running';
+      for (let step = 0; step < limit; step += 1) {
+        status = (await executor.advance(orgA.organizationId, run.id)).status;
+        if (status !== 'running') break;
+      }
+      return status;
+    };
+
+    // The send is queued by the workflow and handed to Meta by the send job, exactly as a reply
+    // somebody typed is: a handler never calls a provider itself.
+    expect(await drive()).toBe('waiting');
+    await flushSends();
+    const sent = await ctx.db.message.findFirstOrThrow({
+      where: { conversationId, templateId: template.id, direction: 'outbound' },
+      orderBy: [{ createdAt: 'desc' }],
+      select: { status: true, sendAttempts: true },
+    });
+    expect(sent.status).toBe('accepted');
+    expect(sent.sendAttempts).toBe(1);
+
+    // Two **working** hours is a row and a delayed job, not a worker standing still. Nothing in
+    // this suite consumes a delayed job, so the sweep is the only thing that can finish the run —
+    // which makes this the dropped-job criterion in the middle of a real flow.
+    const waiting = await ctx.db.automationRun.findFirstOrThrow({ where: { id: run.id } });
+    expect(waiting.currentStepId).toBe('pause');
+    expect(waiting.resumeAt?.getTime() ?? 0).toBeGreaterThan(Date.now());
+    await ctx.db.automationRun.update({
+      where: { id: run.id },
+      data: { resumeAt: new Date(Date.now() - 120_000) },
+    });
+    await ctx.app.get(AutomationResumeSweepProcessor).sweep();
+    expect(await drive()).toBe('completed');
+
+    const detail = await setup<{
+      steps: { stepId: string; status: string; reason: string | null }[];
+    }>('GET', `/automation/runs/${run.id}`, { token: orgA.token });
+    // The **reply** arm: this lead arrived *through* WhatsApp, so the inbound message that opened
+    // the conversation is also what set `consent_whatsapp` — which is the case the flow is for.
+    expect(detail.steps.map((step) => step.stepId)).toEqual([
+      'greet',
+      'pause',
+      'followup',
+      'replied',
+      'warm',
+    ]);
+    expect(detail.steps[0]?.reason).toMatch(/sent the template/);
+    // Only one arm ran, which is what makes a branch a branch.
+    expect(detail.steps.some((step) => step.stepId === 'cold')).toBe(false);
+    const warmed = await ctx.db.lead.findFirstOrThrow({ where: { id: leadId } });
+    expect(warmed.priority).toBe('high');
+
+    const task = await ctx.db.task.findFirstOrThrow({
+      where: { leadId, title: { startsWith: 'Ring ' } },
+      orderBy: [{ createdAt: 'desc' }],
+    });
+    expect(task.assignedUserId).toBe(orgA.userId);
+
+    const timeline = await setup<{ type: string; payload: Record<string, unknown> }[]>(
+      'GET',
+      `/leads/${leadId}/timeline`,
+      { token: orgA.token },
+    );
+    expect(timeline.some((entry) => entry.type === 'automation.enrolled')).toBe(true);
+    expect(
+      timeline.some(
+        (entry) =>
+          entry.type === 'automation.action_executed' &&
+          /sent the template/.test(String(entry.payload['reason'])),
+      ),
+    ).toBe(true);
   });
 });
 

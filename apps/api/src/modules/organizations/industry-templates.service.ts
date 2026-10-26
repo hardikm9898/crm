@@ -14,6 +14,15 @@ import { PrincipalService } from '../auth/application/principal.service.js';
 import { FieldRegistryService } from '../custom-fields/field-registry.service.js';
 
 /**
+ * Applying a template writes a **catalogue** — every status, stage, source, lost reason, tag,
+ * custom field, saved view and, since Phase 6 step 3, every starter workflow with its first
+ * version. Prisma's default interactive-transaction timeout is five seconds, which provisioning
+ * has already reached once on a cold process, and this is the same shape of write in the same
+ * place in somebody's first ten minutes.
+ */
+const TEMPLATE_TRANSACTION = { timeout: 30_000, maxWait: 10_000 } as const;
+
+/**
  * Choosing an industry during onboarding (`FR-ONB-2`).
  *
  * The template catalogue is platform reference data, so reading it opts into platform scope
@@ -86,8 +95,15 @@ export class IndustryTemplatesService {
 
     await this.assertWorkspaceIsUntouched();
 
+    const actorId = principal.actorId;
+    if (actorId === null || actorId === undefined) {
+      // A template's starter workflows are created *by* somebody — `workflows.created_by_id` has a
+      // composite FK into `Membership` — so a caller with no person behind it cannot apply one.
+      throw AppError.businessRule('Applying an industry template needs a signed-in member.');
+    }
+
     const applied = await this.db.client.$transaction(async (tx) => {
-      const result = await applyIndustryTemplate(tx, organizationId, key);
+      const result = await applyIndustryTemplate(tx, organizationId, key, actorId);
       await this.audit.recordInTransaction(tx, {
         action: 'organization.industry_template_applied',
         resourceType: 'organization',
@@ -103,7 +119,7 @@ export class IndustryTemplatesService {
         },
       ]);
       return result;
-    });
+    }, TEMPLATE_TRANSACTION);
 
     /**
      * The custom-field registry and the principal's grants are both cached, and a template rewrites

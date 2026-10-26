@@ -625,8 +625,29 @@ banned — this is the highest-consequence subsystem in the product.
 > want.
 >
 > Everything else in **Execution** is as built, including the single indexed dispatch query and the
-> step-per-job chain. The pieces that do not exist yet are named in the roadmap's step entry: no
-> dry run, and no retry-from-failed-step (`attempt` is on the step row, waiting for it).
+> step-per-job chain.
+
+> **Amended again, 2026-10-26 (Phase 6 step 3).** The dry run and the retry are built, and the
+> paragraph above's last sentence no longer applies.
+>
+> **The dry run is the same interpreter with one branch in it**, not a separate preview walker.
+> `POST /automation/workflows/{id}/test-run` creates a run with `dry_run = true` and drives it
+> **inline** to completion; every decision above the handler call is the same code the real run
+> uses, and there is one `if (run.dryRun)` on the path to a handler plus three where a control shape
+> would otherwise reach outside (the wait continues instead of suspending, `enroll` records what it
+> would hand over, and no timeline row is written). "Logs every decision and executes nothing" is
+> therefore true by construction rather than by a second implementation agreeing with the first —
+> which is the argument [ADR-0043](./decisions/ADR-0043-a-preview-is-one-branch-in-the-interpreter-and-a-starter-workflow-is-a-draft.md)
+> makes at length. A preview is enrolled in nothing, spends no cap, and is excluded from the
+> `automation_runs_live` predicate the re-entry guard reads.
+>
+> **The retry reopens the run.** `POST /automation/runs/{id}/retry` sets it back to `running` and
+> enqueues one step job; `current_step_id` still points at the last step that *succeeded*, so the
+> graph itself says where to resume and "side effects already applied are not repeated" needs no
+> bookkeeping. The new attempt writes a **new** `automation_run_steps` row, which is both the record
+> of the first failure and what makes the handler's idempotency key different this time. The kill
+> switch and the workflow's status are re-asked; the re-entry policy is not, because the lead is
+> already enrolled.
 
 ### Observability
 

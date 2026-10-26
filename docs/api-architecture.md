@@ -953,9 +953,19 @@ CRUD /seo/keywords  GET /seo/rankings
 > not wait for a provider. It is not a way around the guardrails — the re-entry policy, the daily
 > cap and the loop ceiling all apply, because it goes through the same dispatcher.
 >
-> Still unbuilt, and named rather than implied: `POST :id/test-run` (a dry run) and
-> `POST /automation/runs/{id}/retry` (retry from the failed step). `automation_run_steps.attempt`
-> exists for the second one.
+> **Amended, Phase 6 step 3 (2026-10-26).** Both of those are now built, and they answer
+> deliberately different status codes.
+>
+> | Route | Code | Why |
+> | --- | --- | --- |
+> | `POST /automation/workflows/{id}/test-run` | **200**, inline | A preview calls no handler, so there is no provider to wait for — and the answer *is* the point of the button. It previews the unsaved draft when there is one and the published version otherwise: the version the next run would use. A definition with problems is refused **400** with the field list, printed against the rows it names, because previewing a graph the engine cannot execute would answer with a failure about this endpoint rather than about the workflow. |
+> | `POST /automation/runs/{id}/retry` | **202**, queued | This one executes: the first thing it does may be the provider call that failed. Only a `failed` run, never a preview (**422**, "that was a preview… test it again"), and never while the workflow is stopped (**422**) — the kill switch is the one guard a retry re-asks. The re-entry policy is not re-asked: the lead is already enrolled, and a retry is not an entry. |
+>
+> `GET /automation/runs` gained **`dryRun`**, three-way like `killSwitch` and for the same reason:
+> absent means both, and folding it to `false` would hide every preview from the log that is the
+> only place a preview is read. Every run — real or preview — answers `dryRun`, and `cycle` is now
+> **nullable**, because "this lead's first time through" and "this never counted" are different
+> facts and a `1` would state the first of them falsely.
 
 
 ### Dashboards, billing, notifications

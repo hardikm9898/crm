@@ -3,7 +3,9 @@ import {
   INDUSTRY_TEMPLATES,
   INDUSTRY_TEMPLATE_KEYS,
   findIndustryTemplate,
+  isTemplateReference,
   summariseIndustryTemplate,
+  templateReferencesIn,
 } from './industry-templates.js';
 
 /**
@@ -170,5 +172,44 @@ describe('the industry template catalogue', () => {
     expect(summary.statuses).toBeGreaterThan(4);
     expect(summary.fields).toBeGreaterThan(2);
     expect(summary.fieldLabels).toContain('Course');
+  });
+
+  it('reads a placeholder as a reference and an ordinary value as itself', () => {
+    expect(isTemplateReference({ $taskType: 'Call' })).toBe(true);
+    expect(isTemplateReference({ $status: 'Contacted' })).toBe(true);
+    // The two shapes a parameter actually carries beside a reference: a sentence and a number.
+    expect(isTemplateReference('Call {{lead.fullName}}')).toBe(false);
+    expect(isTemplateReference(60)).toBe(false);
+    expect(isTemplateReference(null)).toBe(false);
+    expect(isTemplateReference({ taskTypeId: 'Call' })).toBe(false);
+  });
+
+  it('collects the rows a template’s workflows name, from the trigger as well as the steps', () => {
+    const references = templateReferencesIn(findIndustryTemplate('real_estate')!);
+    // Real estate is the one template with a reference in a **trigger** — the status a site visit
+    // reaches — which is why it is the one asserted here.
+    expect(references).toContainEqual({ $status: 'Site visit scheduled' });
+    expect(references).toContainEqual({ $taskType: 'Site visit' });
+    expect(references).toContainEqual({ $taskType: 'Call' });
+  });
+
+  it('collects nothing from a template with no workflows', () => {
+    expect(
+      templateReferencesIn({ ...findIndustryTemplate('education')!, workflows: undefined }),
+    ).toEqual([]);
+  });
+
+  it('gives every starter workflow a name, a sentence and at least one step', () => {
+    for (const template of INDUSTRY_TEMPLATES) {
+      for (const workflow of template.workflows ?? []) {
+        expect(workflow.name.length, template.key).toBeGreaterThan(4);
+        // The description is what the automation list shows before anybody opens the workflow, so
+        // a starter without one is a row that says nothing about what it will do.
+        expect(workflow.description.length, `${template.key}/${workflow.name}`).toBeGreaterThan(20);
+        expect(workflow.steps.length, `${template.key}/${workflow.name}`).toBeGreaterThan(0);
+        const ids = workflow.steps.map((step) => step.id);
+        expect(new Set(ids).size, `${template.key}/${workflow.name}`).toBe(ids.length);
+      }
+    }
   });
 });

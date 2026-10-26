@@ -1177,3 +1177,35 @@ looking at a workflow, and both want the same rows.
 - **Both panels swallow their failure**, unlike the workflow list: a lead that will not open because
   one panel's request failed is worse than a lead with one panel missing, and the panel says so
   itself. The list of workflows still throws, because there "none" is information.
+
+### 10.20 As built — Phase 6, step 3 (a preview, and a button that tries the step that failed)
+
+Two forms and one badge, on the screens §10.18 and §10.19 already built. Nothing new to look at,
+which is the point: a preview is a run, so it is read in the list that reads runs.
+
+- **"Try it first" sits above the limits, on the workflow's own screen.** A lead picker and a button
+  whose label carries the lead's name — "Test it on Meera Shah". The name is the confirmation that
+  somebody is about to preview against the lead they meant, which "Test it" is not; so the value is
+  held in **state** and seeded from the echo, which is the `GuardrailsForm` rule (a select the rest
+  of the form reads has to be reactive) rather than the payment-method one (`key` + `defaultValue`
+  for a value that only has to survive a refusal).
+- **The preview reports itself as a row, not as a message.** A successful test revalidates the
+  screen and the preview appears in "What it has done" with a Preview badge; the form's own
+  `useActionState` message is a nicety beside it. That is the lesson the replay button paid for —
+  a form whose success changes the server tree cannot be the record of what happened — and it also
+  means a refresh still shows the preview, which a message would not.
+- **The Preview badge is on a wrapper, not on `Badge`.** `Badge` takes `children` and `tone` and
+  silently drops anything else, so a `data-` attribute passed to it never reaches the DOM — and the
+  browser check asserting it would have failed on a screen that renders perfectly.
+- **`describeRun` says "Preview — nothing was sent." first.** Every other sentence it produces reads
+  as something that happened to this customer, and the one thing a preview must never be mistaken
+  for is a thing that happened.
+- **"Try the failed step again" appears only on a failed run, and never on a preview.** It names the
+  step rather than saying "Retry", because pressing it is about to make the thing that failed happen
+  for real and the steps before it are deliberately not repeated. It is rendered inside `RunList`,
+  so it is on the lead's Automation tab as well as the workflow's screen — and it sends the lead's
+  id from the lead's screen, so the retry revalidates the page it was pressed on.
+- **The list screen's "Nothing runs yet" card is gone.** It had survived a release past the engine
+  shipping, telling a business owner that a published workflow "is a workflow that is ready, not one
+  that is working" while it was working. A sentence about what the product cannot do yet has to be
+  deleted by the step that makes it untrue.

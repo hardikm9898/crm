@@ -8,12 +8,14 @@ import {
   blankStep,
   cleanDefinition,
   coerceParam,
+  describeRun,
   describeWorkflow,
   paramDefault,
   problemsAt,
   type ActionSpec,
   type AutomationCatalogue,
   type ParamField,
+  type RunSummary,
   type WorkflowSummary,
 } from './automation';
 
@@ -201,5 +203,51 @@ describe('the registry the API serves is the one the editor renders', () => {
     // handed, which means an empty list is a screen with no automation and no error.
     expect(WORKFLOW_TRIGGERS.length).toBeGreaterThan(0);
     expect(WORKFLOW_ACTIONS.length).toBeGreaterThan(0);
+  });
+});
+
+describe('describeRun', () => {
+  const run = (over: Partial<RunSummary>): RunSummary => ({
+    id: 'r1',
+    steps: [],
+    status: 'completed',
+    trigger: 'lead.created',
+    workflow: { id: 'w1', name: 'Call back' },
+    lead: { id: 'l1', fullName: 'Asha Rao' },
+    cycle: 1,
+    dryRun: false,
+    version: 1,
+    currentStepId: null,
+    resumeAt: null,
+    stepsRun: 2,
+    startedAt: '2026-10-26T04:00:00.000Z',
+    finishedAt: '2026-10-26T04:00:01.000Z',
+    error: null,
+    ...over,
+  });
+
+  it('counts to one in words, rather than printing “1 steps”', () => {
+    expect(describeRun(run({ stepsRun: 1 }))).toBe('Finished after 1 step.');
+    expect(describeRun(run({ stepsRun: 3 }))).toBe('Finished after 3 steps.');
+  });
+
+  it('says a preview was a preview before it says anything else', () => {
+    // Every other sentence this function produces reads as something that happened to a
+    // customer, so the one thing a preview must not be mistaken for is a thing that happened.
+    expect(describeRun(run({ dryRun: true }))).toBe(
+      'Preview — nothing was sent. Finished after 2 steps.',
+    );
+    expect(describeRun(run({ dryRun: true, status: 'failed', error: 'no template' }))).toBe(
+      'Preview — nothing was sent. Failed: no template.',
+    );
+  });
+
+  it('carries the engine’s own reason for a failure, never a paraphrase', () => {
+    expect(describeRun(run({ status: 'failed', error: 'that template is not approved' }))).toBe(
+      'Failed: that template is not approved.',
+    );
+    expect(describeRun(run({ status: 'failed', error: null }))).toBe(
+      'Failed: no reason recorded.',
+    );
   });
 });

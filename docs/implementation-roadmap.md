@@ -3165,6 +3165,149 @@ flows in the phase's exit criteria are now expressible — new-lead nurture is a
 task and a branch; abandoned checkout needs Phase 7's checkout — and the industry starter templates
 are step 3's.
 
+### Step 3 — the preview, the retry, and a workspace that arrives with workflows ✅ _(landed 2026-10-26)_
+
+The engine ran, and nothing in the product would have persuaded a business owner to switch one on.
+This step is the three things that do: a way to see what a workflow *would* do before it does it, a
+way to pick a failed run back up, and something already in the box on the first day. All three are
+in [ADR-0043](./decisions/ADR-0043-a-preview-is-one-branch-in-the-interpreter-and-a-starter-workflow-is-a-draft.md);
+the decisions worth repeating here are the ones that could have gone the other way.
+
+**The dry run is the same interpreter with one branch in it.** The tempting version is a
+`previewWorkflow()` that walks the definition and describes each step — simpler, and the thing
+ADR-0042 warned about: two paths through this subsystem is how one of them stops telling the truth.
+The import's dry run and the ingestion test tool have each already paid for that mistake in this
+codebase. So a preview **is** a run: a row in `automation_runs` with `dry_run = true`, driven by
+`AutomationExecutorService.advance`, with every decision above the handler call — the conditions,
+the branch arms, the wait arithmetic, the step log, the ordering — being the same code. There is
+exactly **one** `if (run.dryRun)` on the path to a handler, plus three where a *control shape*
+would otherwise reach outside: the wait continues instead of suspending (a preview that slept for
+two days answers nothing anybody asked), `enroll` records what it would hand over instead of
+handing it over, and no timeline row is written.
+
+Four absences follow from "it is a run", and each is asserted on its own because "it ran and nothing
+happened" and "it did not run" look identical on a screen:
+
+- **It is enrolled in nothing.** `enrollment_id` is now nullable and
+  `automation_runs_real_run_is_enrolled` pairs the columns both ways. A preview that took an
+  enrolment would spend the lead's one allowed cycle under the `once` policy, so the real run
+  afterwards would be refused *by the thing the preview was checking*; a real run with no enrolment
+  is a run outside the policy. Both mirrors are contradictions, which is the test this codebase
+  applies to a biconditional CHECK after the two payments constraints that together made a refund
+  impossible — and it is a `CASE`, because every sub-expression of a CHECK has to be non-NULL to
+  bite.
+- **It is not the live run.** `automation_runs_live`, the partial index the re-entry guard reads,
+  was recreated with `AND dry_run = false`. The endpoint cannot leave a preview running — it is
+  driven inline to completion — but an interrupted request can, and without the predicate that row
+  would answer "this lead is already in this workflow" for ever. The e2e writes exactly that row
+  and asserts a real event still starts.
+- **It writes nothing to the lead's timeline.** The timeline is the record of what happened to this
+  customer; a row claiming a workflow acted when it did not is the one lie that would make the rest
+  of it unusable. The run log is where a preview is read.
+- **It spends no cap**, because the counter is incremented below the branch.
+
+**It previews the draft** — the unsaved version when there is one, the published one otherwise,
+which is the version the *next* run would use. A preview that only worked on a published workflow
+would be a tool for checking something already live, which is the opposite of the point. And it
+answers **200, inline**, where `POST :id/start` is 202 and queued: a preview calls no provider, so
+there is nothing to wait for and the answer is the whole reason somebody pressed the button.
+
+**The retry reopens the run it failed in, and the step log is append-only.** `current_step_id`
+points at the last step that *succeeded* — `finish` deliberately leaves it alone — so `nextStep`
+returns the failed one and nothing before it runs again. The requirement
+(`queue-event-architecture.md`: "retryable from the failed step… side effects already applied are
+not repeated") falls out of a column rather than needing a plan. The new attempt writes a **new**
+step row rather than overwriting the failure: the first attempt stays readable, and `attempt` is
+what makes the handler's idempotency key different this time, which is the point of a retry. One
+guard is re-asked and the others are not — the **kill switch** and the status, because a run that
+failed before somebody stopped the workflow must not be the way its actions happen anyway; the
+re-entry policy is not, because this lead is already enrolled and a retry is not an entry. A
+preview cannot be retried at all: it is tested again.
+
+**The industry starter workflows arrive as drafts.** Publishing a guessed workflow into somebody's
+workspace during onboarding would start it creating follow-ups on their customers before they had
+read it. `workflow_versions_publisher_published_it` is one-way precisely so a system-published
+version *could* exist, and this step chooses not to use that latitude. A template cannot carry ids
+— the statuses and task types it points at are created in the same transaction that applies it — so
+a parameter value may be `{ $taskType: 'Site visit' }` or `{ $status: 'Site visit scheduled' }` and
+`applyIndustryTemplate` resolves it. An unresolvable reference throws rather than installing a draft
+that can never be published, and what stops that happening is a **spec**:
+`packages/db/src/seeding/industry-templates.spec.ts` asserts every placeholder names a row that
+template or the common provisioning seed creates, and that every starter passes the same validator
+`publish` runs. It lives in `@leados/db` because that is the only package that can see both halves
+of the question. Ten industries, eleven workflows — every one of them the thing its trade loses
+money on, which is a lead that arrives and nobody rings; real estate gets a second, the site visit
+nobody confirms.
+
+Applying a template now writes workflows as well as a vocabulary, so it got the explicit
+transaction timeout this file's own traps predicted it would need: `TEMPLATE_TRANSACTION` (30 s),
+for the same reason provisioning has one — a catalogue write in somebody's first ten minutes.
+
+**`change_priority` proves the first exit criterion.** "Adding a new action type requires no engine
+change and no frontend release (proven by adding one)." It cost one declaration in
+`WORKFLOW_ACTIONS` and one handler method. No change to the executor, the validator, the editor, or
+any web component; the browser check reads its label — "Change the priority" — off the catalogue the
+API serves. That is the honest reading of the criterion: an action needs an implementation, and what
+it must not need is a change to the machinery or a release of the screens.
+
+**Files.** `packages/shared/src/automation.ts` (the new action), `industry-templates.ts` (the
+starter workflows, `TemplateWorkflow`, `TemplateReference`, `templateReferencesIn`);
+`packages/db/prisma/schema.prisma`, the `20261026023036_phase6_dry_run_and_retry` migration,
+`packages/db/src/seeding/industry-templates.ts` (the resolver) and its new spec;
+`apps/api/src/modules/automation/automation-runs.service.ts` (`testRun`, `retry`),
+`automation-executor.service.ts` (the preview branches), `automation-guardrails.service.ts`,
+`automation-handlers.service.ts`, `automation.controller.ts`, `automation.dto.ts`;
+`apps/api/src/modules/organizations/industry-templates.service.ts`;
+`apps/web/src/lib/automation.ts`, the automation screens' `actions.ts`, `workflow-forms.tsx`,
+`run-list.tsx`, `[id]/page.tsx`, `page.tsx` and the lead detail's automation tab.
+
+**Tests run.** `pnpm lint typecheck build` clean. **1 277 unit** (728 shared, 366 web, 175 api, 8 db)
+and **1 700 integration** (946 api e2e, 754 db). New: **6** registry and template cases in
+`@leados/shared`, **3** in the web lib, **4** in `@leados/db` reconciling the starter workflows
+against what a workspace actually has, **14 e2e** across the preview, the retry and the starters,
+**1** for the nurture flow end to end (in `whatsapp-sending.e2e-spec.ts`, where its four fixtures
+already live), and **3 schema-object cases** — two of which read the *predicate* rather than the
+name, because a later migration that keeps a constraint's name and loses half its meaning is
+invisible to an existence check. Then **35 HTTP checks** against a live API, worker and scheduler,
+and **20 browser checks** in Chromium, including both screens at 375 px.
+
+Two defects came out of that verification rather than out of the suites. The automation list screen
+still said **"Nothing runs yet — the part that carries them out arrives in the next release"**, a
+release after the engine shipped: a screen telling a business owner their published workflow is not
+working while it was. A sentence about what the product cannot do yet has to be deleted by the step
+that makes it untrue, and step 2 did not. And **both** of `whatsapp-sending.e2e-spec.ts`'s
+rate-limit tests counted against a wall-clock window — one spent the limit a `take()` at a time, the
+other asserted "the 101st call is refused" — which holds when the file runs alone and does not under
+a full suite: a hundred sequential Redis round-trips stop fitting inside one second, the window
+rolls over mid-loop, and the failure reads as the limiter being broken while it is the limiter being
+right. The first now writes the counter directly for this second *and* the next; the second counts
+allowances **within** the second rather than from the start of the loop.
+
+**Carried forward, named rather than assumed.** `tasks.automation_run_id` is still absent; a
+workflow-created follow-up is attributed through its step's `output.taskId`. Per-org **concurrency**
+is the queue's (`concurrency: 5`) rather than a per-workspace limiter, and a platform-wide emergency
+stop is Phase 10's. A preview is run against **one** lead at a time: there is no "what would this do
+to my whole database" report, which would be a different feature with a different cost. And the
+abandoned-checkout reference flow needs a checkout to abandon — see the criteria below.
+
+### Phase 6 exit criteria, measured
+
+| Criterion | State |
+| --- | --- |
+| Adding a new action type requires **no engine change and no frontend release** (proven by adding one) | **Done** — `change_priority` cost one registry declaration and one handler method. The editor renders its `select` from `GET /automation/catalogue`, and a browser check reads its label off that response rather than off the web bundle. |
+| Editing a live workflow does not alter in-flight runs (version pinning tested) | **Done** — a run holds `version_id`, a published version is never written again, and the step-2 e2e edits and republishes a workflow mid-run and asserts the run still executes the graph it started on. |
+| A deliberately dropped delayed job is recovered by the reconciliation sweep | **Done** — `automation_runs.resume_at` is the promise and the delayed job only the fast path; the e2e drops the job and asserts `maintenance.automation-resume` finishes the run. |
+| Loop detection stops a self-triggering workflow; daily action cap enforced; kill switch stops sends within seconds | **Done** — depth rides on `TenantPrincipal.automation` and `OutboxService.emit` defaults from it, so a workflow that re-triggers itself climbs to `MAX_CAUSATION_DEPTH` and is refused with a sentence; the cap is one atomic `INSERT … ON CONFLICT … RETURNING count`; the kill switch is read by the dispatcher *and* re-asked by a retry. |
+| Every automation decision, including "skipped because", is on the lead timeline | **Done** — `automation.enrolled`, `.action_executed`, `.skipped`, `.failed` and `.exited`, each with the engine's own sentence, visible to anyone with `lead:read` and with a describer per type. A **preview** deliberately writes none, which is why its run log carries them instead. |
+| The brief's two reference flows work end to end | **One of two, and the one that can be.** New-lead nurture — `send_whatsapp_template` → `wait` (working hours) → `create_task` → `branch` — is published and driven end to end in `whatsapp-sending.e2e-spec.ts`, where the fixtures it needs already are: the template reaches the fake Graph API as an `accepted` message, the two-hour wait suspends with the instant it is owed and is finished by the reconciliation sweep, the follow-up is a real assigned task with the lead's name interpolated into its title, and the branch takes the **reply** arm, because a lead who arrived through WhatsApp consented by arriving. **Abandoned checkout is not, and cannot be here:** its trigger is a checkout that was started and not paid for, and this product has no checkout until Phase 7's websites and Phase 8's payments. Every piece it needs exists (`wait`, `send_whatsapp_template`, `stop`, and `payment.received` as a trigger); what is missing is the event that starts it, which is named in Phase 7's scope rather than claimed here. |
+
+**Phase 6 is complete but for that one flow**, which is blocked on a phase that has not happened
+rather than on anything in this one. The registry is a declaration both halves read, a workflow is
+its definition with one projection for dispatch, the engine is a chain of short jobs whose authority
+is the workspace's and enumerated, the guardrails are five refusals each written as a sentence a
+business owner can read, and every workspace now arrives with the workflow its industry always
+wants — as a draft, because a template is a guess.
+
 ---
 
 ## Phase 7 — Websites & landing pages
@@ -3323,13 +3466,14 @@ deliberately **not** built, said once rather than implied: typing state and real
 would make it meaningful), bulk sending, and a usage rollup for questions older than the 24-month
 message retention.
 
-**Phase 6 is under way: steps 1 and 2 landed on 2026-10-25 and 2026-10-26** — the registry,
-workflows, versions and publish, and then the engine that runs them. Both have their own entries in
-the Phase 6 section below. **The next step is Phase 6 step 3 — the dry run, retry from the failed
-step, and the industry starter workflows**, which is what turns the engine into something a
-non-technical owner will trust: a preview that executes nothing, a failed run that can be resumed
-from where it stopped rather than from the beginning, and a workspace that arrives with the two or
-three workflows its industry always wants.
+**Phase 6 landed in three steps on 2026-10-25 and 2026-10-26** — the registry, workflows, versions
+and publish; then the engine that runs them; then the preview, the retry and the industry starter
+workflows. Each has its own entry in the Phase 6 section below, and the phase's exit criteria are
+measured in a table at the end of it: five of the six are done, and the sixth — the brief's
+abandoned-checkout flow — needs a checkout to abandon, which is Phase 7's website and Phase 8's
+payments rather than anything missing from the engine. **The next step is Phase 7 step 1 — the
+website and page model, with versioning and draft/publish/rollback**, which is also what makes that
+last criterion finishable.
 
 Four things from Phase 5 decided how Phase 6 started, and all four held:
 

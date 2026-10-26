@@ -10,6 +10,7 @@ import {
   type AutomationCatalogue,
   type RunSummary,
 } from '@/lib/automation';
+import { RetryRunButton } from './workflow-forms';
 
 /**
  * What the engine did, per run (`FR-AUT-7`).
@@ -26,10 +27,13 @@ export function RunList({
   runs,
   catalogue,
   emptyTitle,
+  /** The lead whose screen this is, when it is one: a retry started here has to revalidate it. */
+  leadId,
 }: {
   runs: readonly RunSummary[];
   catalogue: AutomationCatalogue | null;
   emptyTitle: string;
+  leadId?: string;
 }) {
   if (runs.length === 0) {
     return (
@@ -58,7 +62,9 @@ export function RunList({
                   </Link>
                   <span className="ml-2 text-xs font-normal text-[var(--color-text-muted)]">
                     {`version ${run.version}`}
-                    {run.cycle > 1 ? ` · run ${run.cycle} for this lead` : ''}
+                    {run.cycle !== null && run.cycle > 1
+                      ? ` · run ${run.cycle} for this lead`
+                      : ''}
                   </span>
                 </p>
                 <p className="text-xs text-[var(--color-text-muted)]" data-run-summary>
@@ -66,6 +72,18 @@ export function RunList({
                 </p>
               </div>
               <div className="flex items-center gap-2">
+                {/* A preview is labelled rather than left to be inferred from its steps: a row
+                    that looks like a run and was not one is the single most misleading thing this
+                    list could show. */}
+                {/* The attribute goes on a wrapper, because `Badge` takes `children` and `tone`
+                    and silently drops anything else — a `data-` attribute passed to it would not
+                    reach the DOM, and the check asserting it would fail on a screen that renders
+                    perfectly. */}
+                {run.dryRun && (
+                  <span data-run-preview>
+                    <Badge>Preview</Badge>
+                  </span>
+                )}
                 <Badge tone={RUN_STATUS_TONES[run.status] ?? 'neutral'}>
                   {RUN_STATUS_LABELS[run.status] ?? run.status}
                 </Badge>
@@ -97,6 +115,12 @@ export function RunList({
                   ))}
                 </ol>
               </details>
+            )}
+
+            {run.status === 'failed' && !run.dryRun && (
+              <div className="mt-2">
+                <RetryRunButton runId={run.id} workflowId={run.workflow.id} leadId={leadId} />
+              </div>
             )}
           </li>
         );
