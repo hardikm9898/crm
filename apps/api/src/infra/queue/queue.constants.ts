@@ -30,6 +30,14 @@ export const QUEUES = {
    * concurrency is the highest in the product, because the jobs are almost entirely waiting.
    */
   WEBHOOKS: 'webhooks',
+  /**
+   * The automation engine. Separate for the reason §7 of `queue-event-architecture.md` gives for
+   * taking it seriously: it is the highest-consequence subsystem in the product, and a workflow
+   * that sends two thousand WhatsApp templates must not be able to delay an invitation email or a
+   * lead's score while it does. Its concurrency is modest on purpose — the work is other people's
+   * writes, and a step takes a row lock on the lead it is about.
+   */
+  AUTOMATION: 'automation',
 } as const;
 
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
@@ -181,6 +189,30 @@ export const JOBS = {
    */
   WEBHOOK_RETRY_SWEEP: 'maintenance.webhook-retry',
   /**
+   * One domain event, offered to the workflows that listen for it (`FR-AUT-6`).
+   *
+   * A queue hop rather than work in the emitting transaction, which is the whole point of the
+   * outbox: a workflow that sends a template must not be able to fail the capture that triggered
+   * it. Idempotent on `(organization_id, workflow_id, trigger_event_id)` by a partial unique, so
+   * the dispatcher's at-least-once delivery produces exactly one run.
+   */
+  AUTOMATION_TRIGGER: 'automation.trigger',
+  /**
+   * One step of one run (`FR-AUT-7`). Each step enqueues the next, so a run is a chain of short
+   * jobs rather than one long one — which is what makes a wait a *delayed job* rather than a
+   * worker sitting still for two days.
+   */
+  AUTOMATION_STEP: 'automation.execute-step',
+  /**
+   * Waiting runs whose moment has come, swept (`maintenance.automation-resume`).
+   *
+   * The exit criterion is explicit: "a deliberately dropped delayed job is recovered by the
+   * reconciliation sweep". `automation_runs.resume_at` is what is owed, the delayed job is only
+   * the fast path, and a workflow stranded because Redis restarted is a business quietly not
+   * following up.
+   */
+  AUTOMATION_RESUME_SWEEP: 'maintenance.automation-resume',
+  /**
    * The two names `docs/queue-event-architecture.md` §5 gives them. Both live on `maintenance`
    * because both are platform-scoped sweeps over every tenant.
    */
@@ -218,6 +250,11 @@ export const QUEUE_POLICIES: Readonly<Record<QueueName, QueuePolicy>> = {
   // Idempotent per `(lead, rule, source event)`, so a retry is free; three attempts is enough to
   // ride out a transient database blip without holding a lead's score hostage.
   [QUEUES.SCORING]: { attempts: 3, backoffDelayMs: 5_000, concurrency: 10 },
+  // Three attempts, because a step that failed on a transient blip should be retried and a step
+  // that failed on its own merits is recorded as failed and not retried at all — the handler
+  // decides which by throwing or not. Concurrency 5: each step writes to the lead it is about, and
+  // a run is a chain of short jobs rather than one long one.
+  [QUEUES.AUTOMATION]: { attempts: 3, backoffDelayMs: 10_000, concurrency: 5 },
   // Low concurrency because each job is long and reads a whole file into memory; three attempts
   // because a run resumes from the rows it has already recorded rather than starting again, so a
   // retry after a database blip is safe and finishes the job.

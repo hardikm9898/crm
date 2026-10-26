@@ -617,6 +617,9 @@ describe('every activity type the product writes has a describer', () => {
     'conversation',
     'mention',
     'consent',
+    // Phase 6 step 2 writes all five: enrolled, acted, skipped, failed and exited. The skip is the
+    // one that matters most — it is the answer to "why didn't they get the message".
+    'automation',
   ];
 
   it('describes every type in a module the product writes, except the ones nothing writes yet', () => {

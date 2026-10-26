@@ -121,6 +121,73 @@ export class WebhookDispatchService {
   }
 
   /**
+   * One delivery to **one named** endpoint, for a workflow's `call_webhook` step (`FR-AUT-4`).
+   *
+   * Not `fanOut`: that answers "who subscribed to this event", and an automation step names the
+   * endpoint it wants. It is the same delivery row, the same signature, the same retry schedule and
+   * the same log — a second delivery path would be a second set of retry rules over one contract,
+   * which is how an event ends up sent three times.
+   *
+   * The event type is the step's own, so an endpoint does not have to subscribe to receive what a
+   * workflow was explicitly told to send it.
+   */
+  async deliverToEndpoint(input: {
+    organizationId: string;
+    endpointId: string;
+    eventId: string;
+    eventName: string;
+    payload: Record<string, unknown>;
+  }): Promise<{ created: number }> {
+    return tenantContext.run(
+      systemPrincipal(input.organizationId, newId()),
+      async (): Promise<{ created: number }> => {
+        const endpoint = await this.db.client.webhookEndpoint.findFirst({
+          where: { id: input.endpointId, isActive: true },
+          select: { id: true },
+        });
+        if (endpoint === null) return { created: 0 };
+
+        // Idempotent on the step's own key, exactly as the fan-out is on the event's: a retried
+        // job must not deliver twice.
+        const existing = await this.db.client.webhookDelivery.findFirst({
+          where: { endpointId: endpoint.id, eventId: input.eventId },
+          select: { id: true },
+        });
+        if (existing) return { created: 0 };
+
+        const occurredAt = new Date();
+        const body = buildWebhookPayload({
+          eventId: input.eventId,
+          type: input.eventName,
+          occurredAt,
+          organizationId: input.organizationId,
+          data: input.payload,
+        });
+        const deliveryId = newId();
+        await this.db.client.webhookDelivery.create({
+          data: {
+            id: deliveryId,
+            organizationId: input.organizationId,
+            endpointId: endpoint.id,
+            eventId: input.eventId,
+            eventType: input.eventName,
+            payload: body as never,
+            nextAttemptAt: occurredAt,
+            createdAt: occurredAt,
+          },
+        });
+        await this.queues.enqueue(
+          QUEUES.WEBHOOKS,
+          JOBS.WEBHOOK_DELIVER,
+          { organizationId: input.organizationId, aggregateId: deliveryId, attemptNo: 1 },
+          { jobId: `webhook-deliver-${deliveryId}-1` },
+        );
+        return { created: 1 };
+      },
+    );
+  }
+
+  /**
    * One attempt at one delivery.
    *
    * Everything about the outcome is written whatever happens: the attempt row, the delivery's

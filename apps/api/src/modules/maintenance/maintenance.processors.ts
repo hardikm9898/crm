@@ -263,6 +263,16 @@ export class ActivityPartitionProcessor implements JobProcessor {
           SELECT ensure_message_partition(${target}::timestamptz)
         `;
         if (messageRow) created.push(messageRow.ensure_message_partition);
+        // And `automation_run_steps`, a fifth time: a row per step per run, retained 180 days
+        // (§15). A month with no partition sends every step to the default one, which then blocks
+        // attaching the real month — five tables, one job, because a second job is one somebody
+        // forgets to schedule.
+        const [stepRow] = await this.db.client.$queryRaw<
+          { ensure_automation_run_step_partition: string }[]
+        >`
+          SELECT ensure_automation_run_step_partition(${target}::timestamptz)
+        `;
+        if (stepRow) created.push(stepRow.ensure_automation_run_step_partition);
       }
 
       const [stranded] = await this.db.client.$queryRaw<{ count: bigint }[]>`
@@ -277,11 +287,15 @@ export class ActivityPartitionProcessor implements JobProcessor {
       const [strandedMessages] = await this.db.client.$queryRaw<{ count: bigint }[]>`
         SELECT count(*)::bigint AS count FROM messages_default
       `;
+      const [strandedSteps] = await this.db.client.$queryRaw<{ count: bigint }[]>`
+        SELECT count(*)::bigint AS count FROM automation_run_steps_default
+      `;
       const strandedCount =
         Number(stranded?.count ?? 0n) +
         Number(strandedPayloads?.count ?? 0n) +
         Number(strandedDeliveries?.count ?? 0n) +
-        Number(strandedMessages?.count ?? 0n);
+        Number(strandedMessages?.count ?? 0n) +
+        Number(strandedSteps?.count ?? 0n);
 
       if (strandedCount > 0) {
         // Warn, not error: the rows are readable and the product works. What they block is the next

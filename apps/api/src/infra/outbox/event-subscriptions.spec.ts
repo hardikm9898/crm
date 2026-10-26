@@ -85,6 +85,22 @@ describe('event subscriptions', () => {
     }
   });
 
+  /**
+   * Phase 6, step 2. Knowing the event is not enough: it has to reach the **dispatcher**. A
+   * trigger whose event is listed with no automation subscription is a workflow that publishes,
+   * reports itself live, and never runs — which is the same failure one layer along from the one
+   * above, and the reason `AUTOMATION` is written once and spread.
+   */
+  it('sends every automation trigger’s event to the dispatcher', () => {
+    for (const trigger of WORKFLOW_TRIGGERS) {
+      if (trigger.event === null) continue;
+      const subscribed = subscribersFor(trigger.event).some(
+        (subscription) => subscription.jobName === JOBS.AUTOMATION_TRIGGER,
+      );
+      expect(subscribed, `${trigger.key} → ${trigger.event} reaches no dispatcher`).toBe(true);
+    }
+  });
+
   it('declares no duplicate job for one event', () => {
     for (const [eventName, subscriptions] of Object.entries(EVENT_SUBSCRIPTIONS)) {
       const keys = subscriptions.map((s) => `${s.queue}/${s.jobName}`);

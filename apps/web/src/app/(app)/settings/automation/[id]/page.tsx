@@ -10,12 +10,14 @@ import {
   STATUS_TONES,
   loadCatalogue,
   loadReferenceLists,
+  loadRuns,
   loadWorkflow,
   type AutomationCatalogue,
   type ReferenceLists,
   type WorkflowRecord,
 } from '@/lib/automation';
 import { WorkflowEditor } from '../_components/workflow-editor';
+import { RunList } from '../_components/run-list';
 import { GuardrailsForm, PublishButton } from '../_components/workflow-forms';
 
 /**
@@ -59,6 +61,12 @@ export default async function WorkflowPage({ params }: { params: Promise<{ id: s
   }
 
   const references: ReferenceLists = await loadReferenceLists(token, catalogue);
+  // What it has actually done. Swallowed, because a workflow that will not open because its run
+  // log failed is worse than one with the log missing — and the panel says so itself.
+  const runs = await loadRuns(token, `?workflowId=${id}&limit=10`).catch(() => ({
+    items: [],
+    total: 0,
+  }));
   const editable = workflow.draft ?? workflow.current;
 
   return (
@@ -132,6 +140,17 @@ export default async function WorkflowPage({ params }: { params: Promise<{ id: s
               }.`}
             </p>
           </div>
+        </Card>
+
+        <Card
+          title="What it has done"
+          description={`${runs.total} ${runs.total === 1 ? 'run' : 'runs'} so far. Each step says what happened — and why nothing happened, when nothing did.`}
+        >
+          <RunList
+            runs={runs.items}
+            catalogue={catalogue}
+            emptyTitle="This workflow has not run yet"
+          />
         </Card>
 
         <Card

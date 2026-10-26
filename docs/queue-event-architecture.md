@@ -606,6 +606,28 @@ a dry-run mode (`POST /workflows/{id}/test-run`) that logs every decision and ex
 single bad workflow must never be able to message a tenant's entire customer base or get their WABA
 banned — this is the highest-consequence subsystem in the product.
 
+> **Amendment, 2026-10-26 (implementation, Phase 6 steps 1 and 2).** The engine is built, and two
+> things above describe a design that was not taken.
+>
+> **`configSchema: ZodType<C>` is not how the registry works.** A Zod object cannot be read by a
+> browser, so it would drive backend validation and leave the editor needing a hand-written form
+> per action — which makes "adding an action type requires no frontend release" false. The registry
+> is a **declaration** instead: `WORKFLOW_ACTIONS[].params` is a list of fields with a type, a
+> label and, where the value is a row in this workspace, which kind of row.
+> `GET /automation/catalogue` serves it, the editor renders from it, and
+> `validateWorkflowDefinition` checks a saved graph against the same list
+> ([ADR-0041](./decisions/ADR-0041-a-workflow-is-its-definition-and-the-dispatch-index-is-the-only-projection.md)).
+>
+> **`ConditionEvaluator` does not reuse §4's filter DSL.** The automation condition vocabulary is
+> its own (`CONDITION_FIELDS` plus nine operators), because a saved view filters *rows a person is
+> browsing* and an automation condition asks about *one lead the engine already has*. Sharing the
+> expression language would mean sharing a compiler to SQL that an in-process evaluation does not
+> want.
+>
+> Everything else in **Execution** is as built, including the single indexed dispatch query and the
+> step-per-job chain. The pieces that do not exist yet are named in the roadmap's step entry: no
+> dry run, and no retry-from-failed-step (`attempt` is on the step row, waiting for it).
+
 ### Observability
 
 Every run is inspectable per lead (`GET /leads/{id}/automation-runs`) and per workflow, with each

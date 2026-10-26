@@ -139,6 +139,12 @@ export const TENANT_MODELS = [
   'Workflow',
   'WorkflowVersion',
   'WorkflowTrigger',
+  // Phase 6, step 2 — the executor. All four are tenant-scoped: a run is about one workspace's
+  // lead, and a guardrail counter is the limit on one workspace's own sending.
+  'AutomationEnrollment',
+  'AutomationRun',
+  'AutomationRunStep',
+  'AutomationCounter',
 ] as const;
 
 export type TenantModel = (typeof TENANT_MODELS)[number];

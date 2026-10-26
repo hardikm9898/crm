@@ -206,6 +206,16 @@ export const SCHEDULES: readonly ScheduleDefinition[] = [
   },
   {
     queue: QUEUES.MAINTENANCE,
+    jobName: JOBS.AUTOMATION_RESUME_SWEEP,
+    // Every minute, and the exit criterion says why: "a deliberately dropped delayed job is
+    // recovered by the reconciliation sweep". A nurture sequence stopped half way through because
+    // Redis restarted is a business quietly not following up, and the read is an indexed scan of
+    // nothing on almost every tick.
+    cron: '* * * * *',
+    description: 'Resume automation runs whose wait is over',
+  },
+  {
+    queue: QUEUES.MAINTENANCE,
     jobName: JOBS.CONVERSATION_SWEEP,
     // Every minute, like the notification release and for the same reason: a snooze somebody set
     // has to be **delivered** rather than merely to expire, and a lapsed lock the column still

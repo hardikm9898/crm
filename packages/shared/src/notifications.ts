@@ -279,6 +279,28 @@ export const NOTIFICATION_TYPES: readonly NotificationTypeSpec[] = [
     staleness: 'never',
   },
   {
+    type: 'automation.notice',
+    label: 'Things a workflow wants you to know',
+    hint: 'When one of this workspace’s workflows is told to notify you — a hot lead, a promise running out.',
+    group: 'work',
+    defaultChannels: ['in_app'],
+    optOut: true,
+    /**
+     * Held through quiet hours. A workflow is a standing instruction somebody wrote in daylight,
+     * and the whole point of writing one is that it does not need a person watching — so a 02:00
+     * delivery wakes somebody to tell them about work that waits until the morning. The WhatsApp
+     * send failure is the only notification in this product that does not wait, and it does not
+     * wait because a customer is on the other end of it.
+     */
+    respectsQuietHours: true,
+    /**
+     * Never stale. Only the workflow knows what its own notice was about, and this registry cannot
+     * ask it — so dropping one would mean guessing, and "was I ever told?" is the question the
+     * held-notification design exists to be able to answer.
+     */
+    staleness: 'never',
+  },
+  {
     type: 'conversation.woke',
     label: 'Snoozed conversations coming back',
     hint: 'When a conversation you put aside reaches the time you chose.',

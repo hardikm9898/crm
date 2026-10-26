@@ -108,6 +108,10 @@ interface Tenant {
   // `POST /calls/:id/outcome` on an already-settled call taught this file.
   workflowId: string;
   workflowVersionId: string;
+  // Phase 6, step 2 — a run to aim `/automation/runs/:id` at. Created directly rather than by
+  // dispatching an event: the sweep needs a row in the state the endpoint expects, and driving the
+  // engine here would make this fixture depend on the engine's own behaviour.
+  automationRunId: string;
 }
 
 let orgA: Tenant;
@@ -603,6 +607,30 @@ async function createTenant(label: string): Promise<Tenant> {
     } as never,
   });
 
+  const automationEnrollmentId = newId();
+  const automationRunId = newId();
+  await ctx.db.automationEnrollment.create({
+    data: {
+      id: automationEnrollmentId,
+      organizationId,
+      workflowId,
+      versionId: workflowVersionId,
+      leadId: lead.body.data.id,
+      cycle: 1,
+    } as never,
+  });
+  await ctx.db.automationRun.create({
+    data: {
+      id: automationRunId,
+      organizationId,
+      workflowId,
+      versionId: workflowVersionId,
+      enrollmentId: automationEnrollmentId,
+      leadId: lead.body.data.id,
+      triggerType: 'lead.created',
+    } as never,
+  });
+
   const slaClock = await ctx.db.slaClock.findFirstOrThrow({
     where: { organizationId, leadId: lead.body.data.id },
   });
@@ -684,6 +712,7 @@ async function createTenant(label: string): Promise<Tenant> {
     cannedReplyId,
     workflowId,
     workflowVersionId,
+    automationRunId,
   };
 }
 
@@ -1021,6 +1050,9 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       '/automation/workflows/:id/publish': `/automation/workflows/${orgA.workflowId}/publish`,
       '/automation/workflows/:id/versions': `/automation/workflows/${orgA.workflowId}/versions`,
       '/automation/workflows/:id/versions/:versionId': `/automation/workflows/${orgA.workflowId}/versions/${orgA.workflowVersionId}`,
+      // Phase 6, step 2 — the engine
+      '/automation/workflows/:id/start': `/automation/workflows/${orgA.workflowId}/start`,
+      '/automation/runs/:id': `/automation/runs/${orgA.automationRunId}`,
     };
 
     // An unmapped parameter would test nothing meaningful, so it is reported instead.
@@ -1113,6 +1145,7 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       ['cannedReplyId', orgA.cannedReplyId],
       ['workflowId', orgA.workflowId],
       ['workflowVersionId', orgA.workflowVersionId],
+      ['automationRunId', orgA.automationRunId],
     ];
 
     const problems: string[] = [];
@@ -1456,6 +1489,10 @@ function bodyFor(
     // comes from the guard rather than from validation.
     case '/automation/workflows/:id':
       return { name: `Renamed by another workspace ${SUFFIX}` };
+    // A lead of the **caller's own** workspace: a manual start names a lead, and the sweep's
+    // cross-tenant pass has to be refused by the workflow's tenancy rather than by the lead's.
+    case '/automation/workflows/:id/start':
+      return { leadId: target.leadId };
     case '/automation/workflows/:id/definition':
       return {
         definition: {

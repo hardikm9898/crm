@@ -3,15 +3,20 @@ import { PERMISSIONS } from '@leados/shared';
 import { RequirePermission } from '../../infra/authz/permission.decorator.js';
 import { withMessage } from '../../infra/http/envelope.interceptor.js';
 import { zodBody, ZodBody } from '../../infra/http/zod-validation.pipe.js';
+import { AutomationRunsService } from './automation-runs.service.js';
 import { AutomationService } from './automation.service.js';
 import {
   createWorkflowSchema,
+  listRunsSchema,
   listWorkflowsSchema,
   saveDefinitionSchema,
+  startWorkflowSchema,
   updateWorkflowSchema,
   type CreateWorkflowInput,
+  type ListRunsQuery,
   type ListWorkflowsQuery,
   type SaveDefinitionInput,
+  type StartWorkflowInput,
   type UpdateWorkflowInput,
 } from './automation.dto.js';
 
@@ -28,7 +33,10 @@ import {
  */
 @Controller('automation')
 export class AutomationController {
-  constructor(private readonly automation: AutomationService) {}
+  constructor(
+    private readonly automation: AutomationService,
+    private readonly runs: AutomationRunsService,
+  ) {}
 
   /**
    * The registry (`FR-AUT-1`).
@@ -47,6 +55,25 @@ export class AutomationController {
   @RequirePermission(PERMISSIONS.AUTOMATION_MANAGE)
   async list(@Query(new ZodBody(listWorkflowsSchema)) query: ListWorkflowsQuery) {
     return this.automation.list(query);
+  }
+
+  /**
+   * What the engine has done (`FR-AUT-7`).
+   *
+   * Declared before `workflows/:id` is not a concern — `runs` is its own segment — but it is here
+   * because a reader looking for "where do I see what happened" should not have to scroll past
+   * the whole of CRUD.
+   */
+  @Get('runs')
+  @RequirePermission(PERMISSIONS.AUTOMATION_MANAGE)
+  async runList(@Query(new ZodBody(listRunsSchema)) query: ListRunsQuery) {
+    return this.runs.list(query);
+  }
+
+  @Get('runs/:id')
+  @RequirePermission(PERMISSIONS.AUTOMATION_MANAGE)
+  async run(@Param('id') id: string) {
+    return this.runs.findOne(id);
   }
 
   @Post('workflows')
@@ -100,6 +127,22 @@ export class AutomationController {
   @RequirePermission(PERMISSIONS.AUTOMATION_MANAGE)
   async publish(@Param('id') id: string) {
     return withMessage(await this.automation.publish(id), 'Published and live');
+  }
+
+  /**
+   * Starts this workflow on one lead, by hand — the `manual` trigger's own door.
+   *
+   * The same path an event takes, so the re-entry policy, the caps and the loop ceiling all apply:
+   * a manual start is a person asking, not a way around the guards.
+   */
+  @Post('workflows/:id/start')
+  @HttpCode(202)
+  @RequirePermission(PERMISSIONS.AUTOMATION_MANAGE)
+  async start(@Param('id') id: string, @Body(zodBody(startWorkflowSchema)) body: unknown) {
+    return withMessage(
+      await this.runs.startManually(id, (body as StartWorkflowInput).leadId),
+      'Started — the run will appear in a moment',
+    );
   }
 
   @Get('workflows/:id/versions')

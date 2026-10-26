@@ -356,3 +356,121 @@ export async function loadReferenceLists(
   );
   return lists;
 }
+
+// ── What the engine did (`FR-AUT-7`) ─────────────────────────────────────────
+
+export interface RunStep {
+  readonly id: string;
+  readonly stepId: string;
+  readonly action: string;
+  readonly attempt: number;
+  readonly status: string;
+  readonly decision: string | null;
+  readonly reason: string | null;
+  readonly error: string | null;
+  readonly startedAt: string;
+  readonly finishedAt: string | null;
+}
+
+export interface RunSummary {
+  readonly id: string;
+  /**
+   * Present on the list as well as the detail.
+   *
+   * It was optional at first and the list did not send it, so both screens rendered a run row with
+   * no steps behind it — on the panels whose whole job is "why". Required here is what makes that
+   * a type error rather than an empty disclosure.
+   */
+  readonly steps: readonly RunStep[];
+  readonly status: string;
+  readonly trigger: string;
+  readonly workflow: { readonly id: string; readonly name: string };
+  readonly lead: { readonly id: string; readonly fullName: string };
+  readonly cycle: number;
+  readonly version: number;
+  readonly currentStepId: string | null;
+  readonly resumeAt: string | null;
+  readonly stepsRun: number;
+  readonly startedAt: string;
+  readonly finishedAt: string | null;
+  readonly error: string | null;
+}
+
+export interface RunRecord extends RunSummary {
+  readonly exitReason: string | null;
+}
+
+export const RUN_STATUS_LABELS: Record<string, string> = {
+  running: 'Running',
+  waiting: 'Waiting',
+  completed: 'Finished',
+  failed: 'Failed',
+  cancelled: 'Cancelled',
+};
+
+export const RUN_STATUS_TONES: Record<string, 'neutral' | 'success' | 'warning' | 'danger'> = {
+  running: 'neutral',
+  waiting: 'warning',
+  completed: 'success',
+  failed: 'danger',
+  cancelled: 'neutral',
+};
+
+export const STEP_STATUS_TONES: Record<string, 'neutral' | 'success' | 'warning' | 'danger'> = {
+  pending: 'neutral',
+  succeeded: 'success',
+  skipped: 'warning',
+  failed: 'danger',
+};
+
+export async function loadRuns(
+  token: string | null | undefined,
+  query: string,
+): Promise<{ items: RunSummary[]; total: number }> {
+  const response = await request<RunSummary[]>(`/automation/runs${query}`, { token });
+  const pagination = response.meta?.pagination as { total?: number } | undefined;
+  return { items: response.data, total: pagination?.total ?? response.data.length };
+}
+
+export async function loadRun(
+  token: string | null | undefined,
+  id: string,
+): Promise<RunRecord> {
+  const response = await request<RunRecord>(`/automation/runs/${id}`, { token });
+  return response.data;
+}
+
+/**
+ * What a step did, in the words of the business rather than the registry's key.
+ *
+ * The engine's own `reason` is preferred when there is one — "sent the template “Site visit”",
+ * "nobody owns this lead, so there was nobody to tell" — because a row reading `send_whatsapp_template`
+ * and `skipped` makes somebody ask the two questions this screen exists to answer. The action key
+ * is still shown beside it, for whoever is debugging rather than reading.
+ */
+export function describeStep(step: RunStep, catalogue: AutomationCatalogue | null): string {
+  const spec = catalogue?.actions.find((entry) => entry.key === step.action);
+  const name = spec?.label ?? step.action;
+  if (step.status === 'failed') return `${name} — failed: ${step.error ?? 'no reason recorded'}`;
+  if (step.status === 'skipped') return `${name} — skipped: ${step.reason ?? 'no reason recorded'}`;
+  if (step.decision !== null) return `${name} — took the “${step.decision}” path: ${step.reason ?? ''}`.trim();
+  return step.reason === null ? name : `${name} — ${step.reason}`;
+}
+
+/** A sentence for a run's own state, which is the first thing somebody reads. */
+export function describeRun(run: RunSummary): string {
+  switch (run.status) {
+    case 'waiting':
+      return run.resumeAt === null
+        ? 'Waiting.'
+        : `Waiting until ${new Date(run.resumeAt).toLocaleString()}.`;
+    case 'failed':
+      return `Failed: ${run.error ?? 'no reason recorded'}.`;
+    case 'running':
+      return `Running — ${run.stepsRun} ${run.stepsRun === 1 ? 'step' : 'steps'} so far.`;
+    case 'cancelled':
+      return 'Cancelled.';
+    default:
+      return `Finished after ${run.stepsRun} ${run.stepsRun === 1 ? 'step' : 'steps'}.`;
+  }
+}

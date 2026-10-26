@@ -61,3 +61,15 @@ export const listWorkflowsSchema = z.object({
   cursor: z.string().max(200).optional(),
 });
 export type ListWorkflowsQuery = z.infer<typeof listWorkflowsSchema>;
+
+export const listRunsSchema = z.object({
+  leadId: z.string().uuid().optional(),
+  workflowId: z.string().uuid().optional(),
+  status: z.enum(['running', 'waiting', 'completed', 'failed', 'cancelled']).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+  cursor: z.string().max(200).optional(),
+});
+export type ListRunsQuery = z.infer<typeof listRunsSchema>;
+
+export const startWorkflowSchema = z.object({ leadId: z.string().uuid() });
+export type StartWorkflowInput = z.infer<typeof startWorkflowSchema>;

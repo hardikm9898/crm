@@ -935,6 +935,28 @@ CRUD /seo/keywords  GET /seo/rankings
 >   workflow has moved on (`FR-AUT-5`).
 > - `/workflows/{id}/runs`, `/automation-runs/{id}`, `POST :id/test-run` and
 >   `POST :id/{retry|kill}` remain unbuilt: there is no executor yet.
+>
+> **Amendment, 2026-10-26 (implementation, Phase 6 step 2).** The engine is built, and with it:
+>
+> | Built                                      | Sketched                           | Why                                                                                     |
+> | ------------------------------------------ | ---------------------------------- | --------------------------------------------------------------------------------------- |
+> | `GET /automation/runs?leadId=&workflowId=` | `GET /workflows/{id}/runs`         | One list, filtered — the per-lead read is the one that matters and deserves no second route |
+> | `GET /automation/runs/{id}`                | `GET /automation-runs/{id}`        | One prefix for the module                                                                |
+> | `POST /automation/workflows/{id}/start`    | (the `manual` trigger had no door) | A person starting a workflow on one lead, through the same guards an event goes through  |
+>
+> All three behind `automation:manage` rather than `lead:read`: a run's step log carries the
+> parameters a workflow was configured with, which is workspace configuration rather than a fact
+> about the lead. What somebody with `lead:read` reads is the **timeline**, where every automation
+> decision lands with its reason (`FR-AUT-7`).
+>
+> `POST :id/start` answers **202**: the first step may send a WhatsApp template, and a button must
+> not wait for a provider. It is not a way around the guardrails — the re-entry policy, the daily
+> cap and the loop ceiling all apply, because it goes through the same dispatcher.
+>
+> Still unbuilt, and named rather than implied: `POST :id/test-run` (a dry run) and
+> `POST /automation/runs/{id}/retry` (retry from the failed step). `automation_run_steps.attempt`
+> exists for the second one.
+
 
 ### Dashboards, billing, notifications
 

@@ -779,9 +779,9 @@ model Organization {
   taskReminders     TaskReminder[]
 
   // Phase 4 — capture
-  forms               Form[]
-  formFields          FormField[]
-  formSubmissions     FormSubmission[]
+  forms                 Form[]
+  formFields            FormField[]
+  formSubmissions       FormSubmission[]
   /// Which industry template this workspace applied, if any (`FR-ONB-2`).
   ///
   /// Recorded so the onboarding screen can say what was installed, and so a support conversation
@@ -790,32 +790,36 @@ model Organization {
   /// than `Restrict` because retiring a template from the catalogue must not be blocked by the
   /// workspaces that once used it; this is a simple FK, not one of the composite ones where
   /// `SetNull` would null a NOT NULL `organization_id`.
-  industryTemplate    IndustryTemplate?        @relation(fields: [industryTemplateKey], references: [key], onDelete: SetNull)
-  industryTemplateKey String?                  @map("industry_template_key")
-  apiKeys             ApiKey[]
-  apiLogs             ApiLog[]
-  integrations        IntegrationConnection[]
-  whatsappAccounts    WhatsAppAccount[]
-  whatsappNumbers     WhatsAppNumber[]
-  whatsappTemplates   WhatsAppTemplate[]
-  conversations       Conversation[]
-  messages            Message[]
-  messageStatusEvents MessageStatusEvent[]
-  messageMedia        MessageMedia[]
-  conversationNotes   ConversationNote[]
-  cannedReplies       CannedReply[]
-  syncCursors         SyncCursor[]
-  integrationChecks   IntegrationHealthCheck[]
-  providerEvents      ProviderEvent[]
-  inboundPayloads     InboundPayload[]
-  webhookEndpoints    WebhookEndpoint[]
-  webhookDeliveries   WebhookDelivery[]
-  webhookAttempts     WebhookAttempt[]
-  ingestionErrors     IngestionError[]
-  idempotencyKeys     IdempotencyKey[]
-  workflows           Workflow[]
-  workflowVersions    WorkflowVersion[]
-  workflowTriggers    WorkflowTrigger[]
+  industryTemplate      IndustryTemplate?        @relation(fields: [industryTemplateKey], references: [key], onDelete: SetNull)
+  industryTemplateKey   String?                  @map("industry_template_key")
+  apiKeys               ApiKey[]
+  apiLogs               ApiLog[]
+  integrations          IntegrationConnection[]
+  whatsappAccounts      WhatsAppAccount[]
+  whatsappNumbers       WhatsAppNumber[]
+  whatsappTemplates     WhatsAppTemplate[]
+  conversations         Conversation[]
+  messages              Message[]
+  messageStatusEvents   MessageStatusEvent[]
+  messageMedia          MessageMedia[]
+  conversationNotes     ConversationNote[]
+  cannedReplies         CannedReply[]
+  syncCursors           SyncCursor[]
+  integrationChecks     IntegrationHealthCheck[]
+  providerEvents        ProviderEvent[]
+  inboundPayloads       InboundPayload[]
+  webhookEndpoints      WebhookEndpoint[]
+  webhookDeliveries     WebhookDelivery[]
+  webhookAttempts       WebhookAttempt[]
+  ingestionErrors       IngestionError[]
+  idempotencyKeys       IdempotencyKey[]
+  workflows             Workflow[]
+  workflowVersions      WorkflowVersion[]
+  workflowTriggers      WorkflowTrigger[]
+  automationEnrollments AutomationEnrollment[]
+  automationRuns        AutomationRun[]
+  automationRunSteps    AutomationRunStep[]
+  automationCounters    AutomationCounter[]
 
   @@index([status])
   @@index([createdAt])
@@ -1739,18 +1743,20 @@ model Lead {
 
   payments Payment[]
 
-  tasks           Task[]
-  slaClocks       SlaClock[]
-  calls           Call[]
-  formSubmissions FormSubmission[]
-  conversations   Conversation[]
+  tasks                 Task[]
+  slaClocks             SlaClock[]
+  calls                 Call[]
+  formSubmissions       FormSubmission[]
+  conversations         Conversation[]
+  automationEnrollments AutomationEnrollment[] @relation("lead_enrollments")
+  automationRuns        AutomationRun[]        @relation("lead_automation_runs")
   /// `Restrict` rather than `SetNull`: this is a composite FK, and `SetNull` would null the NOT
   /// NULL `organization_id` with it. The pointer is cleared by the recompute before a task is ever
   /// hard-deleted.
-  nextActionTask  Task?            @relation("lead_next_action", fields: [organizationId, nextActionTaskId], references: [organizationId, id], onDelete: Restrict, map: "leads_next_action_task_same_org_fk")
+  nextActionTask        Task?                  @relation("lead_next_action", fields: [organizationId, nextActionTaskId], references: [organizationId, id], onDelete: Restrict, map: "leads_next_action_task_same_org_fk")
   /// `Restrict`: a form with captured leads is deactivated, not deleted — the attribution a report
   /// reads a year later is the whole point of the column.
-  form            Form?            @relation(fields: [organizationId, formId], references: [organizationId, id], onDelete: Restrict, map: "leads_form_same_org_fk")
+  form                  Form?                  @relation(fields: [organizationId, formId], references: [organizationId, id], onDelete: Restrict, map: "leads_form_same_org_fk")
 
   @@unique([organizationId, id], name: "lead_tenant_key")
   /// The default list.
@@ -5011,6 +5017,9 @@ model Workflow {
   versions WorkflowVersion[] @relation("workflow_versions")
   trigger  WorkflowTrigger?  @relation("workflow_trigger")
 
+  enrollments AutomationEnrollment[] @relation("workflow_enrollments")
+  runs        AutomationRun[]        @relation("workflow_runs")
+
   @@unique([organizationId, id], name: "workflow_tenant_key")
   /// The list screen's own read.
   @@index([organizationId, status, updatedAt(sort: Desc)])
@@ -5049,6 +5058,9 @@ model WorkflowVersion {
   currentFor Workflow[]        @relation("workflow_current_version")
   triggers   WorkflowTrigger[] @relation("workflow_trigger_version")
 
+  enrollments AutomationEnrollment[] @relation("workflow_version_enrollments")
+  runs        AutomationRun[]        @relation("workflow_version_runs")
+
   @@unique([organizationId, id], name: "workflow_version_tenant_key")
   @@unique([organizationId, workflowId, version], name: "workflow_version_number_key")
   @@index([organizationId, workflowId, version(sort: Desc)])
@@ -5086,4 +5098,169 @@ model WorkflowTrigger {
   /// The whole reason this table exists: one indexed lookup per domain event.
   @@index([organizationId, event])
   @@map("workflow_triggers")
+}
+
+// ─── Phase 6, step 2 — the executor's own tables (`FR-AUT-6`, `FR-AUT-7`) ─────────────────────
+//
+// §9 of database-design modelled these with `entity_type` + `entity_id`. They carry `lead_id`
+// instead, with a composite FK: every trigger's subject is a lead today
+// (`WORKFLOW_TRIGGERS[].subject`), an `entity_id` with no foreign key is a dangling reference
+// nothing catches, and `tasks` already shows the shape a second subject takes here — a nullable
+// column per kind with a CHECK that exactly one is set. ADR-0042 records it.
+
+model AutomationEnrollment {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+  workflowId     String @map("workflow_id") @db.Uuid
+  /// The version this lead entered on. A later publish does not move them.
+  versionId      String @map("version_id") @db.Uuid
+  leadId         String @map("lead_id") @db.Uuid
+
+  /// 1 for the first time this lead entered, 2 for the second. The re-entry policy decides whether
+  /// a second one may exist at all, and the unique below is what makes that a guarantee rather
+  /// than a check two jobs can both pass.
+  cycle Int @default(1)
+
+  status     String  @default("active")
+  /// Why it ended, in a sentence — "the workflow said stop", "the lead was deleted".
+  exitReason String? @map("exit_reason")
+
+  enrolledAt  DateTime  @default(now()) @map("enrolled_at") @db.Timestamptz(6)
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  workflow     Workflow        @relation("workflow_enrollments", fields: [organizationId, workflowId], references: [organizationId, id], onDelete: Cascade, map: "automation_enrollments_workflow_same_org_fk")
+  version      WorkflowVersion @relation("workflow_version_enrollments", fields: [organizationId, versionId], references: [organizationId, id], onDelete: Restrict, map: "automation_enrollments_version_same_org_fk")
+  lead         Lead            @relation("lead_enrollments", fields: [organizationId, leadId], references: [organizationId, id], onDelete: Cascade, map: "automation_enrollments_lead_same_org_fk")
+
+  runs AutomationRun[] @relation("enrollment_runs")
+
+  @@unique([organizationId, id], name: "automation_enrollment_tenant_key")
+  /// `FR-AUT-6`: the re-entry policy, enforced by the database rather than by a read-then-write.
+  @@unique([organizationId, workflowId, leadId, cycle], name: "automation_enrollment_cycle_key")
+  @@index([organizationId, leadId, enrolledAt(sort: Desc)])
+  @@map("automation_enrollments")
+}
+
+model AutomationRun {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+  workflowId     String @map("workflow_id") @db.Uuid
+  /// The version this run is **pinned** to, and the row it reads its graph from. Editing the
+  /// workflow writes a new version and cannot reach in here (`FR-AUT-5`).
+  versionId      String @map("version_id") @db.Uuid
+  enrollmentId   String @map("enrollment_id") @db.Uuid
+  leadId         String @map("lead_id") @db.Uuid
+
+  /// The outbox event that started it. The partial unique on it is the whole of "a retried
+  /// delivery produces one automation run": the dispatcher is at-least-once by design.
+  triggerEventId String? @map("trigger_event_id") @db.Uuid
+  triggerType    String  @map("trigger_type")
+
+  status        String    @default("running")
+  currentStepId String?   @map("current_step_id")
+  /// When a waiting run should be picked up. Read by the delayed job *and* by the reconciliation
+  /// sweep, because a job lost while Redis was down must not strand a workflow for ever.
+  resumeAt      DateTime? @map("resume_at") @db.Timestamptz(6)
+
+  /// How many automation-caused events deep this run is. A workflow whose action re-triggers it
+  /// climbs this until the dispatcher refuses — loop detection without a cycle checker.
+  causationDepth Int @default(0) @map("causation_depth")
+
+  /// What the steps have produced so far, and the trigger payload. Read by variable interpolation.
+  context Json @default("{}") @db.JsonB
+
+  stepsRun Int @default(0) @map("steps_run")
+
+  startedAt  DateTime  @default(now()) @map("started_at") @db.Timestamptz(6)
+  finishedAt DateTime? @map("finished_at") @db.Timestamptz(6)
+  error      String?
+
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  workflow     Workflow             @relation("workflow_runs", fields: [organizationId, workflowId], references: [organizationId, id], onDelete: Cascade, map: "automation_runs_workflow_same_org_fk")
+  version      WorkflowVersion      @relation("workflow_version_runs", fields: [organizationId, versionId], references: [organizationId, id], onDelete: Restrict, map: "automation_runs_version_same_org_fk")
+  enrollment   AutomationEnrollment @relation("enrollment_runs", fields: [organizationId, enrollmentId], references: [organizationId, id], onDelete: Cascade, map: "automation_runs_enrollment_same_org_fk")
+  lead         Lead                 @relation("lead_automation_runs", fields: [organizationId, leadId], references: [organizationId, id], onDelete: Cascade, map: "automation_runs_lead_same_org_fk")
+
+  steps AutomationRunStep[] @relation("run_steps")
+
+  @@unique([organizationId, id], name: "automation_run_tenant_key")
+  /// The per-lead run view (`FR-AUT-7`), and the workflow's own history.
+  @@index([organizationId, leadId, startedAt(sort: Desc)])
+  @@index([organizationId, workflowId, startedAt(sort: Desc)])
+  @@map("automation_runs")
+}
+
+/// One attempt at one step. Partitioned monthly by `started_at` (§15 retains 180 days).
+model AutomationRunStep {
+  id             String @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+  runId          String @map("run_id") @db.Uuid
+
+  /// The step's id **within its version's definition**, which is what makes "retry from the failed
+  /// step" expressible: the graph is immutable, so the id still means the same thing.
+  stepId  String @map("step_id")
+  action  String
+  /// 1 for the first go. A retry writes a new row rather than overwriting the failure.
+  attempt Int    @default(1)
+
+  status   String
+  /// For a branch: which way it went. For a skip: nothing — `reason` carries that.
+  decision String?
+  /// Why it was skipped or why it failed, in a sentence a business owner can read. The timeline
+  /// entry quotes it, which is the whole of "including *skipped because*".
+  reason   String?
+
+  input  Json    @db.JsonB
+  output Json?   @db.JsonB
+  error  String?
+
+  startedAt  DateTime  @default(now()) @map("started_at") @db.Timestamptz(6)
+  finishedAt DateTime? @map("finished_at") @db.Timestamptz(6)
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  run          AutomationRun @relation("run_steps", fields: [organizationId, runId], references: [organizationId, id], onDelete: Cascade, map: "automation_run_steps_run_same_org_fk")
+
+  /// The partition key is half the primary key, as it must be on a partitioned table.
+  @@id([id, startedAt])
+  @@unique([organizationId, id, startedAt], name: "automation_run_step_tenant_key")
+  /// A unique on a partitioned table has to contain the partition key, which makes this a race
+  /// guard rather than a point read — the `inbound_payloads` lesson. What stops an external effect
+  /// happening twice is the idempotency key handed to the handler, not this.
+  @@unique([organizationId, runId, stepId, attempt, startedAt], name: "automation_run_step_attempt_key")
+  @@index([organizationId, runId, startedAt])
+  @@map("automation_run_steps")
+}
+
+/// The cheap counters behind the caps (`FR-AUT-6`).
+///
+/// Deliberately **not** a second answer to "what happened" — `automation_run_steps` is that, and
+/// the usage meter's rule (count rows, do not keep a total) still holds for reporting. This table
+/// exists because a cap has to be enforced atomically at queue concurrency, in one statement, by
+/// something that can be read before the action rather than after it. It may over-count a step
+/// that then failed, which is the safe direction for a safety limit.
+model AutomationCounter {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  /// `actions`, or `action:send_whatsapp_template` — what is being limited.
+  scopeKey    String   @map("scope_key")
+  /// The day, in the workspace's own timezone: a cap a business reads as "per day" has to start
+  /// when their day does.
+  windowStart DateTime @map("window_start") @db.Date
+
+  count Int @default(0)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, id], name: "automation_counter_tenant_key")
+  @@unique([organizationId, scopeKey, windowStart], name: "automation_counter_window_key")
+  @@map("automation_guardrail_counters")
 }

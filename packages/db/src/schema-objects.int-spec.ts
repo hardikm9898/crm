@@ -204,6 +204,11 @@ const REQUIRED_INDEXES = [
   // Phase 6, step 1 — automation. The partial unique is what lets a deleted workflow's name be
   // reused, and `lower(btrim(...))` is why Prisma cannot express it either way.
   'workflows_live_name',
+  // Phase 6, step 2 — the executor. The partial unique is the idempotency that makes one retried
+  // delivery one run; the two partial indexes are the sweep's read and the guardrail's.
+  'automation_runs_one_per_event',
+  'automation_runs_resumable',
+  'automation_runs_live',
 ];
 
 /**
@@ -690,6 +695,31 @@ const REQUIRED_CONSTRAINTS = [
   'workflow_versions_publisher_same_org_fk',
   'workflow_triggers_workflow_same_org_fk',
   'workflow_triggers_version_same_org_fk',
+  // Phase 6, step 2 — the executor: sixteen CHECKs and seven composite FKs.
+  'automation_enrollments_status_is_known',
+  'automation_enrollments_cycle_positive',
+  'automation_runs_status_is_known',
+  'automation_runs_steps_run_non_negative',
+  'automation_runs_causation_depth_sane',
+  'automation_runs_waiting_has_a_moment',
+  'automation_runs_finished_has_an_instant',
+  'automation_runs_failed_says_why',
+  'automation_runs_context_is_an_object',
+  'automation_run_steps_status_is_known',
+  'automation_run_steps_attempt_positive',
+  'automation_run_steps_failed_says_why',
+  'automation_run_steps_skipped_says_why',
+  'automation_run_steps_input_is_an_object',
+  'automation_counters_count_non_negative',
+  'automation_counters_scope_not_blank',
+  'automation_enrollments_workflow_same_org_fk',
+  'automation_enrollments_version_same_org_fk',
+  'automation_enrollments_lead_same_org_fk',
+  'automation_runs_workflow_same_org_fk',
+  'automation_runs_version_same_org_fk',
+  'automation_runs_enrollment_same_org_fk',
+  'automation_runs_lead_same_org_fk',
+  'automation_run_steps_run_same_org_fk',
 ];
 
 describe('hand-written indexes survive every generated migration', () => {

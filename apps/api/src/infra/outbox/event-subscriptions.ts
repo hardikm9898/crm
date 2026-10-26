@@ -25,6 +25,19 @@ export interface EventSubscription {
  */
 const WEBHOOK: EventSubscription = { queue: QUEUES.WEBHOOKS, jobName: JOBS.WEBHOOK_FANOUT };
 
+/**
+ * Every event a workflow can be triggered by goes to one dispatch job (`FR-AUT-6`).
+ *
+ * Written once and spread, like `WEBHOOK` above and for the same reason — and
+ * `event-subscriptions.spec.ts` asserts that **every** `WORKFLOW_TRIGGERS[].event` carries it: a
+ * trigger the editor offers whose event reaches no dispatcher is a workflow that publishes,
+ * reports itself live, and never runs.
+ */
+const AUTOMATION: EventSubscription = {
+  queue: QUEUES.AUTOMATION,
+  jobName: JOBS.AUTOMATION_TRIGGER,
+};
+
 export const EVENT_SUBSCRIPTIONS: Readonly<Record<string, readonly EventSubscription[]>> = {
   'invitation.sent': [{ queue: QUEUES.NOTIFICATIONS, jobName: JOBS.MAIL_INVITATION }],
   'user.registered': [{ queue: QUEUES.NOTIFICATIONS, jobName: JOBS.MAIL_EMAIL_VERIFICATION }],
@@ -42,19 +55,19 @@ export const EVENT_SUBSCRIPTIONS: Readonly<Record<string, readonly EventSubscrip
   // A missed follow-up is told about through the event rather than by the sweep, so "mark it
   // reported" and "tell somebody" retry independently — and a second consumer (the Phase 3
   // escalation policy, a WhatsApp nudge) is a line here rather than a change to the sweep.
-  'task.overdue': [{ queue: QUEUES.NOTIFICATIONS, jobName: JOBS.NOTIFY_TASK_OVERDUE }, WEBHOOK],
+  'task.overdue': [{ queue: QUEUES.NOTIFICATIONS, jobName: JOBS.NOTIFY_TASK_OVERDUE }, WEBHOOK, AUTOMATION],
   // One processor serves both, dispatching on the envelope's event name — and the recipients were
   // resolved and stored by the sweep, so the escalation row and the notifications cannot disagree.
   'sla.at_risk': [{ queue: QUEUES.NOTIFICATIONS, jobName: JOBS.NOTIFY_SLA_ESCALATION }],
-  'sla.breached': [{ queue: QUEUES.NOTIFICATIONS, jobName: JOBS.NOTIFY_SLA_ESCALATION }],
+  'sla.breached': [{ queue: QUEUES.NOTIFICATIONS, jobName: JOBS.NOTIFY_SLA_ESCALATION }, AUTOMATION],
   // Scoring reacts to what a lead does (`FR-SCR-2`). Every one of these is a trigger a tenant may
   // write a rule on, and the job name is the same for all of them — the processor reads which event
   // it was from the envelope, so adding a trigger is a line here and an entry in `SCORING_TRIGGERS`.
-  'lead.created': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }, WEBHOOK],
+  'lead.created': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }, WEBHOOK, AUTOMATION],
   'lead.updated': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }, WEBHOOK],
-  'lead.assigned': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }, WEBHOOK],
-  'lead.status_changed': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }, WEBHOOK],
-  'lead.stage_changed': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }, WEBHOOK],
+  'lead.assigned': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }, WEBHOOK, AUTOMATION],
+  'lead.status_changed': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }, WEBHOOK, AUTOMATION],
+  'lead.stage_changed': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }, WEBHOOK, AUTOMATION],
   'lead.touchpoint_added': [{ queue: QUEUES.SCORING, jobName: JOBS.LEAD_SCORE }],
   // A call is the one thing a salesperson does that a score should move on, and the payload carries
   // `outcomeCategory` so a rule can score "spoke to them" and "wrong number" differently
@@ -67,7 +80,7 @@ export const EVENT_SUBSCRIPTIONS: Readonly<Record<string, readonly EventSubscrip
   // a typo in an event name shows up as "unsubscribed" rather than silently doing nothing.
   'call.attempted': [],
   'task.created': [WEBHOOK],
-  'task.completed': [WEBHOOK],
+  'task.completed': [WEBHOOK, AUTOMATION],
   'task.rescheduled': [WEBHOOK],
   'task.cancelled': [],
   'organization.created': [],
@@ -76,7 +89,7 @@ export const EVENT_SUBSCRIPTIONS: Readonly<Record<string, readonly EventSubscrip
   'lead.merged': [WEBHOOK],
   'lead.merge_undone': [],
   'lead.recycled': [],
-  'lead.score_changed': [WEBHOOK],
+  'lead.score_changed': [WEBHOOK, AUTOMATION],
   'import.completed': [],
   'export.completed': [],
   /**
@@ -97,7 +110,7 @@ export const EVENT_SUBSCRIPTIONS: Readonly<Record<string, readonly EventSubscrip
   'quotation.sent': [WEBHOOK],
   'quotation.accepted': [WEBHOOK],
   'quotation.rejected': [WEBHOOK],
-  'payment.received': [WEBHOOK],
+  'payment.received': [WEBHOOK, AUTOMATION],
   'payment.refunded': [WEBHOOK],
   'onboarding.industry_template_applied': [],
   /**
@@ -107,7 +120,7 @@ export const EVENT_SUBSCRIPTIONS: Readonly<Record<string, readonly EventSubscrip
    * `isKnownEvent` reports identically to a typo. It is a `WORKFLOW_TRIGGERS` event, and
    * `event-subscriptions.spec.ts` now insists every one of those appears here.
    */
-  'whatsapp.message_received': [],
+  'whatsapp.message_received': [AUTOMATION],
 };
 
 export function subscribersFor(eventName: string): readonly EventSubscription[] {

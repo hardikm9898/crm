@@ -623,7 +623,63 @@ const DESCRIBERS: Readonly<Record<string, Describer>> = {
       text(payload, 'keyword') ? ` by replying “${text(payload, 'keyword')}”` : ''
     }.`,
   }),
+
+  // ── Automation (`FR-AUT-7`, `FR-TL-1`) ────────────────────────────────────
+  //
+  // These five are what make "why did this customer get this message?" and "why didn't they?"
+  // answerable from the screen rather than from a developer with a query console. Each one names
+  // the **workflow** and prints the engine's own sentence: a row reading "Automation skipped"
+  // would send somebody to the run log for the only thing they came for.
+  'automation.enrolled': (payload) => ({
+    label: 'Workflow started',
+    description: `“${workflowName(payload)}” started on this lead${
+      number(payload, 'cycle') !== null && (number(payload, 'cycle') ?? 1) > 1
+        ? ` for the ${ordinal(number(payload, 'cycle') ?? 1)} time`
+        : ''
+    }.`,
+  }),
+  'automation.action_executed': (payload) => ({
+    label: 'Workflow acted',
+    // The handler's own summary ("sent the template “Site visit”", "created the follow-up …"),
+    // because a generic "an action was carried out" tells nobody which one.
+    description: `“${workflowName(payload)}” ${
+      text(payload, 'reason') ?? text(payload, 'summary') ?? 'did something'
+    }.`,
+  }),
+  'automation.skipped': (payload) => ({
+    label: 'Workflow skipped a step',
+    // The reason is the whole row. `FR-AUT-7` asks for "including *skipped because*", and this is
+    // where that sentence has to land.
+    description: `“${workflowName(payload)}” did not act: ${
+      text(payload, 'reason') ?? 'no reason was recorded'
+    }.`,
+    tone: 'warning',
+  }),
+  'automation.failed': (payload) => ({
+    label: 'Workflow failed',
+    description: `“${workflowName(payload)}” could not finish: ${
+      text(payload, 'reason') ?? 'no reason was recorded'
+    }.`,
+    tone: 'danger',
+  }),
+  'automation.exited': (payload) => ({
+    label: 'Workflow stopped',
+    description: `“${workflowName(payload)}” stopped here: ${
+      text(payload, 'reason') ?? 'the workflow said to stop'
+    }.`,
+  }),
 };
+
+/** The workflow's name, or a phrase that does not read as a missing value. */
+function workflowName(payload: ActivityPayload): string {
+  return text(payload, 'workflowName') ?? 'A workflow';
+}
+
+/** "second", "third" — a cycle count read as a word, because "for the 2 time" is machine output. */
+function ordinal(value: number): string {
+  const words = ['', 'first', 'second', 'third', 'fourth', 'fifth'];
+  return words[value] ?? `${value}th`;
+}
 
 /** ` because they asked`, or nothing. One helper so every clause reads the same way. */
 function reasonTail(payload: ActivityPayload): string {

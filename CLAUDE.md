@@ -1172,6 +1172,48 @@ report something as done that is not done.
   different message the moment an earlier test leaves one queued — green on its own and red in a
   full run, which is the shape that looks like a flake and is not. Order the drain, and assert on
   the request that names **this** test's subject rather than on whichever was last.
+- **A principal with no permissions is not a principal with full ones, and the symptom is a 404.**
+  The automation engine's first draft ran its steps as `automationPrincipal` with an empty
+  permission set, so every action that went through a service answered **"Lead not found"**:
+  `canAct` returns false for a permission the principal lacks, and `filterFor` defaults an absent
+  **scope** to `own`, which compares the row against `actorId` — and a workflow has none. Nothing in
+  the engine looked wrong; the data scope was working exactly as designed against a caller who is
+  nobody. The answer was to say what a workflow *is*: permissions at **organization** scope, because
+  it is the workspace's standing instruction, and the permissions **enumerated** in one file rather
+  than granted wholesale, so adding an action is a moment where somebody decides what it may do.
+- **Threading a value through every service is one call site away from not being threaded.**
+  Loop detection needs every event an automation step causes to carry `causation_depth + 1` — and a
+  step's effects go through `LeadsService`, `TasksService`, the WhatsApp send, each emitting its own
+  outbox events. A parameter on every method would be forgotten once and a workflow would trigger
+  itself for ever. The depth lives on `TenantPrincipal.automation` and `OutboxService.emit` defaults
+  from it, which is the same argument `actorType` already made for living there: a service that has
+  never heard of automation produces a correctly attributed event. Assert the **emitted event**, not
+  the engine's own bookkeeping.
+- **A test whose fixture is a *listener* leaks into every later test.** Each test in the engine
+  suite published a workflow triggered by `lead.created`, and nothing unpublished them — so the
+  fifth test's lead started eight runs, `dispatch` answered `started: 8` where the assertion said 1,
+  and the daily-cap test's cap of one was eaten by somebody else's workflow before its own first
+  step. Every count in the file was suite-wide and three failures looked like three bugs. Archive
+  the subscription in `afterEach`; "a test that reaches for a fixture another test created" one
+  layer along, where the shared fixture is the thing listening.
+- **A shared counter window needs clearing before the test that sets a cap, not after.** The
+  guardrail counter is keyed `(organization_id, scope_key, day)`, so a test that sets the cap to one
+  and cleans up afterwards still starts with the whole file's actions already counted. Clear it
+  first; a `finally` that tidies up protects the next test and not this one.
+- **A control shape and a handler are different kinds of thing, and the registry has to say which.**
+  `wait`, `branch`, `stop` and `enroll` change the *shape* of a run — a branch carries nested steps,
+  a wait suspends it — so they are the executor's own vocabulary, and `control: true` is what keeps
+  "adding an action needs no engine change" a claim about the other kind. The boot check reconciles
+  both directions: a declared action with no handler is a workflow that publishes and does nothing,
+  and a handler nothing declares is dead code that looks like a feature.
+- **A list endpoint that omits the thing its screen exists to show renders an empty disclosure.**
+  `GET /automation/runs` answered run summaries without their steps, and `RunList` renders steps
+  only when it has them — so the lead's Automation tab and the workflow's run log both drew a
+  `<details>` with nothing behind it, on the two panels whose entire job is answering "why did this
+  customer get this message?". It looked exactly like a run that had not done anything. The list
+  carries the steps (bounded by its own `limit`, not by an N+1 detail request per row), the web
+  type makes them **required** so a screen cannot silently render none, and the e2e asserts the
+  list's own `steps`. Found by a browser check waiting for a `summary` that was never drawn.
 - **A combined locator's `.first()` reads whichever element is earlier in the DOM, not the one you
   meant.** `page.locator('[data-shortcut-error], main [role="alert"]').first()` read the **summary**
   notice rather than the field error, and reported "a taken shortcut says whose it is" as failing

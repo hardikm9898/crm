@@ -58,8 +58,14 @@ export class OutboxService {
       actorType: principal?.actorType ?? 'system',
       actorId: principal?.actorId ?? null,
       correlationId: context?.correlationId ?? principal?.requestId ?? null,
-      causationId: event.causationId ?? null,
-      causationDepth: event.causationDepth ?? 0,
+      // Defaulted from the principal, not from zero. An automation step's principal carries the
+      // depth of the chain it is already in, so a service that has never heard of automation still
+      // emits an event the dispatcher can refuse — which is the whole of loop detection. A caller
+      // that passes its own values still wins.
+      causationId: event.causationId ?? principal?.automation?.runId ?? null,
+      causationDepth:
+        event.causationDepth ??
+        (principal?.automation === undefined ? 0 : principal.automation.causationDepth + 1),
     }));
 
     await tx.outboxEvent.createMany({ data: rows });

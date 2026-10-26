@@ -229,6 +229,10 @@ describe('what a new member starts with', () => {
     // have not, and the screen still says so rather than offering a tick box that drops messages.
     expect(settings.deliverableChannels).toEqual(['in_app', 'email']);
     expect(settings.types.map((entry) => entry.type).sort()).toEqual([
+      // Phase 6 step 2: what a workflow was told to tell somebody. Held for quiet hours — a
+      // workflow is a standing instruction somebody wrote in daylight, so a 02:00 delivery wakes
+      // them about work that waits until the morning.
+      'automation.notice',
       // Phase 3 step 6: the nudge that asks what happened on a call nobody recorded.
       'call.outcome_missing',
       // Phase 5 step 4: the shared inbox's three. `assigned` covers a transfer too — being handed

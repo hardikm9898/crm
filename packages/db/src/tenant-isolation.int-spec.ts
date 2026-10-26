@@ -4781,3 +4781,364 @@ describe('layer 6 — a workflow cannot be stitched to another tenant (FR-AUT-4,
     expect(theirs.triggers.every((row) => row.organizationId === h.orgB.organizationId)).toBe(true);
   });
 });
+
+describe('layer 7 — a run cannot be stitched to another tenant (FR-AUT-6, FR-AUT-7)', () => {
+  /**
+   * Its own lead fixture, created rather than found.
+   *
+   * The SLA block above has one of these too, keyed on the tenant object — and borrowing it would
+   * be the "a test that reaches for a fixture another block created" trap, since a lead with an
+   * SLA clock on it trips uniqueness rules this block is not testing.
+   */
+  async function lead(tenant: typeof h.orgA) {
+    const id = newId();
+    await h.unscoped.lead.create({
+      data: {
+        id,
+        organizationId: tenant.organizationId,
+        fullName: `Automation subject ${id.slice(-8)}`,
+        statusId: tenant.statusId,
+        pipelineId: tenant.pipelineId,
+        stageId: tenant.stageId,
+      },
+    });
+    return id;
+  }
+
+  async function workflowWithVersion(organizationId: string, userId: string) {
+    const workflowId = newId();
+    const versionId = newId();
+    await h.unscoped.workflow.create({
+      data: {
+        id: workflowId,
+        organizationId,
+        name: `Engine ${workflowId.slice(-8)}`,
+        createdById: userId,
+      } as never,
+    });
+    await h.unscoped.workflowVersion.create({
+      data: {
+        id: versionId,
+        organizationId,
+        workflowId,
+        version: 1,
+        definition: { trigger: { type: 'lead.created' }, steps: [] },
+        createdById: userId,
+      } as never,
+    });
+    return { workflowId, versionId };
+  }
+
+  async function enrol(organizationId: string, userId: string, leadId: string, cycle = 1) {
+    const { workflowId, versionId } = await workflowWithVersion(organizationId, userId);
+    const id = newId();
+    await h.unscoped.automationEnrollment.create({
+      data: { id, organizationId, workflowId, versionId, leadId, cycle } as never,
+    });
+    return { enrollmentId: id, workflowId, versionId };
+  }
+
+  async function runIn(organizationId: string, userId: string, leadId: string) {
+    const { enrollmentId, workflowId, versionId } = await enrol(organizationId, userId, leadId);
+    const id = newId();
+    await h.unscoped.automationRun.create({
+      data: {
+        id,
+        organizationId,
+        workflowId,
+        versionId,
+        enrollmentId,
+        leadId,
+        triggerType: 'lead.created',
+        context: {},
+      } as never,
+    });
+    return { runId: id, workflowId, versionId, enrollmentId };
+  }
+
+  it("refuses an enrolment naming another workspace's lead", async () => {
+    const theirLead = await lead(h.orgB);
+    const { workflowId, versionId } = await workflowWithVersion(
+      h.orgA.organizationId,
+      h.orgA.userId,
+    );
+    await expect(
+      h.unscoped.automationEnrollment.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          workflowId,
+          versionId,
+          leadId: theirLead,
+          cycle: 1,
+        } as never,
+      }),
+    ).rejects.toThrow(/automation_enrollments_lead_same_org_fk|foreign key/i);
+  });
+
+  it("refuses a run pinned to another workspace's version", async () => {
+    const theirs = await workflowWithVersion(h.orgB.organizationId, h.orgB.userId);
+    const ourLead = await lead(h.orgA);
+    const { enrollmentId, workflowId } = await enrol(
+      h.orgA.organizationId,
+      h.orgA.userId,
+      ourLead,
+    );
+    await expect(
+      h.unscoped.automationRun.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          workflowId,
+          versionId: theirs.versionId,
+          enrollmentId,
+          leadId: ourLead,
+          triggerType: 'lead.created',
+        } as never,
+      }),
+    ).rejects.toThrow(/automation_runs_version_same_org_fk|foreign key/i);
+  });
+
+  it("refuses a step belonging to another workspace's run", async () => {
+    const theirLead = await lead(h.orgB);
+    const theirs = await runIn(h.orgB.organizationId, h.orgB.userId, theirLead);
+    await expect(
+      h.unscoped.automationRunStep.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          runId: theirs.runId,
+          stepId: 'note',
+          action: 'add_note',
+          status: 'succeeded',
+          input: {},
+        } as never,
+      }),
+    ).rejects.toThrow(/automation_run_steps_run_same_org_fk|foreign key/i);
+  });
+
+  it('allows one enrolment per cycle and refuses a second of the same', async () => {
+    const ourLead = await lead(h.orgA);
+    const { workflowId, versionId } = await workflowWithVersion(
+      h.orgA.organizationId,
+      h.orgA.userId,
+    );
+    await h.unscoped.automationEnrollment.create({
+      data: {
+        id: newId(),
+        organizationId: h.orgA.organizationId,
+        workflowId,
+        versionId,
+        leadId: ourLead,
+        cycle: 1,
+      } as never,
+    });
+    // The guarantee behind the re-entry policy: two jobs can both pass the check, and only one
+    // can insert the row.
+    await expect(
+      h.unscoped.automationEnrollment.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          workflowId,
+          versionId,
+          leadId: ourLead,
+          cycle: 1,
+        } as never,
+      }),
+    ).rejects.toThrow(/automation_enrollment|unique/i);
+    // And cycle 2 is allowed, which is what `always` and `cooldown` need.
+    await expect(
+      h.unscoped.automationEnrollment.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          workflowId,
+          versionId,
+          leadId: ourLead,
+          cycle: 2,
+        } as never,
+      }),
+    ).resolves.toBeTruthy();
+  });
+
+  it('allows one run per event per workflow, and any number of manual runs', async () => {
+    const ourLead = await lead(h.orgA);
+    const { runId } = await runIn(h.orgA.organizationId, h.orgA.userId, ourLead);
+    const existing = await h.unscoped.automationRun.findFirstOrThrow({ where: { id: runId } });
+    const eventId = newId();
+    await h.unscoped.automationRun.update({
+      where: { id: runId },
+      data: { triggerEventId: eventId } as never,
+    });
+    await expect(
+      h.unscoped.automationRun.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          workflowId: existing.workflowId,
+          versionId: existing.versionId,
+          enrollmentId: existing.enrollmentId,
+          leadId: ourLead,
+          triggerEventId: eventId,
+          triggerType: 'lead.created',
+        } as never,
+      }),
+    ).rejects.toThrow(/automation_runs_one_per_event|unique/i);
+    // A manual run carries no event, and the unique is partial precisely so a workspace can start
+    // one by hand as often as they like.
+    await expect(
+      h.unscoped.automationRun.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          workflowId: existing.workflowId,
+          versionId: existing.versionId,
+          enrollmentId: existing.enrollmentId,
+          leadId: ourLead,
+          triggerType: 'manual',
+        } as never,
+      }),
+    ).resolves.toBeTruthy();
+  });
+
+  it('refuses a waiting run with no moment to wake at', async () => {
+    const ourLead = await lead(h.orgA);
+    const { runId } = await runIn(h.orgA.organizationId, h.orgA.userId, ourLead);
+    // The failure the reconciliation sweep exists to prevent, made unrepresentable.
+    await expect(
+      h.unscoped.automationRun.update({
+        where: { id: runId },
+        data: { status: 'waiting' } as never,
+      }),
+    ).rejects.toThrow(/automation_runs_waiting_has_a_moment/i);
+  });
+
+  it('refuses a finished run with no instant, and an unfinished one that has one', async () => {
+    const ourLead = await lead(h.orgA);
+    const { runId } = await runIn(h.orgA.organizationId, h.orgA.userId, ourLead);
+    await expect(
+      h.unscoped.automationRun.update({
+        where: { id: runId },
+        data: { status: 'completed' } as never,
+      }),
+    ).rejects.toThrow(/automation_runs_finished_has_an_instant/i);
+    await expect(
+      h.unscoped.automationRun.update({
+        where: { id: runId },
+        data: { finishedAt: new Date() } as never,
+      }),
+    ).rejects.toThrow(/automation_runs_finished_has_an_instant/i);
+  });
+
+  it('refuses a failure with no explanation, on a run and on a step', async () => {
+    const ourLead = await lead(h.orgA);
+    const { runId } = await runIn(h.orgA.organizationId, h.orgA.userId, ourLead);
+    await expect(
+      h.unscoped.automationRun.update({
+        where: { id: runId },
+        data: { status: 'failed', finishedAt: new Date() } as never,
+      }),
+    ).rejects.toThrow(/automation_runs_failed_says_why/i);
+    await expect(
+      h.unscoped.automationRunStep.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          runId,
+          stepId: 'note',
+          action: 'add_note',
+          status: 'failed',
+          input: {},
+        } as never,
+      }),
+    ).rejects.toThrow(/automation_run_steps_failed_says_why/i);
+  });
+
+  it('refuses a skip with no reason, which is the one the timeline could not explain', async () => {
+    const ourLead = await lead(h.orgA);
+    const { runId } = await runIn(h.orgA.organizationId, h.orgA.userId, ourLead);
+    await expect(
+      h.unscoped.automationRunStep.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          runId,
+          stepId: 'note',
+          action: 'add_note',
+          status: 'skipped',
+          input: {},
+        } as never,
+      }),
+    ).rejects.toThrow(/automation_run_steps_skipped_says_why/i);
+  });
+
+  it('keeps automation_run_steps partitioned by month', async () => {
+    const rows = await h.unscoped.$queryRaw<
+      { partition_strategy: string | null; partitions: bigint }[]
+    >`
+      SELECT (SELECT partstrat::text FROM pg_partitioned_table
+                WHERE partrelid = 'automation_run_steps'::regclass) AS partition_strategy,
+             (SELECT count(*) FROM pg_inherits
+                WHERE inhparent = 'automation_run_steps'::regclass) AS partitions
+    `;
+    expect(rows[0]?.partition_strategy).toBe('r');
+    expect(Number(rows[0]?.partitions ?? 0)).toBeGreaterThan(1);
+  });
+
+  it('counts one guardrail window per scope, and refuses a negative count', async () => {
+    const windowStart = new Date('2026-10-26T00:00:00.000Z');
+    await h.unscoped.automationCounter.create({
+      data: {
+        id: newId(),
+        organizationId: h.orgA.organizationId,
+        scopeKey: 'actions',
+        windowStart,
+        count: 3,
+      } as never,
+    });
+    await expect(
+      h.unscoped.automationCounter.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          scopeKey: 'actions',
+          windowStart,
+          count: 1,
+        } as never,
+      }),
+    ).rejects.toThrow(/automation_counter|unique/i);
+    // The same workspace, the same day, a different scope: the key is three columns because a cap
+    // per action kind is the next thing anybody asks for.
+    await expect(
+      h.unscoped.automationCounter.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          scopeKey: 'action:send_whatsapp_template',
+          windowStart,
+          count: 1,
+        } as never,
+      }),
+    ).resolves.toBeTruthy();
+  });
+
+  it('shows one workspace nothing of another’s runs', async () => {
+    const ourLead = await lead(h.orgA);
+    await runIn(h.orgA.organizationId, h.orgA.userId, ourLead);
+    const theirs = await tenantContext.run(h.orgB.principal, async () => ({
+      enrollments: await h.db.automationEnrollment.findMany({}),
+      runs: await h.db.automationRun.findMany({}),
+      steps: await h.db.automationRunStep.findMany({}),
+      counters: await h.db.automationCounter.findMany({}),
+    }));
+    for (const [label, rows] of Object.entries(theirs)) {
+      expect(
+        (rows as { organizationId: string }[]).every(
+          (row) => row.organizationId === h.orgB.organizationId,
+        ),
+        label,
+      ).toBe(true);
+    }
+  });
+});

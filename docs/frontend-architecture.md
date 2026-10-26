@@ -1152,3 +1152,28 @@ on an action's key, so a new action's fields are drawn by code written before it
 
 Nested branches are not editable yet: the API, the validator and the schema carry them three deep,
 and the visual builder that edits them arrives with the executor.
+
+### 10.19 As built — Phase 6, step 2 (what the workflows did)
+
+One component and two places that render it: an **Automation** tab on the lead and a "What it has
+done" card on the workflow. `RunList` is a server component, shared, because "why did this customer
+get this message?" is asked while looking at a lead and "what has this workflow been doing?" while
+looking at a workflow, and both want the same rows.
+
+- **Each run says its state in words before anything else.** "Waiting until 26 Oct, 14:30",
+  "Failed: nothing is known for “lead.nickname”", "Finished after 3 steps" — a row reading `waiting`
+  beside a timestamp is the schema's vocabulary on a screen.
+- **Each step carries the engine's own sentence**, not the registry key: "Send a WhatsApp template —
+  skipped: that template has not been submitted to WhatsApp yet". The action's label comes from the
+  catalogue the page already loaded, so a new action needs no change here either.
+- **The steps are behind a `<details>` and the reason is not.** A collapsed disclosure renders
+  nothing — `innerText` on a closed `<details>` is empty, which this codebase has paid for once —
+  and more to the point the reason is what somebody came for, so it is in the summary line.
+- **The Automation tab is behind `automation:manage`**, like the engine's own screens, because a
+  run's step log carries the parameters a workflow was configured with. What a sales executive reads
+  is the **timeline**, where the five new describers put every automation decision with its
+  sentence: "“Call a new lead” did not act: nobody owns this lead, so there was nobody to tell". No
+  extra permission, and on the screen they were already on.
+- **Both panels swallow their failure**, unlike the workflow list: a lead that will not open because
+  one panel's request failed is worse than a lead with one panel missing, and the panel says so
+  itself. The list of workflows still throws, because there "none" is information.

@@ -28,6 +28,8 @@ import {
   type ScoreBreakdown,
 } from '@/lib/leads';
 import { Timeline } from '@/components/timeline';
+import { loadCatalogue, loadRuns } from '@/lib/automation';
+import { RunList } from '../../settings/automation/_components/run-list';
 import { BUCKET_CLASSES, BUCKET_LABELS, loadLeadTasks, loadTaskConfig } from '@/lib/tasks';
 import { describeCallDuration, loadCallConfig, loadLeadCalls } from '@/lib/calls';
 import {
@@ -70,7 +72,7 @@ import {
  */
 export const dynamic = 'force-dynamic';
 
-type Tab = 'overview' | 'timeline' | 'edit';
+type Tab = 'overview' | 'timeline' | 'automation' | 'edit';
 
 export default async function LeadDetailPage({
   params,
@@ -82,7 +84,9 @@ export default async function LeadDetailPage({
   const { id } = await params;
   const { tab: requestedTab } = await searchParams;
   const tab: Tab =
-    requestedTab === 'timeline' || requestedTab === 'edit' ? requestedTab : 'overview';
+    requestedTab === 'timeline' || requestedTab === 'edit' || requestedTab === 'automation'
+      ? requestedTab
+      : 'overview';
 
   const user = await requireCurrentUser();
   const token = await readAccessToken();
@@ -136,6 +140,25 @@ export default async function LeadDetailPage({
     loadLeadCalls(id, token),
     loadCallConfig(token),
   ]);
+
+  /**
+   * What the workspace's workflows have done to this lead (`FR-AUT-7`).
+   *
+   * Behind `automation:manage`, like the engine's own screens: a run's steps carry the parameters
+   * a workflow was configured with, which is workspace configuration rather than a fact about this
+   * lead. The **timeline** is where a sales executive reads "a workflow sent them the site-visit
+   * template", and it needs no extra permission.
+   *
+   * Both swallow a failure, because a lead that will not open because one panel's request failed
+   * is worse than a lead with one panel missing — and the panel says so itself.
+   */
+  const mayManageAutomation = can(user, 'automation:manage');
+  const [runs, automationCatalogue] = mayManageAutomation
+    ? await Promise.all([
+        loadRuns(token, `?leadId=${id}&limit=10`).catch(() => ({ items: [], total: 0 })),
+        loadCatalogue(token).catch(() => null),
+      ])
+    : [{ items: [], total: 0 }, null];
   const openClock = slaClocks.find(
     (clock) =>
       clock.health === 'breached' || clock.health === 'at_risk' || clock.health === 'running',
@@ -296,6 +319,7 @@ export default async function LeadDetailPage({
               [
                 ['overview', 'Overview'],
                 ['timeline', 'Timeline'],
+                ...(mayManageAutomation ? ([['automation', 'Automation']] as const) : []),
                 ...(mayUpdate ? ([['edit', 'Edit']] as const) : []),
               ] as const
             ).map(([value, label]) => (
@@ -515,6 +539,19 @@ export default async function LeadDetailPage({
                 )}
               </Card>
             </>
+          )}
+
+          {tab === 'automation' && mayManageAutomation && (
+            <Card
+              title="What the workflows did"
+              description={`${runs.total} ${runs.total === 1 ? 'run' : 'runs'} on this lead. Each step says what happened, and why it did not when it did not.`}
+            >
+              <RunList
+                runs={runs.items}
+                catalogue={automationCatalogue}
+                emptyTitle="No workflow has run on this lead"
+              />
+            </Card>
           )}
 
           {tab === 'timeline' && (

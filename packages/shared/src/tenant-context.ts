@@ -49,6 +49,22 @@ export interface TenantPrincipal {
   readonly requestId: string;
   /** Present only while platform staff are impersonating a tenant user (FR-TEN-7). */
   readonly impersonation?: { readonly platformUserId: string; readonly sessionId: string };
+  /**
+   * Present only while an automation step is running (`FR-AUT-6`).
+   *
+   * It is on the principal rather than passed down through every service because loop detection
+   * has to catch **every** event a step causes, however deep: an action calls `LeadsService`,
+   * which emits `lead.status_changed` through its own `OutboxService.emit`, which would otherwise
+   * emit at depth zero and let the workflow trigger itself for ever. `emit` reads the depth from
+   * here, so a service that has never heard of automation still produces a correctly attributed
+   * event — the same reason `actorType` lives here.
+   */
+  readonly automation?: {
+    readonly runId: string;
+    readonly workflowId: string;
+    /** How many automation-caused events deep this run already is. */
+    readonly causationDepth: number;
+  };
 }
 
 export class TenantContextMissingError extends Error {
@@ -151,6 +167,44 @@ export function withPlatformScope<T>(reason: string, fn: () => Promise<T>): Prom
   if (reason.trim().length === 0) throw new Error('withPlatformScope requires a reason');
   const current = storage.getStore();
   return storage.run({ principal: current?.principal ?? null, platformScope: true }, fn);
+}
+
+/**
+ * The principal an automation step runs as.
+ *
+ * `actorType: 'automation'` is what puts "a workflow did this" in the audit log, and `actorId` is
+ * deliberately absent: a workflow is not a person, and a person-reference written from it would be
+ * a claim about a member who did not do it. Every column that needs a person — a task's assignee, a
+ * note's author — is written from the step's own parameters instead.
+ */
+export function automationPrincipal(
+  organizationId: string,
+  requestId: string,
+  automation: { runId: string; workflowId: string; causationDepth: number },
+  permissions: readonly string[] = [],
+): TenantPrincipal {
+  return {
+    organizationId,
+    actorType: 'automation',
+    permissions: new Set(permissions),
+    /**
+     * Every permission at **organization** scope.
+     *
+     * `canAct` and `filterFor` default an absent entry to `own`, which compares the row against
+     * `actorId` — and a workflow has none, so every write through a service answered "Lead not
+     * found" and every read came back empty. The scope has to be the workspace's because that is
+     * whose instruction a workflow is: it is not acting for a person, and narrowing it to one
+     * would mean a workflow could only touch the leads of a member it does not have.
+     *
+     * What keeps that safe is the **permission set**, which the engine enumerates rather than
+     * granting wholesale — so adding an action is a moment where somebody decides what it may do.
+     */
+    scopes: new Map(permissions.map((permission) => [permission, 'organization' as const])),
+    teamIds: [],
+    branchIds: [],
+    requestId,
+    automation,
+  };
 }
 
 /** Convenience for jobs and tests: a system principal with no user behind it. */

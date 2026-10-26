@@ -50,6 +50,14 @@ import {
   WebhookFanoutProcessor,
   WebhookRetrySweepProcessor,
 } from '../../modules/webhooks/webhooks.processor.js';
+// Anchored on the import path rather than on a neighbouring name: this file has an import block
+// and a registry list that share their contents, and appending by matching two adjacent processor
+// names once put an entry in the wrong one — lint caught it, and the integration suite would have.
+import {
+  AutomationResumeSweepProcessor,
+  AutomationStepProcessor,
+  AutomationTriggerProcessor,
+} from '../../modules/automation/automation.processor.js';
 import { WhatsAppIngestMessageProcessor } from '../../modules/whatsapp/whatsapp.processor.js';
 import {
   WhatsAppIngestStatusProcessor,
@@ -131,6 +139,10 @@ export const PROCESSOR_TYPES: readonly Type<JobProcessor>[] = [
   WebhookFanoutProcessor,
   WebhookDeliverProcessor,
   WebhookRetrySweepProcessor,
+  // automation
+  AutomationTriggerProcessor,
+  AutomationStepProcessor,
+  AutomationResumeSweepProcessor,
 ];
 
 /** Resolves the processors from a Nest context (application or test). */

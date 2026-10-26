@@ -461,7 +461,14 @@ export const WORKFLOW_ACTIONS: readonly ActionSpec[] = [
     key: 'add_tag',
     label: 'Add a tag',
     group: 'record',
-    hint: 'Lower-cased and hyphenated, like every tag in this product.',
+    /**
+     * A **lead's** tags are rows with display names — `ensureTag` finds or creates one by the name
+     * as typed. The slug-shaped hint this originally carried was borrowed from
+     * `conversations.tags`, which is a text array the API lower-cases and hyphenates; two different
+     * things called tags, and the hint described the wrong one. Found by an HTTP check that
+     * asserted the lower-cased form and read back `Nurtured`.
+     */
+    hint: 'Matched by name, and created if this workspace does not have it yet.',
     control: false,
     params: [{ key: 'tag', label: 'Tag', type: 'text', required: true, max: 40 }],
   },

@@ -1337,10 +1337,10 @@ message search (`FR-VIEW-1`).
 | `workflows`                     | org, name, description, `status (draft                                                                                                                                    | active    | paused                                              | archived)`, `current_version_id?`, `kill_switch BOOL`, `max_runs_per_entity?`, `reentry_policy (once                                                                                 | cooldown                                                                                           | always)`, `cooldown_hours?`, created_by, deleted_at |
 | `workflow_versions`             | org, workflow_id, `version INT`, `definition JSONB` (**the** graph), `published_at?`, `published_by_id?`, created_by. `UNIQUE (organization_id, workflow_id, version)` (`FR-AUT-5`) |
 | `workflow_triggers`             | org, workflow_id, version_id, `trigger_type`, `event?`, `params JSONB` — one row per published workflow, indexed by `(organization_id, event)` so dispatch is a single lookup       |
-| `automation_enrollments`        | org, workflow_id, `version_id`, `entity_type`, `entity_id`, `status (active                                                                                               | completed | exited                                              | failed)`, `enrolled_at`, `completed_at?`. `UNIQUE (organization_id, workflow_id, entity_id, enrollment_cycle)` enforces re-entry policy                                             |
-| `automation_runs`               | org, workflow_id, version_id, enrollment_id, `trigger_event_id?`, `entity_type`, `entity_id`, `status (running                                                            | waiting   | completed                                           | failed                                                                                                                                                                              | cancelled)`, `current_step_key?`, `resume_at?`, `context JSONB`, started_at, finished_at, `error?` |
-| `automation_run_steps`          | run_id, `step_key`, `attempt`, `status (pending                                                                                                                           | succeeded | skipped                                             | failed)`, `input JSONB`, `output JSONB`, `decision?`, `error?`, `started_at`, `finished_at`, `idempotency_key UQ per (run_id, step_key, attempt)`. Partitioned monthly (`FR-AUT-7`) |
-| `automation_guardrail_counters` | org, `scope_key` (workflow/entity/day), `count`, `window_start` — cheap counters backing caps (`FR-AUT-6`)                                                                |
+| `automation_enrollments`        | org, workflow_id, `version_id`, `lead_id`, `cycle`, `status (active                                                                                                       | completed | exited                                              | failed)`, `enrolled_at`, `completed_at?`, `exit_reason?`. `UNIQUE (organization_id, workflow_id, lead_id, cycle)` **is** the re-entry policy                                        |
+| `automation_runs`               | org, workflow_id, version_id, enrollment_id, `lead_id`, `trigger_event_id?`, `trigger_type`, `status (running                                                             | waiting   | completed                                           | failed                                                                                                                                                                              | cancelled)`, `current_step_id?`, `resume_at?`, `causation_depth`, `steps_run`, `context JSONB`, started_at, finished_at?, `error?` |
+| `automation_run_steps`          | org, run_id, `step_id`, `action`, `attempt`, `status (pending                                                                                                             | succeeded | skipped                                             | failed)`, `decision?`, `reason?`, `input JSONB`, `output JSONB?`, `error?`, `started_at`, `finished_at?`. Partitioned monthly (`FR-AUT-7`)                                          |
+| `automation_guardrail_counters` | org, `scope_key`, `window_start date`, `count` — cheap counters backing caps (`FR-AUT-6`). `UNIQUE (organization_id, scope_key, window_start)`                            |
 
 Waiting runs are resumed by BullMQ delayed jobs _and_ a reconciliation sweep over
 `status='waiting' AND resume_at <= now()`, so a lost Redis job cannot strand a workflow.
@@ -1379,9 +1379,38 @@ Waiting runs are resumed by BullMQ delayed jobs _and_ a reconciliation sweep ove
 > publication, and the mirror would make a version published by the *system* (an industry
 > template's starter workflow) unrepresentable.
 >
-> `automation_enrollments`, `automation_runs`, `automation_run_steps` and
-> `automation_guardrail_counters` remain unbuilt: they are step 2's, and `tasks.automation_run_id`
-> stays absent until `automation_runs` exists.
+> **Amended again, Phase 6 step 2 (2026-10-26).** All four engine tables are built, and the
+> amendment corrects this section a second time rather than only adding to it.
+>
+> **`entity_type` + `entity_id` became `lead_id`, with a composite FK.** Every trigger's subject is
+> a lead today (`WORKFLOW_TRIGGERS[].subject`, reconciled at boot), an `entity_id` with no foreign
+> key is a dangling reference nothing catches, and `tasks` already shows the shape a second subject
+> takes here: a nullable column per kind with a CHECK that exactly one is set. `enrollment_cycle`
+> became `cycle`, and `step_key` became `step_id` — the id a step carries **inside its version's
+> definition**, which is what makes "retry from the failed step" expressible: the graph is
+> immutable, so the id still means the same thing.
+>
+> **`automation_run_steps` has no `idempotency_key` column.** A unique containing one would have to
+> contain the partition key too, which makes it a race guard rather than a point read — the
+> `inbound_payloads` lesson. What stops an external effect happening twice is the key handed to the
+> **handler** (`wf:{runId}:{stepId}:{attempt}`), which is what the WhatsApp send, the webhook
+> delivery and the notification dedupe all key on.
+>
+> **Hand-written objects** (all in `packages/db/src/schema-objects.int-spec.ts`): the partial unique
+> `automation_runs_one_per_event` on `(organization_id, workflow_id, trigger_event_id) WHERE
+> trigger_event_id IS NOT NULL` — the idempotency that makes a retried delivery one run, partial
+> because a manual run has no event and a plain unique would allow exactly one of those for ever;
+> `automation_runs_resumable` on `(resume_at) WHERE status = 'waiting'`, keyed on the instant alone
+> because the sweep runs under `withPlatformScope`; `automation_runs_live`; and **sixteen CHECKs**.
+> Three are worth reading: `automation_runs_waiting_has_a_moment` is one-way (a resumed run keeps
+> its `resume_at` as the record of when it was due), `automation_runs_finished_has_an_instant` is a
+> `CASE` biconditional because both directions are contradictions, and
+> `automation_run_steps_skipped_says_why` is what makes `FR-AUT-7`'s "including *skipped because*"
+> unrepresentable to get wrong.
+>
+> `tasks.automation_run_id` is **still absent**: a workflow-created follow-up is attributed through
+> the run's step log (`output.taskId`) rather than by a column on `tasks`, and adding one is a
+> migration this step did not need. Said here rather than left to be discovered.
 
 ---
 

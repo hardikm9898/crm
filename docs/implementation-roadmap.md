@@ -3066,6 +3066,105 @@ write them about. Configuration is audited instead. The `manual` trigger has no 
 `FR-AUT-7`'s per-lead run view and retry-from-failed-step, the dry run, and the starter workflow
 templates per industry all wait for something to run.
 
+### Step 2 — the engine: a chain of short jobs, and the sweep that cannot lose one ✅ _(landed 2026-10-26)_
+
+Step 1 could publish a workflow and run nothing. This is the engine — and the thing that shaped it
+is `queue-event-architecture.md` §7's own sentence: "a single bad workflow must never be able to
+message a tenant's entire customer base or get their WABA banned."
+
+**A run is a chain of short jobs, one step each**, not one job that walks the graph. A **wait** is
+then a delayed job plus `automation_runs.resume_at` rather than a worker standing still for two
+days; a **worker restart** loses a job and not a run; and a **failure** is recorded against the step
+that failed, which is what makes retry-from-there expressible later. The delayed job is only the
+fast path: `resume_at` is the promise, and `maintenance.automation-resume` reads it every minute.
+Phase 6's third exit criterion is therefore a mechanism rather than a hope, and the e2e **drops a
+delayed job on purpose** and asserts the sweep finishes the run.
+
+**The engine's own authority was the step's sharpest question, and the first draft got it wrong.**
+A workflow has no `actorId` — it is not a person — and `DataScopeService` defaults an absent scope
+to `own`, which compares a row against the actor. So every action that went through a service
+answered **"Lead not found"**: the data scope working exactly as designed against a principal who is
+nobody. The answer is not to widen the scope quietly but to say what a workflow *is*:
+`automationPrincipal` holds permissions at **organization** scope, because a workflow is the
+workspace's standing instruction — and the permissions are **enumerated** in `ENGINE_PERMISSIONS`
+rather than granted wholesale, with `automation:manage`, every `*:delete`, billing and settings
+deliberately absent. Adding an action that needs something new is a line in that file, which is a
+moment where a person decides what a workflow may do.
+
+**Loop detection rides on the principal.** A `change_status` action calls `LeadsService`, which
+emits `lead.status_changed` through its own outbox call — so threading a depth through every service
+would be a parameter on every method and one call site away from a workflow that triggers itself for
+ever. The depth lives on `TenantPrincipal.automation` and `OutboxService.emit` defaults from it: a
+service that has never heard of automation produces a correctly attributed event at `depth + 1`, and
+the dispatcher refuses at the ceiling. The e2e asserts the **emitted event's** depth and
+`actorType`, not the engine's own bookkeeping.
+
+**Files changed.** `packages/shared/src/automation-runtime.ts` (+spec), `tenant-context.ts`,
+`notifications.ts`; `packages/db/prisma/schema.prisma` and migration
+`20261025192153_phase6_automation_engine`; `packages/db/src/tenant-models.ts`,
+`schema-objects.int-spec.ts`, `tenant-isolation.int-spec.ts`;
+`apps/api/src/modules/automation/` (dispatch, executor, facts, guardrails, handlers, authority,
+runs, processors, registry check, DTOs, controller, module, README);
+`apps/api/src/infra/outbox/outbox.service.ts` and `event-subscriptions.ts` (+spec);
+`apps/api/src/infra/queue/queue.constants.ts`, `scheduler.service.ts`, `processor.registry.ts`;
+`apps/api/src/modules/maintenance/maintenance.processors.ts`;
+`apps/api/src/modules/webhooks/webhook-dispatch.service.ts`;
+`apps/api/test/automation-engine.e2e-spec.ts` and `route-authorization.e2e-spec.ts`;
+`apps/web/src/lib/automation.ts`, `lib/timeline-registry.ts` (+spec),
+`settings/automation/_components/run-list.tsx`, `settings/automation/[id]/page.tsx`,
+`leads/[id]/page.tsx`; ADR-0042; `database-design.md` §9 (corrected a second time),
+`queue-event-architecture.md` §7, `api-architecture.md`, `frontend-architecture.md` §10.19.
+
+**Database changes.** Four tables — `automation_enrollments`, `automation_runs`,
+`automation_run_steps` (the **fifth** monthly-partitioned table in this product) and
+`automation_guardrail_counters` — all registered in `TENANT_MODELS`. The migration arrived with the
+same **fifteen** spurious DROPs, removed by hand, and `PARTITION BY RANGE ("started_at")` edited
+into the generated `CREATE TABLE`. Hand-written and listed in `schema-objects.int-spec.ts`: the
+partial unique `automation_runs_one_per_event` (the idempotency that makes a retried delivery one
+run — partial, because a manual run has no event and a plain unique would allow exactly one of
+those for ever), the partial indexes `automation_runs_resumable` and `automation_runs_live`, and
+**sixteen CHECKs**. §9 described these tables with `entity_type` + `entity_id`; they carry `lead_id`
+with a composite FK instead, and the doc was corrected rather than followed — for the second step
+running.
+
+**API changes.** `GET /automation/runs` (filtered by lead, workflow or status, with a keyset cursor
+carrying both halves of its sort key), `GET /automation/runs/:id` (every step's input, output,
+decision, reason and error, plus the definition it was pinned to), and
+`POST /automation/workflows/:id/start` — the `manual` trigger's door, answering **202** because the
+first step may send a WhatsApp template. All behind `automation:manage`, because a run's step log
+carries the parameters a workflow was configured with.
+
+**UI changes.** An **Automation** tab on the lead (behind `automation:manage`) and a "What it has
+done" card on the workflow, both rendering the same `RunList`: each run's state in words, each
+step's own sentence, and the five new timeline describers so a sales executive reads "“Call a new
+lead” did not act: nobody owns this lead, so there was nobody to tell" on the ordinary timeline with
+no extra permission.
+
+**Tests run.** `pnpm lint typecheck build` clean. **1 264 unit** (722 shared, 363 web, 175 api, 4 db)
+and **1 682 integration** (931 api e2e, 751 db). New: **36** pure-runtime cases in `@leados/shared`
+(the graph walk, the condition evaluator, re-entry, interpolation), **21 e2e** driving the engine end
+to end, and **12 cross-tenant and constraint cases**. Then **31 HTTP checks** against a live API,
+worker and scheduler — nothing driven by hand, so the outbox dispatcher and the worker did the work
+— and **16 browser checks** in Chromium.
+
+Three defects came out of that verification rather than out of the suites, and all three are fixed
+here. The **registry's own hint** for `add_tag` promised a slug, borrowed from `conversations.tags`;
+a lead's tags are rows with display names, and the HTTP check read back `Nurtured`. **`GET
+/automation/runs` omitted the steps**, so both screens drew a disclosure with nothing behind it — on
+the two panels whose entire job is answering "why" — which the browser check found by waiting for a
+`summary` that was never rendered. And the notification-preferences assertion hard-coded its list of
+types, which the new `automation.notice` broke.
+
+**Carried forward, named rather than assumed.** No **dry run** (`POST :id/test-run`) and no
+**retry from the failed step**: `automation_run_steps.attempt` exists for the second, and both wait
+rather than being half-built — a second execution path through the interpreter is how one of them
+drifts. `tasks.automation_run_id` is still absent; a workflow-created follow-up is attributed
+through its step's `output.taskId`. Per-org **concurrency** is the queue's (`concurrency: 5`) rather
+than a per-workspace limiter, and a platform-wide emergency stop is Phase 10's. The two reference
+flows in the phase's exit criteria are now expressible — new-lead nurture is a template, a wait, a
+task and a branch; abandoned checkout needs Phase 7's checkout — and the industry starter templates
+are step 3's.
+
 ---
 
 ## Phase 7 — Websites & landing pages
@@ -3224,12 +3323,13 @@ deliberately **not** built, said once rather than implied: typing state and real
 would make it meaningful), bulk sending, and a usage rollup for questions older than the 24-month
 message retention.
 
-**Phase 6 is under way: step 1 landed on 2026-10-25** — the registry, workflows, versions and
-publish, with no executor. Its own entry is in the Phase 6 section below. **The next step is Phase 6
-step 2 — the durable step executor**: the thing that consumes an event, finds the workflows whose
-dispatch row names it, pins the published version, walks the steps, suspends on a `wait` and is
-recovered by a reconciliation sweep when the delayed job is lost. Everything it needs from step 1
-exists: a published version to pin to, and an indexed answer to "who listens to this event".
+**Phase 6 is under way: steps 1 and 2 landed on 2026-10-25 and 2026-10-26** — the registry,
+workflows, versions and publish, and then the engine that runs them. Both have their own entries in
+the Phase 6 section below. **The next step is Phase 6 step 3 — the dry run, retry from the failed
+step, and the industry starter workflows**, which is what turns the engine into something a
+non-technical owner will trust: a preview that executes nothing, a failed run that can be resumed
+from where it stopped rather than from the beginning, and a workspace that arrives with the two or
+three workflows its industry always wants.
 
 Four things from Phase 5 decided how Phase 6 started, and all four held:
 
