@@ -2,7 +2,6 @@
   "$schema": "https://turbo.build/schema.json",
   "ui": "stream",
   "globalDependencies": [".env", "tsconfig.base.json"],
-  "// globalEnv": "Turbo 2 defaults to strict env mode: a variable not declared here does not reach a task at all, silently. Undeclared JWT_ACCESS_SECRET, JWT_REFRESH_SECRET and ENCRYPTION_MASTER_KEY were stripped before the API could read them, so every e2e spec died in beforeAll on a boot refusal that named three variables the CI workflow was in fact setting. DATABASE_URL_TEST and REDIS_URL_TEST were being stripped too -- invisible because the test setup falls back to DATABASE_URL and REDIS_URL, which are declared, and in CI those name the same throwaway database. Anything the app or a test setup reads from the environment belongs in this list.",
   "globalEnv": [
     "NODE_ENV",
     "LOG_LEVEL",
