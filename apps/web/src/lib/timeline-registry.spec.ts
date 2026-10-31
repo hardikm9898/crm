@@ -780,7 +780,11 @@ describe('a reply, a template and a refusal on the timeline (`FR-WA-4`, `FR-WA-9
       entry({
         type: 'whatsapp.template_sent',
         module: 'whatsapp',
-        payload: { messageId: 'm2', preview: 'Hello Asha, your visit is confirmed.', messageType: 'template' },
+        payload: {
+          messageId: 'm2',
+          preview: 'Hello Asha, your visit is confirmed.',
+          messageType: 'template',
+        },
       }),
     );
     expect(rendered.label).toBe('Template sent');

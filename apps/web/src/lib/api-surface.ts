@@ -224,10 +224,7 @@ export function describeApiActivity(summary: ApiLogSummary, windowHours = 24): s
 /** What a key has been doing, for the row beside it. */
 export function describeKeyUsage(usage: ApiKeyUsage | undefined): string {
   if (!usage || usage.requests === 0) return 'No requests in the last day.';
-  const refused =
-    usage.refused > 0
-      ? `, ${usage.refused} of them refused`
-      : '';
+  const refused = usage.refused > 0 ? `, ${usage.refused} of them refused` : '';
   return `${usage.requests} ${plural(usage.requests, 'request')} in the last day${refused}.`;
 }
 
@@ -236,7 +233,6 @@ function plural(count: number, word: string): string {
 }
 
 // ── Reading it ──────────────────────────────────────────────────────────────
-
 
 /**
  * The log, with the summary that came back **with it**.

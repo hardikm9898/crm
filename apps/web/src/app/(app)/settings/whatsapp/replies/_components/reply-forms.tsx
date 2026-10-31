@@ -14,8 +14,7 @@ import { archiveCannedReply, createCannedReply, updateCannedReply } from '../act
  */
 export function NewReplyForm() {
   const [state, submit, pending] = useActionState(createCannedReply, IDLE);
-  const echo = (field: string) =>
-    state.status === 'error' ? (state.values?.[field] ?? '') : '';
+  const echo = (field: string) => (state.status === 'error' ? (state.values?.[field] ?? '') : '');
   return (
     <form action={submit} className="flex flex-col gap-2" data-new-reply>
       {state.status === 'error' && <ErrorNotice>{state.message}</ErrorNotice>}
@@ -91,7 +90,11 @@ export function ReplyRow({
   const [editState, edit, editing] = useActionState(updateCannedReply, IDLE);
   const [archiveState, archive, archiving] = useActionState(archiveCannedReply, IDLE);
   const failure =
-    editState.status === 'error' ? editState : archiveState.status === 'error' ? archiveState : null;
+    editState.status === 'error'
+      ? editState
+      : archiveState.status === 'error'
+        ? archiveState
+        : null;
   return (
     <li
       className="flex flex-col gap-2 rounded-[var(--radius-card)] border border-[var(--color-border)] px-3 py-2"

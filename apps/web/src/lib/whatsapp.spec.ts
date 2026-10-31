@@ -233,7 +233,9 @@ describe('an attachment on the thread (`FR-WA-3`)', () => {
     // worse than a sentence.
     for (const status of ['pending', 'refused', 'failed']) {
       expect(
-        attachmentShape(attachment({ mimeType: 'image/png', available: false, downloadStatus: status })),
+        attachmentShape(
+          attachment({ mimeType: 'image/png', available: false, downloadStatus: status }),
+        ),
       ).toBe('unavailable');
     }
   });
@@ -246,9 +248,9 @@ describe('an attachment on the thread (`FR-WA-3`)', () => {
     });
     expect(attachmentWaiting(refused)).toBe('That is 40 MB, and the limit for an image is 5 MB.');
     // Only when the API sent nothing — the `ERROR_FALLBACKS` rule, one layer in.
-    expect(attachmentWaiting(attachment({ available: false, downloadStatus: 'pending', reason: null }))).toMatch(
-      /still being fetched/,
-    );
+    expect(
+      attachmentWaiting(attachment({ available: false, downloadStatus: 'pending', reason: null })),
+    ).toMatch(/still being fetched/);
     expect(
       attachmentWaiting(attachment({ available: false, downloadStatus: 'failed', reason: '  ' })),
     ).toBe('That file is not available.');
@@ -334,9 +336,10 @@ describe('the composer’s shortcut matching, mirrored from `@leados/shared`', (
 
   it('agrees with the shared rule on every shape that matters', () => {
     for (const typed of ['/pri', '/thanks', '/nope', 'price-list', 'call me on /thanks', '', '/']) {
-      expect(mirrored(typed).map((r) => r.shortcut), typed).toEqual(
-        matchingShortcuts(replies, typed).map((r) => r.shortcut),
-      );
+      expect(
+        mirrored(typed).map((r) => r.shortcut),
+        typed,
+      ).toEqual(matchingShortcuts(replies, typed).map((r) => r.shortcut));
     }
   });
 });

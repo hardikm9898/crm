@@ -131,7 +131,10 @@ export class WhatsAppMediaService {
    * Idempotent on the row's own status: a job delivered twice finds it `stored` and does nothing,
    * which matters because the alternative is paying Meta's bandwidth twice and writing two objects.
    */
-  async download(organizationId: string, messageId: string): Promise<'stored' | 'refused' | 'skipped'> {
+  async download(
+    organizationId: string,
+    messageId: string,
+  ): Promise<'stored' | 'refused' | 'skipped'> {
     return tenantContext.run(systemPrincipal(organizationId, newId()), async () => {
       const row = await this.db.client.messageMedia.findFirst({
         where: { messageId },
@@ -180,7 +183,8 @@ export class WhatsAppMediaService {
       }
 
       const downloaded = await this.adapter.downloadMedia(context, meta.url, limit.maxBytes);
-      const mimeType = meta.mimeType ?? downloaded.mimeType ?? row.mimeType ?? 'application/octet-stream';
+      const mimeType =
+        meta.mimeType ?? downloaded.mimeType ?? row.mimeType ?? 'application/octet-stream';
       const fileName = row.fileName ?? defaultFileName(type, mimeType, row.id);
       const key = documentKey({
         organizationId,
@@ -250,7 +254,9 @@ export class WhatsAppMediaService {
     },
   ): Promise<StoredUpload> {
     const principal = tenantContext.require('whatsapp.media.attach');
-    const scoped = conversationScopeWhere(this.scopes, 'conversation:reply', { id: conversationId });
+    const scoped = conversationScopeWhere(this.scopes, 'conversation:reply', {
+      id: conversationId,
+    });
     if (scoped === null) throw AppError.notFound('Conversation');
     const conversation = await this.db.client.conversation.findFirst({
       where: scoped,
@@ -313,7 +319,10 @@ export class WhatsAppMediaService {
    * its attachments either — and a 404 for both, because the shape of an id must not become an
    * oracle.
    */
-  async read(conversationId: string, messageId: string): Promise<{
+  async read(
+    conversationId: string,
+    messageId: string,
+  ): Promise<{
     bytes: Buffer;
     mimeType: string;
     fileName: string;
@@ -360,7 +369,10 @@ export class WhatsAppMediaService {
       fileName: row.fileName ?? 'attachment',
       // An image or a video is shown where it is; anything else is a download, because a browser
       // rendering a stranger's HTML inline on our origin is the one thing `nosniff` exists for.
-      inline: mimeType.startsWith('image/') || mimeType.startsWith('video/') || mimeType.startsWith('audio/'),
+      inline:
+        mimeType.startsWith('image/') ||
+        mimeType.startsWith('video/') ||
+        mimeType.startsWith('audio/'),
     };
   }
 

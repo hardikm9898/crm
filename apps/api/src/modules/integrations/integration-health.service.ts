@@ -77,7 +77,9 @@ export class IntegrationHealthService {
   async sweep(now = new Date()): Promise<{ probed: number; revoked: number }> {
     const probeable = this.registry
       .providers()
-      .filter((provider) => provider.probeEveryMinutes !== null && this.registry.canProbe(provider.key))
+      .filter(
+        (provider) => provider.probeEveryMinutes !== null && this.registry.canProbe(provider.key),
+      )
       .map((provider) => provider.key);
     if (probeable.length === 0) return { probed: 0, revoked: 0 };
 
@@ -261,5 +263,7 @@ function describeDetail(detail: Record<string, unknown>): string {
     return typeof status === 'number' ? `${status}: ${message}` : message;
   }
   const status = detail['status'];
-  return typeof status === 'number' ? `The provider answered ${status}.` : 'The provider could not be reached.';
+  return typeof status === 'number'
+    ? `The provider answered ${status}.`
+    : 'The provider could not be reached.';
 }

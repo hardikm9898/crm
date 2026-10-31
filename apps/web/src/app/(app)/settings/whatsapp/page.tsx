@@ -64,7 +64,11 @@ export default async function WhatsAppSettingsPage() {
       />
 
       <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <StatCard label="Accounts" value={String(accounts.items.length)} hint="WhatsApp Business Accounts." />
+        <StatCard
+          label="Accounts"
+          value={String(accounts.items.length)}
+          hint="WhatsApp Business Accounts."
+        />
         <StatCard label="Numbers" value={String(accounts.numbers)} hint="Across every account." />
         <StatCard
           label="Connections"
@@ -126,7 +130,11 @@ export default async function WhatsAppSettingsPage() {
                 ) : (
                   <ul className="flex flex-col divide-y divide-[var(--color-border)]/60">
                     {account.numbers.map((number) => (
-                      <li key={number.id} className="flex flex-col gap-2 py-3" data-number={number.id}>
+                      <li
+                        key={number.id}
+                        className="flex flex-col gap-2 py-3"
+                        data-number={number.id}
+                      >
                         <div className="flex flex-wrap items-baseline justify-between gap-2">
                           <div>
                             {/* Printed as text, not only inside the editor below it: a settings
@@ -156,7 +164,10 @@ export default async function WhatsAppSettingsPage() {
                 )}
 
                 {account?.lastError && (
-                  <p className="mt-3 text-xs text-[var(--color-danger)]" data-account-error={account.id}>
+                  <p
+                    className="mt-3 text-xs text-[var(--color-danger)]"
+                    data-account-error={account.id}
+                  >
                     {account.lastError}
                   </p>
                 )}

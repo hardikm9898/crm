@@ -43,7 +43,10 @@ export class CannedRepliesService {
         // everywhere else so a second one cannot silently replace it.
         AND: [
           {
-            OR: [{ visibility: 'shared' }, { visibility: 'private', ownerUserId: principal.actorId }],
+            OR: [
+              { visibility: 'shared' },
+              { visibility: 'private', ownerUserId: principal.actorId },
+            ],
           },
         ],
       },
@@ -147,7 +150,10 @@ export class CannedRepliesService {
         deletedAt: null,
         AND: [
           {
-            OR: [{ visibility: 'shared' }, { visibility: 'private', ownerUserId: principal.actorId }],
+            OR: [
+              { visibility: 'shared' },
+              { visibility: 'private', ownerUserId: principal.actorId },
+            ],
           },
         ],
       },

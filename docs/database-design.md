@@ -827,7 +827,7 @@ RESTRICT`, like every other cross-table reference here: `SetNull` and `SetDefaul
 > - **`messages.provider_message_id` is not globally unique, and could not be.** The table is
 >   partitioned by `created_at`, so every unique index on it must contain the partition key:
 >   `messages_provider_message_unique` is `(provider, provider_message_id, created_at) WHERE
->   provider_message_id IS NOT NULL`. That makes it a **race guard**, not the idempotency gate the
+provider_message_id IS NOT NULL`. That makes it a **race guard**, not the idempotency gate the
 >   sketch assumed — the same message id next month would be allowed. The replay guarantee lives in
 >   `provider_events`, which is deliberately not partitioned, exactly as it does for the ad
 >   connectors; `FR-WA-6` is measured there and this index is what stops two jobs racing.
@@ -903,12 +903,12 @@ RESTRICT`, like every other cross-table reference here: `SetNull` and `SetDefaul
 >   `submitted_has_provider_id` (anything Meta has seen has Meta's id). The mirror of the first is
 >   false — a resubmitted template keeps the reason it was refused for last time, which is the thing
 >   the person editing it needs to read.
-> - **`whatsapp_templates_name_shape` is a regex *and* a `length()` test**, not `{3,512}`: Postgres
+> - **`whatsapp_templates_name_shape` is a regex _and_ a `length()` test**, not `{3,512}`: Postgres
 >   refuses a regex repetition count above **255**, and the quantifier form answered
 >   `invalid repetition count(s)` at insert time — a 500 on a feature whose unit tests all passed.
 >
 > Two partial indexes are new: `whatsapp_templates_sendable` (`WHERE status = 'approved' AND
-> deleted_at IS NULL`), which is what a composer's picker asks for, and `messages_queued`
+deleted_at IS NULL`), which is what a composer's picker asks for, and `messages_queued`
 > (`WHERE status = 'queued'`), keyed on `created_at` alone because the sweep that re-queues an
 > unsent message runs across every tenant — as `calls_awaiting_outcome` already does.
 
@@ -1009,13 +1009,13 @@ RESTRICT`, like every other cross-table reference here: `SetNull` and `SetDefaul
 >   the column makes "which wording actually gets used" answerable from the messages, which is the
 >   one that cannot drift. `Restrict` on the FK, so a reply that has been sent is **archived** rather
 >   than deleted.
-> - **`canned_replies_shortcut_shape` is a regex *and* a `length()` test**, not `{1,32}`: Postgres
+> - **`canned_replies_shortcut_shape` is a regex _and_ a `length()` test**, not `{1,32}`: Postgres
 >   refuses a regex repetition count above 255 and a quantifier form installs happily before
 >   rejecting every insert — which this phase paid for once already on a template name.
 > - **The sketch's `visibility` is two words, not a free string**: `canned_replies_visibility` fixes
 >   the vocabulary so a second producer cannot invent a third.
 > - **`messages_billable` is a partial index on `(organization_id, created_at DESC) WHERE billable`,
->   and it *does* carry the `organization_id` prefix** — unlike the sweeps' indexes. The usage meter
+>   and it _does_ carry the `organization_id` prefix** — unlike the sweeps' indexes. The usage meter
 >   is always one workspace asking about itself, so omitting the prefix here would be the mistake
 >   rather than the pattern.
 >
@@ -1249,7 +1249,7 @@ message search (`FR-VIEW-1`).
 >   either orphan that history or refuse the delete and make a mistyped connection permanent.
 > - **One _live_ connection per provider per workspace**, through a hand-written partial unique
 >   index — `integration_connections_live_provider (organization_id, provider) WHERE
->   disconnected_at IS NULL`. A plain unique would stop a workspace ever reconnecting a provider it
+disconnected_at IS NULL`. A plain unique would stop a workspace ever reconnecting a provider it
 >   had disconnected, which is the commonest thing anybody does to an integration. Prisma cannot
 >   express a partial unique, so this is one more object its next diff would drop.
 > - **Four more CHECKs, each written in the one direction that is a contradiction.**
@@ -1286,7 +1286,7 @@ message search (`FR-VIEW-1`).
 >   `inbound_payloads`. A unique on a partitioned table must contain the partition key, which makes
 >   it a race guard rather than a point read — the same event id next month would be allowed. The
 >   question here is "have we **ever** seen this id", and `UNIQUE (organization_id, provider,
->   external_event_id)` is the answer no partition boundary can defeat. It is also what makes the
+external_event_id)` is the answer no partition boundary can defeat. It is also what makes the
 >   phase's exit criterion a constraint rather than a code path: Meta's retried delivery fails the
 >   insert.
 > - **`status` is an enum of four, and `duplicate` means the _workspace's_ duplicate rules**, not a
@@ -1332,15 +1332,15 @@ message search (`FR-VIEW-1`).
 
 ## 9. Automation
 
-| Table                           | Key columns / notes                                                                                                                                                       |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `workflows`                     | org, name, description, `status (draft                                                                                                                                    | active    | paused                                              | archived)`, `current_version_id?`, `kill_switch BOOL`, `max_runs_per_entity?`, `reentry_policy (once                                                                                 | cooldown                                                                                           | always)`, `cooldown_hours?`, created_by, deleted_at |
+| Table                           | Key columns / notes                                                                                                                                                                 |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `workflows`                     | org, name, description, `status (draft                                                                                                                                              | active    | paused    | archived)`, `current_version_id?`, `kill_switch BOOL`, `max_runs_per_entity?`, `reentry_policy (once                                         | cooldown                                                                                                                           | always)`, `cooldown_hours?`, created_by, deleted_at |
 | `workflow_versions`             | org, workflow_id, `version INT`, `definition JSONB` (**the** graph), `published_at?`, `published_by_id?`, created_by. `UNIQUE (organization_id, workflow_id, version)` (`FR-AUT-5`) |
 | `workflow_triggers`             | org, workflow_id, version_id, `trigger_type`, `event?`, `params JSONB` — one row per published workflow, indexed by `(organization_id, event)` so dispatch is a single lookup       |
-| `automation_enrollments`        | org, workflow_id, `version_id`, `lead_id`, `cycle`, `status (active                                                                                                       | completed | exited                                              | failed)`, `enrolled_at`, `completed_at?`, `exit_reason?`. `UNIQUE (organization_id, workflow_id, lead_id, cycle)` **is** the re-entry policy                                        |
-| `automation_runs`               | org, workflow_id, version_id, enrollment_id, `lead_id`, `trigger_event_id?`, `trigger_type`, `status (running                                                             | waiting   | completed                                           | failed                                                                                                                                                                              | cancelled)`, `current_step_id?`, `resume_at?`, `causation_depth`, `steps_run`, `context JSONB`, started_at, finished_at?, `error?` |
-| `automation_run_steps`          | org, run_id, `step_id`, `action`, `attempt`, `status (pending                                                                                                             | succeeded | skipped                                             | failed)`, `decision?`, `reason?`, `input JSONB`, `output JSONB?`, `error?`, `started_at`, `finished_at?`. Partitioned monthly (`FR-AUT-7`)                                          |
-| `automation_guardrail_counters` | org, `scope_key`, `window_start date`, `count` — cheap counters backing caps (`FR-AUT-6`). `UNIQUE (organization_id, scope_key, window_start)`                            |
+| `automation_enrollments`        | org, workflow_id, `version_id`, `lead_id`, `cycle`, `status (active                                                                                                                 | completed | exited    | failed)`, `enrolled_at`, `completed_at?`, `exit_reason?`. `UNIQUE (organization_id, workflow_id, lead_id, cycle)` **is** the re-entry policy |
+| `automation_runs`               | org, workflow_id, version_id, enrollment_id, `lead_id`, `trigger_event_id?`, `trigger_type`, `status (running                                                                       | waiting   | completed | failed                                                                                                                                       | cancelled)`, `current_step_id?`, `resume_at?`, `causation_depth`, `steps_run`, `context JSONB`, started_at, finished_at?, `error?` |
+| `automation_run_steps`          | org, run_id, `step_id`, `action`, `attempt`, `status (pending                                                                                                                       | succeeded | skipped   | failed)`, `decision?`, `reason?`, `input JSONB`, `output JSONB?`, `error?`, `started_at`, `finished_at?`. Partitioned monthly (`FR-AUT-7`)   |
+| `automation_guardrail_counters` | org, `scope_key`, `window_start date`, `count` — cheap counters backing caps (`FR-AUT-6`). `UNIQUE (organization_id, scope_key, window_start)`                                      |
 
 Waiting runs are resumed by BullMQ delayed jobs _and_ a reconciliation sweep over
 `status='waiting' AND resume_at <= now()`, so a lost Redis job cannot strand a workflow.
@@ -1370,13 +1370,13 @@ Waiting runs are resumed by BullMQ delayed jobs _and_ a reconciliation sweep ove
 >
 > **Hand-written objects** (all in `packages/db/src/schema-objects.int-spec.ts`): the partial
 > unique `workflows_live_name` on `(organization_id, lower(btrim(name)))
-> WHERE deleted_at IS NULL` — the partial `WHERE` is what lets a deleted workflow's name be reused,
+WHERE deleted_at IS NULL` — the partial `WHERE` is what lets a deleted workflow's name be reused,
 > as `integration_connections_live_provider` already established — plus twelve CHECKs. Two are
 > worth reading: `workflows_cooldown_matches_policy` is a `CASE` biconditional because **both**
 > directions are contradictions (a cooldown policy with no cooldown cannot be evaluated; hours on
 > any other policy are a number nothing reads), while
 > `workflow_versions_publisher_published_it` is deliberately **one-way** — a publisher implies a
-> publication, and the mirror would make a version published by the *system* (an industry
+> publication, and the mirror would make a version published by the _system_ (an industry
 > template's starter workflow) unrepresentable.
 >
 > **Amended again, Phase 6 step 2 (2026-10-26).** All four engine tables are built, and the
@@ -1398,14 +1398,14 @@ Waiting runs are resumed by BullMQ delayed jobs _and_ a reconciliation sweep ove
 >
 > **Hand-written objects** (all in `packages/db/src/schema-objects.int-spec.ts`): the partial unique
 > `automation_runs_one_per_event` on `(organization_id, workflow_id, trigger_event_id) WHERE
-> trigger_event_id IS NOT NULL` — the idempotency that makes a retried delivery one run, partial
+trigger_event_id IS NOT NULL` — the idempotency that makes a retried delivery one run, partial
 > because a manual run has no event and a plain unique would allow exactly one of those for ever;
 > `automation_runs_resumable` on `(resume_at) WHERE status = 'waiting'`, keyed on the instant alone
 > because the sweep runs under `withPlatformScope`; `automation_runs_live`; and **sixteen CHECKs**.
 > Three are worth reading: `automation_runs_waiting_has_a_moment` is one-way (a resumed run keeps
 > its `resume_at` as the record of when it was due), `automation_runs_finished_has_an_instant` is a
 > `CASE` biconditional because both directions are contradictions, and
-> `automation_run_steps_skipped_says_why` is what makes `FR-AUT-7`'s "including *skipped because*"
+> `automation_run_steps_skipped_says_why` is what makes `FR-AUT-7`'s "including _skipped because_"
 > unrepresentable to get wrong.
 >
 > `tasks.automation_run_id` is **still absent**: a workflow-created follow-up is attributed through
@@ -1438,7 +1438,7 @@ Waiting runs are resumed by BullMQ delayed jobs _and_ a reconciliation sweep ove
 >   in this workflow" for ever.
 >
 > Nothing else changed. `automation_run_steps.attempt` was already there for the retry, which needs
-> no column of its own: `current_step_id` points at the last step that *succeeded*, so the graph
+> no column of its own: `current_step_id` points at the last step that _succeeded_, so the graph
 > itself says where to resume.
 >
 > **§17's "starter automations wait for Phase 6" is now done, as data rather than as a table.** An

@@ -62,9 +62,7 @@ export function RunList({
                   </Link>
                   <span className="ml-2 text-xs font-normal text-[var(--color-text-muted)]">
                     {`version ${run.version}`}
-                    {run.cycle !== null && run.cycle > 1
-                      ? ` · run ${run.cycle} for this lead`
-                      : ''}
+                    {run.cycle !== null && run.cycle > 1 ? ` · run ${run.cycle} for this lead` : ''}
                   </span>
                 </p>
                 <p className="text-xs text-[var(--color-text-muted)]" data-run-summary>

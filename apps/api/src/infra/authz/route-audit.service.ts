@@ -194,8 +194,7 @@ function zodSchemasOf(
   methodName: string,
 ): { bodySchema?: ZodType; querySchema?: ZodType } {
   const metadata = Reflect.getMetadata(ROUTE_ARGS_METADATA, prototype.constructor, methodName) as
-    | Record<string, { pipes?: unknown[] }>
-    | undefined;
+    Record<string, { pipes?: unknown[] }> | undefined;
   if (!metadata) return {};
 
   const found: { bodySchema?: ZodType; querySchema?: ZodType } = {};
@@ -204,8 +203,8 @@ function zodSchemasOf(
     // 3 = BODY, 4 = QUERY in Nest's `RouteParamtypes`. Written as numbers because the enum is
     // not exported from the public entry point, and named here so the next reader knows why.
     if (paramType !== 3 && paramType !== 4) continue;
-    const pipe = (entry.pipes ?? []).find((candidate): candidate is ZodBody<unknown> =>
-      candidate instanceof ZodBody,
+    const pipe = (entry.pipes ?? []).find(
+      (candidate): candidate is ZodBody<unknown> => candidate instanceof ZodBody,
     );
     if (!pipe) continue;
     if (paramType === 3) found.bodySchema = pipe.schema;

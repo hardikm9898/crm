@@ -37,7 +37,8 @@ export async function bootTestApp(): Promise<TestApp> {
   });
 
   const logger = app.get<Logger>(LOGGER);
-  app.setGlobalPrefix('api/v1', { exclude: [
+  app.setGlobalPrefix('api/v1', {
+    exclude: [
       'health/live',
       'health/ready',
       'health/deep',
@@ -47,7 +48,8 @@ export async function bootTestApp(): Promise<TestApp> {
       'openapi.json',
       'docs',
       'docs/errors',
-    ] });
+    ],
+  });
   installValidationCopy();
   allowEmptyJsonBody(app, 256 * 1024);
   allowCsvUpload(app, 20 * 1024 * 1024, ['/api/v1/imports']);

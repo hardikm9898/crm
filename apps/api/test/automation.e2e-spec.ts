@@ -187,7 +187,10 @@ describe('a workflow and its draft', () => {
       await setup('PUT', `/automation/workflows/${created.id}/definition`, {
         token: orgA.token,
         payload: {
-          definition: { trigger: { type: 'lead.created' }, steps: [{ id: 'n', action: 'add_note', params: { body } }] },
+          definition: {
+            trigger: { type: 'lead.created' },
+            steps: [{ id: 'n', action: 'add_note', params: { body } }],
+          },
         },
       });
     }
@@ -255,11 +258,9 @@ describe('publishing (`FR-AUT-5`)', () => {
       token: orgA.token,
       payload: { definition: readyDefinition() },
     });
-    const published = await setup<Workflow>(
-      'POST',
-      `/automation/workflows/${created.id}/publish`,
-      { token: orgA.token },
-    );
+    const published = await setup<Workflow>('POST', `/automation/workflows/${created.id}/publish`, {
+      token: orgA.token,
+    });
 
     expect(published.status).toBe('active');
     expect(published.currentVersionId).toBe(published.current?.id);
@@ -283,11 +284,9 @@ describe('publishing (`FR-AUT-5`)', () => {
       token: orgA.token,
       payload: { definition: readyDefinition() },
     });
-    const published = await setup<Workflow>(
-      'POST',
-      `/automation/workflows/${created.id}/publish`,
-      { token: orgA.token },
-    );
+    const published = await setup<Workflow>('POST', `/automation/workflows/${created.id}/publish`, {
+      token: orgA.token,
+    });
     const pinned = published.currentVersionId;
 
     await setup('PUT', `/automation/workflows/${created.id}/definition`, {

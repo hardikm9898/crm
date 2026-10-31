@@ -92,9 +92,12 @@ export class IntegrationRegistryService implements OnApplicationBootstrap {
       ...unprobeable.map((key) => `${key} asks to be probed and its adapter cannot be`),
       ...unverifiable.map((key) => `${key} declares an inbound verification its adapter cannot do`),
       ...unreadable.map((key) => `${key} accepts deliveries its adapter cannot read`),
-      ...unfetchable.map((key) => `${key} says its delivery is a reference and cannot fetch a lead`),
+      ...unfetchable.map(
+        (key) => `${key} says its delivery is a reference and cannot fetch a lead`,
+      ),
       ...incoherent.map(
-        (key) => `${key}'s delivery shape and its inbound verification disagree about whether it posts to us`,
+        (key) =>
+          `${key}'s delivery shape and its inbound verification disagree about whether it posts to us`,
       ),
       ...orphans.map((key) => `${key} has an adapter and is not in the catalogue`),
     ];

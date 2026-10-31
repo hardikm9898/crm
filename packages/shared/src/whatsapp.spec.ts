@@ -141,16 +141,24 @@ describe('reading a delivery', () => {
 
   it('returns every message in a batch, each on its own id', () => {
     const messages = parseWhatsAppMessages(
-      delivery([text({ id: 'wamid.one' }), text({ id: 'wamid.two', text: { body: 'And the 2BHK?' } })]),
+      delivery([
+        text({ id: 'wamid.one' }),
+        text({ id: 'wamid.two', text: { body: 'And the 2BHK?' } }),
+      ]),
     );
-    expect(messages.map((message) => message.providerMessageId)).toEqual(['wamid.one', 'wamid.two']);
+    expect(messages.map((message) => message.providerMessageId)).toEqual([
+      'wamid.one',
+      'wamid.two',
+    ]);
     expect(messages[1]?.body).toBe('And the 2BHK?');
   });
 
   it('keeps a message whose content it cannot store, rather than dropping it', () => {
     // A conversation that silently skips a photo reads as a message nobody sent.
     const [message] = parseWhatsAppMessages(
-      delivery([text({ type: 'image', text: undefined, image: { id: 'media-1', mime_type: 'image/jpeg' } })]),
+      delivery([
+        text({ type: 'image', text: undefined, image: { id: 'media-1', mime_type: 'image/jpeg' } }),
+      ]),
     );
     expect(message?.type).toBe('image');
     expect(message?.body).toBeNull();
@@ -160,7 +168,9 @@ describe('reading a delivery', () => {
 
   it('keeps a caption, because a caption is text about the photo', () => {
     const [message] = parseWhatsAppMessages(
-      delivery([text({ type: 'image', text: undefined, image: { id: 'm', caption: 'Our kitchen' } })]),
+      delivery([
+        text({ type: 'image', text: undefined, image: { id: 'm', caption: 'Our kitchen' } }),
+      ]),
     );
     expect(message?.body).toBe('Our kitchen');
     expect(describeMessagePreview('image', 'Our kitchen')).toBe('Our kitchen');
@@ -179,29 +189,42 @@ describe('reading a delivery', () => {
       parseWhatsAppMessages(delivery([text({ text: undefined, ...over })]))[0];
 
     expect(
-      read({ type: 'interactive', interactive: { button_reply: { id: 'b', title: 'Book a visit' } } })?.body,
+      read({
+        type: 'interactive',
+        interactive: { button_reply: { id: 'b', title: 'Book a visit' } },
+      })?.body,
     ).toBe('Book a visit');
     expect(
-      read({ type: 'interactive', interactive: { list_reply: { id: 'l', title: 'Weekends' } } })?.body,
+      read({ type: 'interactive', interactive: { list_reply: { id: 'l', title: 'Weekends' } } })
+        ?.body,
     ).toBe('Weekends');
-    expect(read({ type: 'location', location: { latitude: 12.9, longitude: 77.6, name: 'Indiranagar' } })?.body).toBe(
-      'Indiranagar',
-    );
-    expect(read({ type: 'reaction', reaction: { message_id: 'wamid.one', emoji: '👍' } })?.body).toBe('👍');
+    expect(
+      read({ type: 'location', location: { latitude: 12.9, longitude: 77.6, name: 'Indiranagar' } })
+        ?.body,
+    ).toBe('Indiranagar');
+    expect(
+      read({ type: 'reaction', reaction: { message_id: 'wamid.one', emoji: '👍' } })?.body,
+    ).toBe('👍');
     // A reaction names its subject under its own key rather than in `context`.
     expect(
-      read({ type: 'reaction', reaction: { message_id: 'wamid.one', emoji: '👍' } })?.replyToProviderId,
+      read({ type: 'reaction', reaction: { message_id: 'wamid.one', emoji: '👍' } })
+        ?.replyToProviderId,
     ).toBe('wamid.one');
-    expect(read({ type: 'text', text: { body: 'hi' }, context: { id: 'wamid.zero' } })?.replyToProviderId).toBe(
-      'wamid.zero',
-    );
+    expect(
+      read({ type: 'text', text: { body: 'hi' }, context: { id: 'wamid.zero' } })
+        ?.replyToProviderId,
+    ).toBe('wamid.zero');
   });
 
   it('ignores everything that is not a message, without throwing', () => {
     // Meta sends statuses for messages we sent, and fields nobody subscribed to. Both arrive at
     // the same endpoint, and a parser that threw would make Meta disable it.
-    expect(parseWhatsAppMessages(delivery([], { messages: undefined, statuses: [{ id: 'wamid.x' }] }))).toEqual([]);
-    expect(parseWhatsAppMessages({ entry: [{ changes: [{ field: 'account_update', value: {} }] }] })).toEqual([]);
+    expect(
+      parseWhatsAppMessages(delivery([], { messages: undefined, statuses: [{ id: 'wamid.x' }] })),
+    ).toEqual([]);
+    expect(
+      parseWhatsAppMessages({ entry: [{ changes: [{ field: 'account_update', value: {} }] }] }),
+    ).toEqual([]);
     expect(parseWhatsAppMessages({})).toEqual([]);
     expect(parseWhatsAppMessages({ entry: 'nonsense' })).toEqual([]);
     // No `phone_number_id` means nothing can say which business number it arrived at.
@@ -256,7 +279,11 @@ describe('what may be sent, and when (`FR-WA-1`)', () => {
 });
 
 describe('a template', () => {
-  const components = { header: 'Rao Interiors', body: 'Hello {{1}}, your {{2}} is ready.', footer: 'Reply STOP to opt out' };
+  const components = {
+    header: 'Rao Interiors',
+    body: 'Hello {{1}}, your {{2}} is ready.',
+    footer: 'Reply STOP to opt out',
+  };
 
   it('finds its variables in order, without repeats', () => {
     expect(templateVariables(components.body)).toEqual([1, 2]);
@@ -431,7 +458,9 @@ describe('status receipts (`FR-WA-4`)', () => {
   it('ignores a delivery with no statuses at all', () => {
     expect(parseWhatsAppStatuses({})).toEqual([]);
     expect(parseWhatsAppStatuses(statuses([]))).toEqual([]);
-    expect(parseWhatsAppStatuses({ entry: [{ changes: [{ field: 'account_update', value: {} }] }] })).toEqual([]);
+    expect(
+      parseWhatsAppStatuses({ entry: [{ changes: [{ field: 'account_update', value: {} }] }] }),
+    ).toEqual([]);
   });
 });
 
@@ -484,7 +513,11 @@ describe('an attachment (`FR-WA-3`)', () => {
 
   it('keeps a document’s file name and knows a voice note from an audio file', () => {
     const [document] = parseWhatsAppMessages(
-      mediaDelivery('document', { id: 'media-2', mime_type: 'application/pdf', filename: 'quote.pdf' }),
+      mediaDelivery('document', {
+        id: 'media-2',
+        mime_type: 'application/pdf',
+        filename: 'quote.pdf',
+      }),
     );
     expect(document?.media?.fileName).toBe('quote.pdf');
     expect(document?.media?.voice).toBe(false);
@@ -495,7 +528,17 @@ describe('an attachment (`FR-WA-3`)', () => {
   });
 
   it('has no media for a text message, and none for a block with no id', () => {
-    const [text] = parseWhatsAppMessages(delivery([{ from: '919845012345', id: 'wamid.t', timestamp: '1792400000', type: 'text', text: { body: 'hello' } }]));
+    const [text] = parseWhatsAppMessages(
+      delivery([
+        {
+          from: '919845012345',
+          id: 'wamid.t',
+          timestamp: '1792400000',
+          type: 'text',
+          text: { body: 'hello' },
+        },
+      ]),
+    );
     expect(text?.media).toBeNull();
     // An attachment nothing can fetch is worse than a row saying there was none.
     const [broken] = parseWhatsAppMessages(mediaDelivery('image', { mime_type: 'image/jpeg' }));
@@ -518,18 +561,20 @@ describe('an attachment (`FR-WA-3`)', () => {
       'text/plain is not a kind of audio this product stores.',
     );
     // A document is bounded by size alone, because "any file" is what a document is.
-    expect(mediaProblem({ type: 'document', mimeType: 'application/zip', sizeBytes: 1024 })).toBeNull();
-    expect(mediaProblem({ type: 'image', mimeType: 'application/zip', sizeBytes: 1024 })?.code).toBe(
-      'MEDIA_MIME_UNSUPPORTED',
-    );
+    expect(
+      mediaProblem({ type: 'document', mimeType: 'application/zip', sizeBytes: 1024 }),
+    ).toBeNull();
+    expect(
+      mediaProblem({ type: 'image', mimeType: 'application/zip', sizeBytes: 1024 })?.code,
+    ).toBe('MEDIA_MIME_UNSUPPORTED');
     expect(mediaProblem({ type: 'text', mimeType: null, sizeBytes: null })?.code).toBe(
       'MEDIA_TYPE_UNSUPPORTED',
     );
     // A size nobody knows yet passes: the job checks again once Meta has said.
     expect(mediaProblem({ type: 'video', mimeType: null, sizeBytes: null })).toBeNull();
-    expect(mediaProblem({ type: 'document', mimeType: 'application/pdf', sizeBytes: 0 })?.code).toBe(
-      'MEDIA_EMPTY',
-    );
+    expect(
+      mediaProblem({ type: 'document', mimeType: 'application/pdf', sizeBytes: 0 })?.code,
+    ).toBe('MEDIA_EMPTY');
   });
 
   it('says a size in words a person reads', () => {

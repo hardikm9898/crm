@@ -90,7 +90,10 @@ export class AutomationService {
   async list(query: ListWorkflowsQuery) {
     const workflowIds = await this.idsForTrigger(query.trigger);
     if (workflowIds !== undefined && workflowIds.length === 0) {
-      return { items: [], pagination: { limit: query.limit, nextCursor: null, hasMore: false, total: 0 } };
+      return {
+        items: [],
+        pagination: { limit: query.limit, nextCursor: null, hasMore: false, total: 0 },
+      };
     }
 
     // The filters without the cursor. The count has to read the same predicate as the list: a
@@ -121,9 +124,7 @@ export class AutomationService {
     return {
       items: page.map((row) => ({
         ...this.presentSummary(row),
-        trigger: row.trigger
-          ? { type: row.trigger.triggerType, event: row.trigger.event }
-          : null,
+        trigger: row.trigger ? { type: row.trigger.triggerType, event: row.trigger.event } : null,
       })),
       pagination: {
         limit: query.limit,
@@ -148,11 +149,9 @@ export class AutomationService {
     if (!row) throw AppError.notFound('Workflow');
 
     const draft = row.versions.find((version) => version.publishedAt === null) ?? null;
-    const current =
-      row.versions.find((version) => version.id === row.currentVersionId) ?? null;
+    const current = row.versions.find((version) => version.id === row.currentVersionId) ?? null;
     const editable = draft ?? current;
-    const problems =
-      editable === null ? [] : await this.problemsFor(editable.definition, row.id);
+    const problems = editable === null ? [] : await this.problemsFor(editable.definition, row.id);
 
     return {
       ...this.presentSummary(row),
@@ -184,7 +183,8 @@ export class AutomationService {
           maxRunsPerEntity: input.maxRunsPerEntity ?? null,
           reentryPolicy: input.reentryPolicy ?? 'once',
           // The CHECK pairs these two: a cooldown policy needs hours, anything else needs none.
-          cooldownHours: (input.reentryPolicy ?? 'once') === 'cooldown' ? (input.cooldownHours ?? 24) : null,
+          cooldownHours:
+            (input.reentryPolicy ?? 'once') === 'cooldown' ? (input.cooldownHours ?? 24) : null,
           createdById: actorId,
         },
       });

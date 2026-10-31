@@ -175,7 +175,10 @@ export default async function IntegrationsPage() {
                         </Link>
                       )}
                     </div>
-                    <p className="mt-1 text-xs text-[var(--color-text-muted)]" data-event-detail={event.id}>
+                    <p
+                      className="mt-1 text-xs text-[var(--color-text-muted)]"
+                      data-event-detail={event.id}
+                    >
                       {describeEvent(event)}
                     </p>
                   </li>

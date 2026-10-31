@@ -90,7 +90,11 @@ describe('the vocabulary this screen does declare', () => {
   });
 
   it('labels a person by their membership’s user id, not by the row’s own id', () => {
-    const option = REFERENCE_LABELS['user']!({ id: 'membership-1', userId: 'user-1', name: 'Asha' });
+    const option = REFERENCE_LABELS['user']!({
+      id: 'membership-1',
+      userId: 'user-1',
+      name: 'Asha',
+    });
     // Every assignment column in this product stores a user id; labelling by `id` would offer a
     // picker whose every choice the API refuses.
     expect(option).toEqual({ value: 'user-1', label: 'Asha' });
@@ -246,8 +250,6 @@ describe('describeRun', () => {
     expect(describeRun(run({ status: 'failed', error: 'that template is not approved' }))).toBe(
       'Failed: that template is not approved.',
     );
-    expect(describeRun(run({ status: 'failed', error: null }))).toBe(
-      'Failed: no reason recorded.',
-    );
+    expect(describeRun(run({ status: 'failed', error: null }))).toBe('Failed: no reason recorded.');
   });
 });

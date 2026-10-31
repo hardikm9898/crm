@@ -1,10 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import {
-  AppError,
-  MAX_STEPS_PER_RUN,
-  newId,
-  type WorkflowDefinition,
-} from '@leados/shared';
+import { AppError, MAX_STEPS_PER_RUN, newId, type WorkflowDefinition } from '@leados/shared';
 import { DbService } from '../../infra/db/db.service.js';
 import { DataScopeService } from '../../infra/authz/data-scope.service.js';
 import { JOBS, QUEUES } from '../../infra/queue/queue.constants.js';
@@ -80,9 +75,7 @@ export class AutomationRunsService {
       pagination: {
         limit: query.limit,
         nextCursor:
-          rows.length > query.limit && last
-            ? `${last.startedAt.toISOString()}_${last.id}`
-            : null,
+          rows.length > query.limit && last ? `${last.startedAt.toISOString()}_${last.id}` : null,
         hasMore: rows.length > query.limit,
         total,
       },
@@ -192,12 +185,17 @@ export class AutomationRunsService {
             select: { id: true, definition: true },
           }));
     if (version === null) {
-      throw AppError.businessRule('There is nothing to test yet — add this workflow’s steps first.');
+      throw AppError.businessRule(
+        'There is nothing to test yet — add this workflow’s steps first.',
+      );
     }
 
     const problems = await this.workflows.problemsFor(version.definition, workflowId);
     if (problems.length > 0) {
-      throw AppError.validation('Some details need filling in before this can be tested.', problems);
+      throw AppError.validation(
+        'Some details need filling in before this can be tested.',
+        problems,
+      );
     }
 
     const lead = await this.db.client.lead.findFirst({
@@ -258,7 +256,9 @@ export class AutomationRunsService {
     });
     if (!run) throw AppError.notFound('Run');
     if (run.dryRun) {
-      throw AppError.businessRule('That was a preview, so there is nothing to retry — test it again.');
+      throw AppError.businessRule(
+        'That was a preview, so there is nothing to retry — test it again.',
+      );
     }
     if (run.status !== 'failed') {
       throw AppError.businessRule(
@@ -268,7 +268,9 @@ export class AutomationRunsService {
     // The kill switch is the one guard a retry has to re-ask: a run that failed before somebody
     // stopped the workflow must not be the way its actions happen anyway.
     if (run.workflow.killSwitch) {
-      throw AppError.businessRule('This workflow is stopped. Start it again before retrying a run.');
+      throw AppError.businessRule(
+        'This workflow is stopped. Start it again before retrying a run.',
+      );
     }
     if (run.workflow.status !== 'active') {
       throw AppError.businessRule(
@@ -315,20 +317,22 @@ export class AutomationRunsService {
   }
 
   /** A run, with its steps when the caller asked for a list that carries them. */
-  private presentRow(row: Parameters<AutomationRunsService['presentSummary']>[0] & {
-    steps?: {
-      id: string;
-      stepId: string;
-      action: string;
-      attempt: number;
-      status: string;
-      decision: string | null;
-      reason: string | null;
-      error: string | null;
-      startedAt: Date;
-      finishedAt: Date | null;
-    }[];
-  }) {
+  private presentRow(
+    row: Parameters<AutomationRunsService['presentSummary']>[0] & {
+      steps?: {
+        id: string;
+        stepId: string;
+        action: string;
+        attempt: number;
+        status: string;
+        decision: string | null;
+        reason: string | null;
+        error: string | null;
+        startedAt: Date;
+        finishedAt: Date | null;
+      }[];
+    },
+  ) {
     return {
       ...this.presentSummary(row),
       ...(row.steps === undefined ? {} : { steps: row.steps.map((step) => presentStep(step)) }),

@@ -193,10 +193,11 @@ export async function checkIntegration(
   if (!token) return { status: 'error', message: 'Please sign in again.' };
   const id = text(form, 'connectionId') ?? '';
   try {
-    const checked = await request<{ outcome: string; statusAfter: string; latencyMs: number | null }>(
-      `/integrations/${id}/check`,
-      { method: 'POST', token },
-    );
+    const checked = await request<{
+      outcome: string;
+      statusAfter: string;
+      latencyMs: number | null;
+    }>(`/integrations/${id}/check`, { method: 'POST', token });
     refresh();
     return {
       status: 'success',
@@ -239,11 +240,7 @@ export async function disconnectIntegration(
   form: FormData,
 ): Promise<ActionState> {
   const id = text(form, 'connectionId') ?? '';
-  const state = await callApi(
-    `/integrations/${id}/disconnect`,
-    { method: 'POST' },
-    'Disconnected',
-  );
+  const state = await callApi(`/integrations/${id}/disconnect`, { method: 'POST' }, 'Disconnected');
   if (state.status === 'success') refresh();
   return state;
 }

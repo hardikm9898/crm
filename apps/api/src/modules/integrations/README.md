@@ -7,22 +7,22 @@ adapters, not as two more modules with their own idea of where a credential live
 
 ## What is here
 
-| File | What it decides |
-| --- | --- |
-| `integration.port.ts` | What an adapter is: `validate`, and an **optional** `probe`. |
-| `integration-registry.service.ts` | Which providers exist, paired with their adapters. Fails at boot if they disagree. |
-| `integration-vault.service.ts` | The credential, sealed to its own row. Plaintext never leaves this module. |
-| `integration-health.service.ts` | One probe, recorded and acted on — for the sweep and for the button. |
-| `integrations.service.ts` | Connect, edit, rotate, disconnect, preview, and the inbound door's lookup. |
-| `integrations.controller.ts` | `/integrations`, all of it behind `integration:manage`. |
-| `integration-inbound.controller.ts` | `POST /wh/{provider}/{connectionId}` — somebody else's server posting leads. |
-| `integrations.processor.ts` | `integration.health-check`, every ten minutes. |
-| `integration-inbound.service.ts` | A delivery → the ledger → a queued capture. |
-| `adapters/secret-names.ts` | The names each provider's secrets are filed under, in one place. |
-| `adapters/postmark.adapter.ts` | A token we send, probed with `GET /server`. |
-| `adapters/generic-webhook.adapter.ts` | A secret we generate, signed by the sender. No probe, on purpose. |
-| `adapters/meta-lead-ads.adapter.ts` | Meta's handshake, its signature, its batches, and the lead fetch. |
-| `adapters/google-ads-leads.adapter.ts` | A key inside the body, compared in constant time. No probe. |
+| File                                   | What it decides                                                                    |
+| -------------------------------------- | ---------------------------------------------------------------------------------- |
+| `integration.port.ts`                  | What an adapter is: `validate`, and an **optional** `probe`.                       |
+| `integration-registry.service.ts`      | Which providers exist, paired with their adapters. Fails at boot if they disagree. |
+| `integration-vault.service.ts`         | The credential, sealed to its own row. Plaintext never leaves this module.         |
+| `integration-health.service.ts`        | One probe, recorded and acted on — for the sweep and for the button.               |
+| `integrations.service.ts`              | Connect, edit, rotate, disconnect, preview, and the inbound door's lookup.         |
+| `integrations.controller.ts`           | `/integrations`, all of it behind `integration:manage`.                            |
+| `integration-inbound.controller.ts`    | `POST /wh/{provider}/{connectionId}` — somebody else's server posting leads.       |
+| `integrations.processor.ts`            | `integration.health-check`, every ten minutes.                                     |
+| `integration-inbound.service.ts`       | A delivery → the ledger → a queued capture.                                        |
+| `adapters/secret-names.ts`             | The names each provider's secrets are filed under, in one place.                   |
+| `adapters/postmark.adapter.ts`         | A token we send, probed with `GET /server`.                                        |
+| `adapters/generic-webhook.adapter.ts`  | A secret we generate, signed by the sender. No probe, on purpose.                  |
+| `adapters/meta-lead-ads.adapter.ts`    | Meta's handshake, its signature, its batches, and the lead fetch.                  |
+| `adapters/google-ads-leads.adapter.ts` | A key inside the body, compared in constant time. No probe.                        |
 
 The vocabulary — the provider catalogue, the four statuses, the mapping engine, the transition
 table — is in `@leados/shared/src/integrations.ts`, because the web app renders the same catalogue
@@ -36,7 +36,7 @@ answers 500 the first time somebody presses it. So does a provider that declares
 `probeEveryMinutes` with an adapter that cannot be probed: the sweep would look scheduled and do
 nothing.
 
-**`probe` is optional, and `generic_webhook` does not have one.** The credential is a secret *we*
+**`probe` is optional, and `generic_webhook` does not have one.** The credential is a secret _we_
 generated; there is no endpoint of theirs to call. "Is this connection healthy" for an inbound
 webhook means "has anything arrived", which is `last_success_at`. A `probe` returning `ok` without
 asking anything would be a green tick we had not earned — the lie in the contract
@@ -49,7 +49,7 @@ is not an envelope, and refuses one that still looks like a `whsec_` or `sk_` se
 
 **No endpoint answers a credential.** `PUBLIC_COLUMNS` in `integrations.service.ts` does not select
 the ciphertext, so it cannot reach a response by somebody extending the presenter. The one
-exception is the secret *we* mint, answered exactly once by `connect` and `rotateSecret`.
+exception is the secret _we_ mint, answered exactly once by `connect` and `rotateSecret`.
 
 **A disconnect is soft and a reconnect is a new row.** `inbound_payloads` references the connection
 that brought each lead in. The partial unique index
@@ -57,7 +57,7 @@ that brought each lead in. The partial unique index
 is what makes "one live connection per provider, and as many disconnected ones as a workspace has
 had" expressible at all.
 
-**The inbound capture goes through `IngestionService.capture`.** The mapping is applied *inside*
+**The inbound capture goes through `IngestionService.capture`.** The mapping is applied _inside_
 that pipeline, not before it, for two reasons: the never-lose store must hold what arrived rather
 than our interpretation of it, and the mapped result then goes through the same `publicLeadSchema`,
 the same mapper, the same duplicate rules, the same SLA clock and the same timeline as every other
@@ -76,7 +76,7 @@ all take the workspace from the context. Read across tenants, write inside
 ## The inbound ledger (step 7)
 
 A provider that sends its **own** event id gets `provider_events`, whose
-`UNIQUE (organization_id, provider, external_event_id)` *is* the "a duplicate delivery produces one
+`UNIQUE (organization_id, provider, external_event_id)` _is_ the "a duplicate delivery produces one
 lead" guarantee. The insert comes **before** any work and its unique violation is the normal case:
 a retry is counted and answered 200. The table is deliberately not partitioned — a unique on a
 partitioned table must contain the partition key, which makes it a race guard rather than the point

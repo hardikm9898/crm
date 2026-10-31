@@ -233,7 +233,9 @@ export class WhatsAppCloudAdapter implements IntegrationAdapter {
     const body = (await response.text()).slice(0, 20_000);
     if (!response.ok) {
       throw new AppError(
-        isCredentialFailure(response.status, metaErrorCode(body)) ? 'INVALID_API_KEY' : 'INTERNAL_ERROR',
+        isCredentialFailure(response.status, metaErrorCode(body))
+          ? 'INVALID_API_KEY'
+          : 'INTERNAL_ERROR',
         `Meta refused the numbers lookup (${response.status}): ${metaMessage(body)}`,
         isCredentialFailure(response.status, metaErrorCode(body)) ? 401 : 502,
       );
@@ -257,9 +259,12 @@ export class WhatsAppCloudAdapter implements IntegrationAdapter {
           // column's CHECK is E.164, so this is the one place the shape is settled.
           displayPhoneE164: toE164(display),
           verifiedName: typeof entry['verified_name'] === 'string' ? entry['verified_name'] : null,
-          qualityRating: typeof entry['quality_rating'] === 'string' ? entry['quality_rating'] : null,
+          qualityRating:
+            typeof entry['quality_rating'] === 'string' ? entry['quality_rating'] : null,
           messagingLimitTier:
-            typeof entry['messaging_limit_tier'] === 'string' ? entry['messaging_limit_tier'] : null,
+            typeof entry['messaging_limit_tier'] === 'string'
+              ? entry['messaging_limit_tier']
+              : null,
         },
       ];
     });
@@ -321,39 +326,43 @@ export class WhatsAppCloudAdapter implements IntegrationAdapter {
             },
           }
         : input.body.kind === 'text'
-        ? {
-            messaging_product: 'whatsapp',
-            recipient_type: 'individual',
-            to,
-            type: 'text',
-            // Previews off: a link preview on a reply an agent typed is Meta fetching somebody
-            // else's page on our behalf, and the agent did not ask for it.
-            text: { body: input.body.text, preview_url: false },
-          }
-        : {
-            messaging_product: 'whatsapp',
-            recipient_type: 'individual',
-            to,
-            type: 'template',
-            template: {
-              name: input.body.name,
-              language: { code: input.body.language },
-              ...(input.body.parameters.length === 0
-                ? {}
-                : {
-                    components: [
-                      {
-                        type: 'body',
-                        parameters: input.body.parameters.map((text) => ({ type: 'text', text })),
-                      },
-                    ],
-                  }),
-            },
-          };
+          ? {
+              messaging_product: 'whatsapp',
+              recipient_type: 'individual',
+              to,
+              type: 'text',
+              // Previews off: a link preview on a reply an agent typed is Meta fetching somebody
+              // else's page on our behalf, and the agent did not ask for it.
+              text: { body: input.body.text, preview_url: false },
+            }
+          : {
+              messaging_product: 'whatsapp',
+              recipient_type: 'individual',
+              to,
+              type: 'template',
+              template: {
+                name: input.body.name,
+                language: { code: input.body.language },
+                ...(input.body.parameters.length === 0
+                  ? {}
+                  : {
+                      components: [
+                        {
+                          type: 'body',
+                          parameters: input.body.parameters.map((text) => ({ type: 'text', text })),
+                        },
+                      ],
+                    }),
+              },
+            };
 
     let response: Response;
     try {
-      response = await this.post(`/${encodeURIComponent(input.phoneNumberId)}/messages`, context, payload);
+      response = await this.post(
+        `/${encodeURIComponent(input.phoneNumberId)}/messages`,
+        context,
+        payload,
+      );
     } catch (error) {
       // Nothing answered: the message may or may not have been accepted, which is exactly what a
       // retry is for — and the ledger's `wamid` is what stops a double send if it was.
@@ -361,7 +370,8 @@ export class WhatsAppCloudAdapter implements IntegrationAdapter {
         ok: false,
         retryable: true,
         code: 'UNREACHABLE',
-        message: error instanceof Error ? error.message.slice(0, 300) : 'Meta could not be reached.',
+        message:
+          error instanceof Error ? error.message.slice(0, 300) : 'Meta could not be reached.',
       };
     }
     const text = (await response.text()).slice(0, 20_000);
@@ -380,13 +390,23 @@ export class WhatsAppCloudAdapter implements IntegrationAdapter {
     try {
       parsed = JSON.parse(text) as { messages?: { id?: unknown }[] };
     } catch {
-      return { ok: false, retryable: true, code: 'BAD_RESPONSE', message: 'Meta answered something that is not JSON.' };
+      return {
+        ok: false,
+        retryable: true,
+        code: 'BAD_RESPONSE',
+        message: 'Meta answered something that is not JSON.',
+      };
     }
     const id = parsed.messages?.[0]?.id;
     if (typeof id !== 'string' || id === '') {
       // Accepted with no id is not a success we can track: the status receipts are keyed on the
       // `wamid`, so a message with none would be stuck at `accepted` for ever.
-      return { ok: false, retryable: true, code: 'NO_MESSAGE_ID', message: 'Meta accepted the message without giving it an id.' };
+      return {
+        ok: false,
+        retryable: true,
+        code: 'NO_MESSAGE_ID',
+        message: 'Meta accepted the message without giving it an id.',
+      };
     }
     return { ok: true, providerMessageId: id };
   }
@@ -425,9 +445,7 @@ export class WhatsAppCloudAdapter implements IntegrationAdapter {
     components.push({
       type: 'BODY',
       text: input.components.body,
-      ...(input.examples.length === 0
-        ? {}
-        : { example: { body_text: [[...input.examples]] } }),
+      ...(input.examples.length === 0 ? {} : { example: { body_text: [[...input.examples]] } }),
     });
     if (input.components.footer !== undefined && input.components.footer.trim() !== '') {
       components.push({ type: 'FOOTER', text: input.components.footer });
@@ -448,14 +466,20 @@ export class WhatsAppCloudAdapter implements IntegrationAdapter {
     const text = (await response.text()).slice(0, 20_000);
     if (!response.ok) {
       throw new AppError(
-        isCredentialFailure(response.status, metaErrorCode(text)) ? 'INVALID_API_KEY' : 'BUSINESS_RULE_VIOLATION',
+        isCredentialFailure(response.status, metaErrorCode(text))
+          ? 'INVALID_API_KEY'
+          : 'BUSINESS_RULE_VIOLATION',
         `WhatsApp refused the template: ${metaMessage(text)}`,
         isCredentialFailure(response.status, metaErrorCode(text)) ? 401 : 422,
       );
     }
     const parsed = JSON.parse(text) as { id?: unknown; status?: unknown };
     if (typeof parsed.id !== 'string' || parsed.id === '') {
-      throw new AppError('INTERNAL_ERROR', 'WhatsApp accepted the template without giving it an id.', 502);
+      throw new AppError(
+        'INTERNAL_ERROR',
+        'WhatsApp accepted the template without giving it an id.',
+        502,
+      );
     }
     return {
       providerTemplateId: parsed.id,
@@ -479,7 +503,9 @@ export class WhatsAppCloudAdapter implements IntegrationAdapter {
     const text = (await response.text()).slice(0, 200_000);
     if (!response.ok) {
       throw new AppError(
-        isCredentialFailure(response.status, metaErrorCode(text)) ? 'INVALID_API_KEY' : 'INTERNAL_ERROR',
+        isCredentialFailure(response.status, metaErrorCode(text))
+          ? 'INVALID_API_KEY'
+          : 'INTERNAL_ERROR',
         `Meta refused the template list (${response.status}): ${metaMessage(text)}`,
         isCredentialFailure(response.status, metaErrorCode(text)) ? 401 : 502,
       );
@@ -496,7 +522,8 @@ export class WhatsAppCloudAdapter implements IntegrationAdapter {
       const id = entry['id'];
       const name = entry['name'];
       const language = entry['language'];
-      if (typeof id !== 'string' || typeof name !== 'string' || typeof language !== 'string') return [];
+      if (typeof id !== 'string' || typeof name !== 'string' || typeof language !== 'string')
+        return [];
       const reason = entry['rejected_reason'];
       return [
         {
@@ -526,12 +553,19 @@ export class WhatsAppCloudAdapter implements IntegrationAdapter {
   async fetchMediaMeta(
     context: AdapterContext,
     providerMediaId: string,
-  ): Promise<{ url: string; mimeType: string | null; sizeBytes: number | null; sha256: string | null }> {
+  ): Promise<{
+    url: string;
+    mimeType: string | null;
+    sizeBytes: number | null;
+    sha256: string | null;
+  }> {
     const response = await this.graph(`/${encodeURIComponent(providerMediaId)}`, context);
     const text = (await response.text()).slice(0, 20_000);
     if (!response.ok) {
       throw new AppError(
-        isCredentialFailure(response.status, metaErrorCode(text)) ? 'INVALID_API_KEY' : 'INTERNAL_ERROR',
+        isCredentialFailure(response.status, metaErrorCode(text))
+          ? 'INVALID_API_KEY'
+          : 'INTERNAL_ERROR',
         `Meta refused the media lookup (${response.status}): ${metaMessage(text)}`,
         isCredentialFailure(response.status, metaErrorCode(text)) ? 401 : 502,
       );
@@ -637,7 +671,9 @@ export class WhatsAppCloudAdapter implements IntegrationAdapter {
     const text = (await response.text()).slice(0, 20_000);
     if (!response.ok) {
       throw new AppError(
-        isCredentialFailure(response.status, metaErrorCode(text)) ? 'INVALID_API_KEY' : 'INTERNAL_ERROR',
+        isCredentialFailure(response.status, metaErrorCode(text))
+          ? 'INVALID_API_KEY'
+          : 'INTERNAL_ERROR',
         `WhatsApp would not take that file: ${metaMessage(text)}`,
         isCredentialFailure(response.status, metaErrorCode(text)) ? 401 : 502,
       );

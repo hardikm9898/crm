@@ -80,12 +80,18 @@ describe('the sentence above the log', () => {
     expect(describeApiActivity(summary({ requests: 1, succeeded: 1 }))).toMatch(/1 request /);
     expect(describeApiActivity(summary({ requests: 2, succeeded: 2 }))).toMatch(/2 requests /);
     // Every clause has its own plural, which is the bug `/today`'s summary shipped with.
-    expect(describeApiActivity(summary({ requests: 3, failed: 1 }))).toMatch(/1 failure on our side/);
-    expect(describeApiActivity(summary({ requests: 3, failed: 2 }))).toMatch(/2 failures on our side/);
+    expect(describeApiActivity(summary({ requests: 3, failed: 1 }))).toMatch(
+      /1 failure on our side/,
+    );
+    expect(describeApiActivity(summary({ requests: 3, failed: 2 }))).toMatch(
+      /2 failures on our side/,
+    );
   });
 
   it('omits what is zero and says so when everything worked', () => {
-    const clean = describeApiActivity(summary({ requests: 5, succeeded: 5, averageDurationMs: 40 }));
+    const clean = describeApiActivity(
+      summary({ requests: 5, succeeded: 5, averageDurationMs: 40 }),
+    );
     expect(clean).toMatch(/all answered/);
     expect(clean).toMatch(/40 ms on average/);
     expect(clean).not.toMatch(/refused/);
@@ -106,14 +112,14 @@ describe('the sentence above the log', () => {
 describe('what a key has been doing', () => {
   it('says nothing-yet rather than a zero, and counts refusals when there are any', () => {
     expect(describeKeyUsage(undefined)).toMatch(/No requests/);
-    expect(describeKeyUsage({ apiKeyId: 'k', requests: 0, refused: 0, lastRequestAt: null })).toMatch(
-      /No requests/,
+    expect(
+      describeKeyUsage({ apiKeyId: 'k', requests: 0, refused: 0, lastRequestAt: null }),
+    ).toMatch(/No requests/);
+    expect(describeKeyUsage({ apiKeyId: 'k', requests: 1, refused: 0, lastRequestAt: null })).toBe(
+      '1 request in the last day.',
     );
-    expect(
-      describeKeyUsage({ apiKeyId: 'k', requests: 1, refused: 0, lastRequestAt: null }),
-    ).toBe('1 request in the last day.');
-    expect(
-      describeKeyUsage({ apiKeyId: 'k', requests: 9, refused: 4, lastRequestAt: null }),
-    ).toBe('9 requests in the last day, 4 of them refused.');
+    expect(describeKeyUsage({ apiKeyId: 'k', requests: 9, refused: 4, lastRequestAt: null })).toBe(
+      '9 requests in the last day, 4 of them refused.',
+    );
   });
 });

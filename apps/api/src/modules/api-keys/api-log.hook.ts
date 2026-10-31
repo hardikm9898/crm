@@ -52,10 +52,7 @@ export function markErrorCode(request: unknown, code: string): void {
  * modules — the test harness builds its own, and the first run of this suite recorded nothing at
  * all while the product recorded everything.
  */
-export function installApiLogging(
-  fastify: FastifyInstance,
-  logs: ApiLogService,
-): void {
+export function installApiLogging(fastify: FastifyInstance, logs: ApiLogService): void {
   fastify.addHook('onResponse', (request: FastifyRequest, reply: FastifyReply, done) => {
     // `done` first, in a hook that must not delay the connection being released. Everything after
     // it is bookkeeping, and `record` neither awaits nor throws.

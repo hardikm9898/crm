@@ -99,9 +99,7 @@ export interface TemplateWorkflow {
 }
 
 /** A parameter value that names a row the apply path has to resolve to an id. */
-export type TemplateReference =
-  | { readonly $taskType: string }
-  | { readonly $status: string };
+export type TemplateReference = { readonly $taskType: string } | { readonly $status: string };
 
 export function isTemplateReference(value: unknown): value is TemplateReference {
   if (typeof value !== 'object' || value === null) return false;
@@ -582,7 +580,8 @@ export const INDUSTRY_TEMPLATES: readonly IndustryTemplate[] = [
     workflows: [
       firstFollowUp({
         name: 'Book a test drive while they are still interested',
-        description: 'A test drive booked the same day is the single best predictor of a sale here.',
+        description:
+          'A test drive booked the same day is the single best predictor of a sale here.',
         title: 'Offer {{lead.fullName}} a test drive',
         minutes: 90,
         taskType: 'Demo',
@@ -1062,7 +1061,8 @@ export const INDUSTRY_TEMPLATES: readonly IndustryTemplate[] = [
     workflows: [
       firstFollowUp({
         name: 'Ring a job enquiry back today',
-        description: 'Somebody with a leaking tap rings three people and takes the first to answer.',
+        description:
+          'Somebody with a leaking tap rings three people and takes the first to answer.',
         title: 'Call {{lead.fullName}} about the job',
         minutes: 60,
       }),

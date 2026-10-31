@@ -38,7 +38,11 @@ export interface StepContext {
 
 /** What a handler answers. `skipped` is a real outcome, and its reason reaches the timeline. */
 export type StepOutcome =
-  | { readonly status: 'succeeded'; readonly output: Record<string, unknown>; readonly summary: string }
+  | {
+      readonly status: 'succeeded';
+      readonly output: Record<string, unknown>;
+      readonly summary: string;
+    }
   | { readonly status: 'skipped'; readonly reason: string };
 
 /**
@@ -134,7 +138,11 @@ export class AutomationHandlersService {
       const owner = (assigned as { assignedUserId?: string | null }).assignedUserId ?? null;
       return owner === null
         ? { status: 'skipped', reason: 'the assignment rules had nobody available to take it' }
-        : { status: 'succeeded', output: { assignedUserId: owner }, summary: 'assigned it by the rules' };
+        : {
+            status: 'succeeded',
+            output: { assignedUserId: owner },
+            summary: 'assigned it by the rules',
+          };
     }
 
     await this.leads.assign(ctx.leadId, {
@@ -153,9 +161,7 @@ export class AutomationHandlersService {
     const explicit = text(ctx.params['userId']);
 
     const assignedUserId =
-      assigneeFrom === 'specific'
-        ? explicit
-        : (text(ctx.facts['lead.assignedUserId']) ?? explicit);
+      assigneeFrom === 'specific' ? explicit : (text(ctx.facts['lead.assignedUserId']) ?? explicit);
 
     // "Due in two hours" from a workflow means two **working** hours, for the same reason an SLA
     // target does: a follow-up due at 2 am is one nobody will do, and the lead's own branch decides
@@ -165,7 +171,9 @@ export class AutomationHandlersService {
     const created = await this.tasks.create({
       leadId: ctx.leadId,
       title: title.slice(0, 200),
-      ...(text(ctx.params['taskTypeId']) === null ? {} : { taskTypeId: text(ctx.params['taskTypeId'])! }),
+      ...(text(ctx.params['taskTypeId']) === null
+        ? {}
+        : { taskTypeId: text(ctx.params['taskTypeId'])! }),
       dueAt,
       priority: 'medium',
       ...(assignedUserId === null ? {} : { assignedUserId }),
@@ -203,7 +211,8 @@ export class AutomationHandlersService {
     if (!conversation) {
       return {
         status: 'skipped',
-        reason: 'there is no WhatsApp conversation with this lead yet, so there is nowhere to send it',
+        reason:
+          'there is no WhatsApp conversation with this lead yet, so there is nowhere to send it',
       };
     }
 
@@ -244,7 +253,11 @@ export class AutomationHandlersService {
 
     return id === null
       ? { status: 'skipped', reason: 'that person has this kind of notification switched off' }
-      : { status: 'succeeded', output: { notificationId: id, userId }, summary: `told them: ${title}` };
+      : {
+          status: 'succeeded',
+          output: { notificationId: id, userId },
+          summary: `told them: ${title}`,
+        };
   }
 
   private async callWebhook(ctx: StepContext): Promise<StepOutcome> {
@@ -303,7 +316,9 @@ export class AutomationHandlersService {
     if (text(ctx.facts['lead.stageId']) === stageId) {
       return { status: 'skipped', reason: 'the lead is already at that stage' };
     }
-    await this.leads.changeStage(ctx.leadId, { stageId } as Parameters<LeadsService['changeStage']>[1]);
+    await this.leads.changeStage(ctx.leadId, { stageId } as Parameters<
+      LeadsService['changeStage']
+    >[1]);
     return { status: 'succeeded', output: { stageId }, summary: 'moved it to the stage' };
   }
 
@@ -313,7 +328,9 @@ export class AutomationHandlersService {
 
     // `ensureTag` rather than a create: tagging is idempotent by design, and a workflow racing a
     // colleague who typed the same tag must not fail.
-    const tag = (await this.config.ensureTag({ name } as Parameters<CrmConfigService['ensureTag']>[0])) as {
+    const tag = (await this.config.ensureTag({ name } as Parameters<
+      CrmConfigService['ensureTag']
+    >[0])) as {
       id: string;
       name: string;
     };
@@ -327,7 +344,11 @@ export class AutomationHandlersService {
     await this.leads.setTags(ctx.leadId, {
       tagIds: [...existing.map((entry) => entry.tagId), tag.id],
     });
-    return { status: 'succeeded', output: { tagId: tag.id, tag: tag.name }, summary: `tagged it “${tag.name}”` };
+    return {
+      status: 'succeeded',
+      output: { tagId: tag.id, tag: tag.name },
+      summary: `tagged it “${tag.name}”`,
+    };
   }
 
   private async addNote(ctx: StepContext): Promise<StepOutcome> {
@@ -370,7 +391,11 @@ export class AutomationHandlersService {
     // Through `update`, so the field-change timeline entry and the event happen as they would if
     // somebody had edited the lead by hand.
     await this.leads.update(ctx.leadId, { priority } as Parameters<LeadsService['update']>[1]);
-    return { status: 'succeeded', output: { priority }, summary: `set the priority to ${priority}` };
+    return {
+      status: 'succeeded',
+      output: { priority },
+      summary: `set the priority to ${priority}`,
+    };
   }
 
   // ── Plumbing ───────────────────────────────────────────────────────────────

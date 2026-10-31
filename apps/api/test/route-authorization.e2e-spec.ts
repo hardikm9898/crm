@@ -466,7 +466,10 @@ async function createTenant(label: string): Promise<Tenant> {
         accessToken: 'EAAG-a-permanent-system-user-token-value-0001',
       },
       // Digits only: the adapter refuses anything else, because a WABA id is Meta's numeric id.
-      settings: { wabaId: label === 'a' ? '102938475610291' : '102938475610292', verifyToken: `verify-${SUFFIX}` },
+      settings: {
+        wabaId: label === 'a' ? '102938475610291' : '102938475610292',
+        verifyToken: `verify-${SUFFIX}`,
+      },
     },
     token,
   });

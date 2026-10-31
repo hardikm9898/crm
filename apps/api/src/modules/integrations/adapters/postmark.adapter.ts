@@ -8,7 +8,6 @@ import { SERVER_TOKEN_KEY } from './secret-names.js';
 /** How long a probe waits before calling the provider unreachable. */
 const PROBE_TIMEOUT_MS = 5_000;
 
-
 /**
  * Postmark, the service that delivers this workspace's email.
  *
@@ -56,7 +55,8 @@ export class PostmarkAdapter implements IntegrationAdapter {
         {
           field: 'settings.fromAddress',
           code: 'INVALID_SENDER',
-          message: 'Give the verified sender address Postmark will accept, like hello@yourdomain.com.',
+          message:
+            'Give the verified sender address Postmark will accept, like hello@yourdomain.com.',
         },
       ]);
     }

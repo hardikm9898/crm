@@ -16,7 +16,13 @@ const guardrails = {
   /** `null` clears the cap. Absent leaves it alone — the three-way distinction a query string cannot carry, which a JSON body can. */
   maxRunsPerEntity: z.number().int().positive().max(1000).nullable().optional(),
   reentryPolicy: z.enum(REENTRY_POLICIES).optional(),
-  cooldownHours: z.number().int().positive().max(24 * 365).nullable().optional(),
+  cooldownHours: z
+    .number()
+    .int()
+    .positive()
+    .max(24 * 365)
+    .nullable()
+    .optional(),
 };
 
 export const createWorkflowSchema = z.object({

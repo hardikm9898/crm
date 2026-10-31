@@ -3401,9 +3401,9 @@ describe('layer 3 — the request log (FR-API-1, FR-SA-4)', () => {
     const theirKey = await apiKey(h.orgB.organizationId);
     // The composite FK, not an application check: a log row that claims somebody else's
     // credential made the request would be a lie about who did what.
-    await expect(
-      logRow(h.orgA.organizationId, { apiKeyId: theirKey }),
-    ).rejects.toThrow(/api_logs_api_key_same_org_fk|foreign key/i);
+    await expect(logRow(h.orgA.organizationId, { apiKeyId: theirKey })).rejects.toThrow(
+      /api_logs_api_key_same_org_fk|foreign key/i,
+    );
   });
 
   it('refuses a verb this API does not answer, and a URL instead of a path', async () => {
@@ -3488,9 +3488,9 @@ describe('layer 3 — the integration framework (Phase 4 step 6)', () => {
 
   it('allows one live connection per provider, and a second after the first is disconnected', async () => {
     await connection(h.orgA.organizationId, { provider: 'postmark' });
-    await expect(
-      connection(h.orgA.organizationId, { provider: 'postmark' }),
-    ).rejects.toThrow(/integration_connections_live_provider|unique/i);
+    await expect(connection(h.orgA.organizationId, { provider: 'postmark' })).rejects.toThrow(
+      /integration_connections_live_provider|unique/i,
+    );
 
     // Disconnecting has to free the provider, or a workspace that switched Postmark off could
     // never switch it back on — which is what a plain `@@unique` would have done.
@@ -3498,9 +3498,7 @@ describe('layer 3 — the integration framework (Phase 4 step 6)', () => {
       where: { organizationId: h.orgA.organizationId, provider: 'postmark' },
       data: { disconnectedAt: new Date(), status: 'revoked' },
     });
-    await expect(
-      connection(h.orgA.organizationId, { provider: 'postmark' }),
-    ).resolves.toBeTruthy();
+    await expect(connection(h.orgA.organizationId, { provider: 'postmark' })).resolves.toBeTruthy();
 
     // And another workspace was never blocked by ours.
     await expect(connection(h.orgB.organizationId, { provider: 'postmark' })).resolves.toBeTruthy();
@@ -3508,7 +3506,10 @@ describe('layer 3 — the integration framework (Phase 4 step 6)', () => {
 
   it('refuses a disconnected connection that still claims to be connected', async () => {
     await expect(
-      connection(h.orgA.organizationId, { provider: 'disconnected_test', disconnectedAt: new Date() }),
+      connection(h.orgA.organizationId, {
+        provider: 'disconnected_test',
+        disconnectedAt: new Date(),
+      }),
     ).rejects.toThrow(/integration_connections_disconnected_is_not_connected/i);
   });
 
@@ -3655,9 +3656,9 @@ describe('layer 4 — the inbound idempotency ledger (Phase 4 step 7)', () => {
 
   it('refuses an event pointed at another workspace’s connection', async () => {
     const theirs = await connection(h.orgB.organizationId, 'meta_lead_ads');
-    await expect(
-      event(h.orgA.organizationId, { connectionId: theirs }),
-    ).rejects.toThrow(/provider_events_connection_same_org_fk|foreign key/i);
+    await expect(event(h.orgA.organizationId, { connectionId: theirs })).rejects.toThrow(
+      /provider_events_connection_same_org_fk|foreign key/i,
+    );
 
     // And our own is accepted, so the refusal above is about the tenant and not about the column.
     const mine = await connection(h.orgA.organizationId, 'meta_lead_ads');
@@ -3709,7 +3710,11 @@ describe('layer 4 — the inbound idempotency ledger (Phase 4 step 7)', () => {
     // And the state a connection switched off between the delivery and the attempt leaves behind,
     // which the biconditional would have made unrepresentable.
     await expect(
-      event(h.orgA.organizationId, { status: 'failed', attempts: 0, error: 'the connection was off' }),
+      event(h.orgA.organizationId, {
+        status: 'failed',
+        attempts: 0,
+        error: 'the connection was off',
+      }),
     ).resolves.toBeTruthy();
   });
 
@@ -3798,9 +3803,9 @@ describe('layer 5 — WhatsApp conversations and messages (Phase 5 step 1)', () 
 
   it('refuses a number that is not E.164, and an unread count below nothing', async () => {
     const own = await number(h.orgA.organizationId);
-    await expect(
-      number(h.orgA.organizationId, { displayPhoneE164: '9845000000' }),
-    ).rejects.toThrow(/whatsapp_numbers_display_phone_e164/i);
+    await expect(number(h.orgA.organizationId, { displayPhoneE164: '9845000000' })).rejects.toThrow(
+      /whatsapp_numbers_display_phone_e164/i,
+    );
     await expect(
       conversation(h.orgA.organizationId, own.numberId, { contactE164: 'ring me' }),
     ).rejects.toThrow(/conversations_contact_e164/i);
@@ -4078,7 +4083,11 @@ describe('layer 5 — WhatsApp conversations and messages (Phase 5 step 1)', () 
     // The honest state the mirror would have forbidden: a resubmitted template keeps the reason it
     // was refused for last time, which is the thing the person editing it needs to read.
     await expect(
-      create({ status: 'pending', providerTemplateId: 'meta-2', rejectionReason: 'Too promotional' }),
+      create({
+        status: 'pending',
+        providerTemplateId: 'meta-2',
+        rejectionReason: 'Too promotional',
+      }),
     ).resolves.toBeTruthy();
     await expect(create({ components: 'not an object' })).rejects.toThrow(
       /components_is_an_object|invalid input/i,
@@ -4323,9 +4332,7 @@ describe('layer 5 — WhatsApp conversations and messages (Phase 5 step 1)', () 
     ).resolves.toBeTruthy();
     await expect(set({ lockUserId: null, lockExpiresAt: null })).resolves.toBeTruthy();
 
-    await expect(set({ status: 'snoozed' })).rejects.toThrow(
-      /conversations_snoozed_says_when/i,
-    );
+    await expect(set({ status: 'snoozed' })).rejects.toThrow(/conversations_snoozed_says_when/i);
     await expect(
       set({ status: 'snoozed', snoozedUntil: new Date(Date.now() + 3_600_000) }),
     ).resolves.toBeTruthy();
@@ -4473,9 +4480,7 @@ describe('layer 5 — WhatsApp conversations and messages (Phase 5 step 1)', () 
     await expect(reply({ body: 'a'.repeat(1025) })).rejects.toThrow(
       /canned_replies_body_not_blank/i,
     );
-    await expect(reply({ visibility: 'everybody' })).rejects.toThrow(
-      /canned_replies_visibility/i,
-    );
+    await expect(reply({ visibility: 'everybody' })).rejects.toThrow(/canned_replies_visibility/i);
     await expect(reply({ usageCount: -1 })).rejects.toThrow(/canned_replies_usage_count_sane/i);
   });
 
@@ -4585,7 +4590,12 @@ describe('layer 6 — a workflow cannot be stitched to another tenant (FR-AUT-4,
     return id;
   }
 
-  async function versionIn(organizationId: string, workflowId: string, userId: string, version = 1) {
+  async function versionIn(
+    organizationId: string,
+    workflowId: string,
+    userId: string,
+    version = 1,
+  ) {
     const id = newId();
     await h.unscoped.workflowVersion.create({
       data: {
@@ -4689,7 +4699,12 @@ describe('layer 6 — a workflow cannot be stitched to another tenant (FR-AUT-4,
     const name = `Shared name ${newId().slice(-8)}`;
     const first = newId();
     await h.unscoped.workflow.create({
-      data: { id: first, organizationId: h.orgA.organizationId, name, createdById: h.orgA.userId } as never,
+      data: {
+        id: first,
+        organizationId: h.orgA.organizationId,
+        name,
+        createdById: h.orgA.userId,
+      } as never,
     });
     await expect(
       h.unscoped.workflow.create({
@@ -4706,7 +4721,12 @@ describe('layer 6 — a workflow cannot be stitched to another tenant (FR-AUT-4,
     await h.unscoped.workflow.update({ where: { id: first }, data: { deletedAt: new Date() } });
     await expect(
       h.unscoped.workflow.create({
-        data: { id: newId(), organizationId: h.orgA.organizationId, name, createdById: h.orgA.userId } as never,
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          name,
+          createdById: h.orgA.userId,
+        } as never,
       }),
     ).resolves.toBeTruthy();
   });
@@ -4714,11 +4734,21 @@ describe('layer 6 — a workflow cannot be stitched to another tenant (FR-AUT-4,
   it('allows the same name in two workspaces', async () => {
     const name = `Nurture ${newId().slice(-8)}`;
     await h.unscoped.workflow.create({
-      data: { id: newId(), organizationId: h.orgA.organizationId, name, createdById: h.orgA.userId } as never,
+      data: {
+        id: newId(),
+        organizationId: h.orgA.organizationId,
+        name,
+        createdById: h.orgA.userId,
+      } as never,
     });
     await expect(
       h.unscoped.workflow.create({
-        data: { id: newId(), organizationId: h.orgB.organizationId, name, createdById: h.orgB.userId } as never,
+        data: {
+          id: newId(),
+          organizationId: h.orgB.organizationId,
+          name,
+          createdById: h.orgB.userId,
+        } as never,
       }),
     ).resolves.toBeTruthy();
   });
@@ -4776,7 +4806,9 @@ describe('layer 6 — a workflow cannot be stitched to another tenant (FR-AUT-4,
       versions: await h.db.workflowVersion.findMany({}),
       triggers: await h.db.workflowTrigger.findMany({}),
     }));
-    expect(theirs.workflows.every((row) => row.organizationId === h.orgB.organizationId)).toBe(true);
+    expect(theirs.workflows.every((row) => row.organizationId === h.orgB.organizationId)).toBe(
+      true,
+    );
     expect(theirs.versions.every((row) => row.organizationId === h.orgB.organizationId)).toBe(true);
     expect(theirs.triggers.every((row) => row.organizationId === h.orgB.organizationId)).toBe(true);
   });
@@ -4879,11 +4911,7 @@ describe('layer 7 — a run cannot be stitched to another tenant (FR-AUT-6, FR-A
   it("refuses a run pinned to another workspace's version", async () => {
     const theirs = await workflowWithVersion(h.orgB.organizationId, h.orgB.userId);
     const ourLead = await lead(h.orgA);
-    const { enrollmentId, workflowId } = await enrol(
-      h.orgA.organizationId,
-      h.orgA.userId,
-      ourLead,
-    );
+    const { enrollmentId, workflowId } = await enrol(h.orgA.organizationId, h.orgA.userId, ourLead);
     await expect(
       h.unscoped.automationRun.create({
         data: {

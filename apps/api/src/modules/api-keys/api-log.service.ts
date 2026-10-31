@@ -120,7 +120,10 @@ export class ApiLogService implements OnApplicationShutdown {
       });
     } catch (error) {
       // Swallowed deliberately. The rows are gone; the requests they describe already succeeded.
-      this.logger.error({ err: error, rows: batch.length }, 'an api log batch could not be written');
+      this.logger.error(
+        { err: error, rows: batch.length },
+        'an api log batch could not be written',
+      );
     }
   }
 
@@ -159,7 +162,11 @@ export class ApiLogService implements OnApplicationShutdown {
         _count: { _all: true },
         _avg: { durationMs: true },
       }),
-      this.db.client.apiLog.aggregate({ where, _count: { _all: true }, _max: { durationMs: true } }),
+      this.db.client.apiLog.aggregate({
+        where,
+        _count: { _all: true },
+        _max: { durationMs: true },
+      }),
     ]);
 
     const byClass = new Map<StatusClass, number>();
@@ -233,7 +240,6 @@ export class ApiLogService implements OnApplicationShutdown {
       lastRequestAt: row._max.createdAt?.toISOString() ?? null,
     }));
   }
-
 }
 
 function statusFilter(status: StatusClass) {

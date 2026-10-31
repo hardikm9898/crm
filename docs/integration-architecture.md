@@ -151,13 +151,16 @@ adapter + decrypted credentials, and is the only component that can decrypt.
 > ```ts
 > interface IntegrationAdapter {
 >   readonly provider: string;
->   validate(input: { credential: string; settings: Record<string, unknown> }): void | Promise<void>;
+>   validate(input: {
+>     credential: string;
+>     settings: Record<string, unknown>;
+>   }): void | Promise<void>;
 >   probe?(context: AdapterContext): Promise<ProbeResult>;
 > }
 > ```
 >
 > - **`probe` is optional**, and that absence is the design. `generic_webhook` is authenticated by a
->   secret *we* generated, so there is no endpoint of theirs to call — "is this healthy" means "has
+>   secret _we_ generated, so there is no endpoint of theirs to call — "is this healthy" means "has
 >   anything arrived". A `healthCheck` that returned `ok` without asking anything would be a green
 >   tick this product had not earned, and one that threw would be the lie in the contract the
 >   telephony amendment above already names. The catalogue's `probeEveryMinutes` and the presence of
@@ -173,7 +176,7 @@ adapter + decrypted credentials, and is the only component that can decrypt.
 >   web app may not import an adapter. A capability object on the adapter would be the same facts in
 >   a place the UI cannot reach.
 > - **`listTemplates`, `sendText`, `getDailyMetrics` and the rest are not on this port**, and will
->   not be: those are *channel* and *ads* interfaces, which §2 is right to keep separate. This port
+>   not be: those are _channel_ and _ads_ interfaces, which §2 is right to keep separate. This port
 >   is the framework's own — "is this credential still good" — and an adapter implements it beside
 >   whichever domain interface it also serves.
 > - **No adapter touches the database**, as §1 requires: `AdapterContext` hands it the decrypted
@@ -208,8 +211,8 @@ adapter + decrypted credentials, and is the only component that can decrypt.
 >   answering 500 on its first delivery. The same check covers `deliveryIsAReference` and
 >   `fetchLead`.
 > - **`fetchLead` is §2's own `fetchLead?`, and it is the first method on any port in this product
->   that reads *from* a provider.** Meta sends a `leadgen_id`; the answers are a second request with
->   a *different* credential from the one that signed the delivery, which is why a connection holds
+>   that reads _from_ a provider.** Meta sends a `leadgen_id`; the answers are a second request with
+>   a _different_ credential from the one that signed the delivery, which is why a connection holds
 >   a set of secrets rather than one.
 > - **`challenge` is not in §2 and had to be added.** Meta will not deliver anything until the
 >   callback URL echoes a `hub.challenge`, once. A provider-specific handshake is exactly what a
@@ -224,9 +227,8 @@ adapter + decrypted credentials, and is the only component that can decrypt.
 >
 > What is still **not** on this port is everything channel- or ads-specific: `sendText`,
 > `listTemplates`, `getDailyMetrics`, `listCampaigns`. §2 is right to keep those on separate
-> interfaces, and they arrive with the phase that needs them — the ads *insight* pulls are Phase 9,
+> interfaces, and they arrive with the phase that needs them — the ads _insight_ pulls are Phase 9,
 > which is also when `sync_cursors` gets its first user.
-
 
 ---
 
@@ -254,14 +256,14 @@ disconnect→ unregister webhooks, revoke tokens where supported, soft-delete th
 > **Amendment, 2026-10-19 (implementation, Phase 4 step 6).** The lifecycle is built as described
 > with three changes, each of which the sketch gets the wrong way round:
 >
-> - **The probe runs *after* the row is stored, not before it.** "`healthCheck()` must pass BEFORE
+> - **The probe runs _after_ the row is stored, not before it.** "`healthCheck()` must pass BEFORE
 >   we store (no broken connections saved)" cannot be implemented as written: the credential's
 >   ciphertext is bound to the connection's **own id** as AAD, so the row has to exist before a
 >   probe can decrypt what it is probing with. And it should not be implemented as written either —
 >   a provider having a bad minute would make connecting impossible, and the person pasting the
 >   token would read a 500 as "it did not save". So `connect` stores, probes immediately, swallows
 >   the probe's own failure, and answers the connection with the outcome already on it. A workspace
->   therefore *can* hold a connection that has never worked, which is the honest state and the one
+>   therefore _can_ hold a connection that has never worked, which is the honest state and the one
 >   the screen says out loud ("Never worked — last failed …").
 > - **A revoked credential is `revoked`, not `error`.** §3 maps "auth failure / revoked token" to
 >   `status=error`, which leaves the enum's fourth value unused and conflates "somebody must
@@ -278,9 +280,8 @@ disconnect→ unregister webhooks, revoke tokens where supported, soft-delete th
 >   pipeline yet, and the sweep logs a count at `warn`.
 >
 > `refresh` is **not** built, because no provider here uses OAuth. `register webhooks where
-> applicable` is not built either: the one inbound provider's URL is handed to the person to paste
+applicable` is not built either: the one inbound provider's URL is handed to the person to paste
 > into the sending system, which is what "generic" means.
-
 
 ---
 
@@ -483,7 +484,6 @@ decryption is confined to `ProviderRegistry` and is audit-logged with the callin
 > does not begin `{` as the single-secret format — so a connection made in step 6 keeps working
 > rather than needing to be reconnected.
 
-
 ---
 
 ## 6. Inbound integration catalogue
@@ -568,7 +568,6 @@ deploy, no code (Rule 1, Rule 4).
 > `provider_events` is built with it, and `FR-WA-6`'s dedupe gate is therefore in place before
 > WhatsApp needs it.
 
-
 ---
 
 ## 7. Resilience for every outbound call
@@ -601,7 +600,6 @@ Mandatory wrapper for all provider calls (`NFR-REL-3`):
 
 No changes to domain modules should be required. If a domain module must change to add a provider,
 the abstraction is wrong and the PR is rejected.
-
 
 > **Amendment, 2026-10-19 (implementation, Phase 4 step 6).** The checklist as it actually stands,
 > now that the framework exists:

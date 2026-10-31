@@ -331,7 +331,12 @@ export function LockBanner({
 }) {
   const [claimState, claim, claiming] = useActionState(claimConversation, IDLE);
   const [releaseState, release, releasing] = useActionState(releaseConversation, IDLE);
-  const error = claimState.status === 'error' ? claimState : releaseState.status === 'error' ? releaseState : null;
+  const error =
+    claimState.status === 'error'
+      ? claimState
+      : releaseState.status === 'error'
+        ? releaseState
+        : null;
 
   return (
     <div className="flex flex-col gap-2" data-lock-banner={conversationId}>
@@ -399,7 +404,9 @@ export function ConversationActions({
   // because a `<select>` comes back from a refusal through nothing else. Third time this product
   // has paid for that.
   const echoedAssignee =
-    assignState.status === 'error' ? (assignState.values?.['assignedUserId'] ?? '') : (assignedToId ?? '');
+    assignState.status === 'error'
+      ? (assignState.values?.['assignedUserId'] ?? '')
+      : (assignedToId ?? '');
 
   return (
     <div className="flex flex-col gap-3" data-conversation-actions={conversationId}>
@@ -639,7 +646,9 @@ export function TagsForm({
           <input
             name="tags"
             defaultValue={
-              state.status === 'error' ? (state.values?.['tags'] ?? tags.join(', ')) : tags.join(', ')
+              state.status === 'error'
+                ? (state.values?.['tags'] ?? tags.join(', '))
+                : tags.join(', ')
             }
             placeholder="site-visit, pricing"
             className="w-full min-w-0 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-sm text-[var(--color-text)]"

@@ -68,11 +68,11 @@ a CHECK that exactly one is set. §9 was corrected rather than followed, for the
 answers `skipped` with a reason is a decision — "nobody owns this lead, so there was nobody to
 tell", "they asked not to be messaged", "the lead is already at that status". The run continues, and
 the reason reaches the lead's timeline as `automation.skipped`. That sentence **is** `FR-AUT-7`'s
-"including *skipped because*", and it is why `automation_run_steps_skipped_says_why` makes a
+"including _skipped because_", and it is why `automation_run_steps_skipped_says_why` makes a
 reasonless skip unrepresentable.
 
 **7. The cap is a counter; the record is the steps.** The usage meter's rule — count rows, never
-keep a running total — still holds for *reporting*, and `automation_run_steps` is the record. The
+keep a running total — still holds for _reporting_, and `automation_run_steps` is the record. The
 guardrail counter exists because a cap has to be enforced **atomically before** the action, in one
 statement, which `INSERT … ON CONFLICT DO UPDATE … RETURNING count` is and a read-then-write is
 not. It may over-count an action that then failed, which is the safe direction for a safety limit.

@@ -112,7 +112,11 @@ describe('somebody else’s payload, as ours', () => {
   it('reads dot paths and array indexes, which is how every ad platform nests', () => {
     const result = applyFieldMapping(
       {
-        field_data: { full_name: '  Asha Patel ', mobile: '(+91) 98450-12345', email: 'ASHA@Example.COM' },
+        field_data: {
+          full_name: '  Asha Patel ',
+          mobile: '(+91) 98450-12345',
+          email: 'ASHA@Example.COM',
+        },
         answers: [{ value: 'Apartment' }],
         consented: 'Yes',
       },
@@ -153,7 +157,9 @@ describe('somebody else’s payload, as ours', () => {
   it('reads a boolean the way a form sends one', () => {
     for (const yes of ['Yes', 'true', '1', 'on', 'AGREED']) {
       const result = applyFieldMapping({ consented: yes }, mapping);
-      expect((result.mapped['customFields'] as Record<string, unknown>)['marketing_ok'], yes).toBe(true);
+      expect((result.mapped['customFields'] as Record<string, unknown>)['marketing_ok'], yes).toBe(
+        true,
+      );
     }
     const no = applyFieldMapping({ consented: 'no' }, mapping);
     expect((no.mapped['customFields'] as Record<string, unknown>)['marketing_ok']).toBe(false);
@@ -208,7 +214,9 @@ describe('what a probe means for the connection', () => {
     );
     expect(new Set(sentences).size).toBe(4);
     // A connection nothing has used yet is not the same as one that is working.
-    expect(describeStatus('connected', null)).not.toBe(describeStatus('connected', '2026-10-19T00:00:00.000Z'));
+    expect(describeStatus('connected', null)).not.toBe(
+      describeStatus('connected', '2026-10-19T00:00:00.000Z'),
+    );
     expect(describeStatus('revoked', null)).toMatch(/reconnect/);
   });
 });

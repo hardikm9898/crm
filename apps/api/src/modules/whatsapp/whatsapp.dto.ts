@@ -85,32 +85,31 @@ export type SetDefaultAgentInput = z.infer<typeof setDefaultAgentSchema>;
  * A discriminated union rather than a bag of optional fields, because the two kinds are refused for
  * different reasons and a `{ body?, templateId? }` with both set has no honest meaning.
  */
-export const sendMessageSchema = z
-  .discriminatedUnion('kind', [
-    z
-      .object({
-        kind: z.literal('text'),
-        body: z.string().trim().min(1).max(4096),
-        /**
-         * The canned reply this came from, when it came from one (`FR-WA-7`).
-         *
-         * The **body** is still what is sent, not the reply's own wording: an agent edits a canned
-         * reply before sending it more often than not, and a send that silently used the stored
-         * text would put words in their mouth. This is only what increments `usage_count`, which
-         * is why that count means "times sent" rather than "times clicked".
-         */
-        cannedReplyId: z.string().uuid().optional(),
-      })
-      .strict(),
-    z
-      .object({
-        kind: z.literal('template'),
-        templateId: z.string().uuid(),
-        /** What the agent typed for a variable the record cannot supply, keyed by its number. */
-        variables: z.record(z.string().regex(/^\d+$/), z.string().trim().max(1024)).optional(),
-      })
-      .strict(),
-  ]);
+export const sendMessageSchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('text'),
+      body: z.string().trim().min(1).max(4096),
+      /**
+       * The canned reply this came from, when it came from one (`FR-WA-7`).
+       *
+       * The **body** is still what is sent, not the reply's own wording: an agent edits a canned
+       * reply before sending it more often than not, and a send that silently used the stored
+       * text would put words in their mouth. This is only what increments `usage_count`, which
+       * is why that count means "times sent" rather than "times clicked".
+       */
+      cannedReplyId: z.string().uuid().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('template'),
+      templateId: z.string().uuid(),
+      /** What the agent typed for a variable the record cannot supply, keyed by its number. */
+      variables: z.record(z.string().regex(/^\d+$/), z.string().trim().max(1024)).optional(),
+    })
+    .strict(),
+]);
 
 const templateComponentsSchema = z
   .object({
@@ -154,9 +153,7 @@ export const listTemplatesSchema = z
 
 export const syncTemplatesSchema = z.object({ accountId: z.string().uuid() }).strict();
 
-export const previewTemplateSchema = z
-  .object({ leadId: z.string().uuid().optional() })
-  .strict();
+export const previewTemplateSchema = z.object({ leadId: z.string().uuid().optional() }).strict();
 
 /**
  * A conversation's tags, as a whole set (`FR-WA-7`).

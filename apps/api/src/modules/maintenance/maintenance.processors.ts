@@ -257,9 +257,7 @@ export class ActivityPartitionProcessor implements JobProcessor {
         // And `messages`, a fourth time: a WhatsApp workspace's fastest-growing table, retained
         // for 24 months (§15), so the drop is a partition drop and the month has to exist before
         // the first message of it arrives.
-        const [messageRow] = await this.db.client.$queryRaw<
-          { ensure_message_partition: string }[]
-        >`
+        const [messageRow] = await this.db.client.$queryRaw<{ ensure_message_partition: string }[]>`
           SELECT ensure_message_partition(${target}::timestamptz)
         `;
         if (messageRow) created.push(messageRow.ensure_message_partition);

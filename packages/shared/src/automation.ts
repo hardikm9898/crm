@@ -406,7 +406,13 @@ export const WORKFLOW_ACTIONS: readonly ActionSpec[] = [
           { value: 'specific', label: 'A specific person' },
         ],
       },
-      { key: 'userId', label: 'That person', type: 'reference', reference: 'user', required: false },
+      {
+        key: 'userId',
+        label: 'That person',
+        type: 'reference',
+        reference: 'user',
+        required: false,
+      },
     ],
   },
   {
@@ -524,7 +530,13 @@ export const WORKFLOW_ACTIONS: readonly ActionSpec[] = [
           { value: 'specific', label: 'A specific person' },
         ],
       },
-      { key: 'userId', label: 'That person', type: 'reference', reference: 'user', required: false },
+      {
+        key: 'userId',
+        label: 'That person',
+        type: 'reference',
+        reference: 'user',
+        required: false,
+      },
       { key: 'title', label: 'What to say', type: 'text', required: true, max: 200 },
     ],
   },
@@ -591,7 +603,13 @@ export const WORKFLOW_ACTIONS: readonly ActionSpec[] = [
     hint: 'The re-entry and loop guards still apply, which is why this cannot run away with itself.',
     control: true,
     params: [
-      { key: 'workflowId', label: 'Workflow', type: 'reference', reference: 'workflow', required: true },
+      {
+        key: 'workflowId',
+        label: 'Workflow',
+        type: 'reference',
+        reference: 'workflow',
+        required: true,
+      },
     ],
   },
 ];
@@ -665,7 +683,9 @@ export const MAX_BRANCH_DEPTH = 3;
 export function validateWorkflowDefinition(definition: unknown): DefinitionProblem[] {
   const problems: DefinitionProblem[] = [];
   if (typeof definition !== 'object' || definition === null) {
-    return [{ field: 'definition', code: 'NOT_AN_OBJECT', message: 'A workflow needs a definition.' }];
+    return [
+      { field: 'definition', code: 'NOT_AN_OBJECT', message: 'A workflow needs a definition.' },
+    ];
   }
   const value = definition as Partial<WorkflowDefinition>;
 
@@ -694,9 +714,7 @@ export function validateWorkflowDefinition(definition: unknown): DefinitionProbl
         message: `There is nothing called “${trigger.type}” that can start a workflow.`,
       });
     } else {
-      problems.push(
-        ...checkParams(spec.params, trigger.params ?? {}, 'definition.trigger.params'),
-      );
+      problems.push(...checkParams(spec.params, trigger.params ?? {}, 'definition.trigger.params'));
     }
   }
 
@@ -900,7 +918,9 @@ function checkParams(
 
 function checkConditions(group: unknown, path: string): DefinitionProblem[] {
   if (typeof group !== 'object' || group === null) {
-    return [{ field: path, code: 'CONDITIONS_NOT_AN_OBJECT', message: 'That condition is not readable.' }];
+    return [
+      { field: path, code: 'CONDITIONS_NOT_AN_OBJECT', message: 'That condition is not readable.' },
+    ];
   }
   const value = group as ConditionGroup;
   const branches = [
@@ -921,7 +941,11 @@ function checkConditions(group: unknown, path: string): DefinitionProblem[] {
     entries.forEach((entry, index) => {
       const field = `${path}.${key}[${index}]`;
       if (typeof entry !== 'object' || entry === null) {
-        problems.push({ field, code: 'CONDITION_NOT_AN_OBJECT', message: 'That test is not readable.' });
+        problems.push({
+          field,
+          code: 'CONDITION_NOT_AN_OBJECT',
+          message: 'That test is not readable.',
+        });
         return;
       }
       if ('all' in entry || 'any' in entry) {

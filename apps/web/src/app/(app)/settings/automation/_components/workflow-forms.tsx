@@ -80,7 +80,11 @@ export function WorkflowRowActions({ workflow }: { workflow: WorkflowSummary }) 
           <form action={stop}>
             <input type="hidden" name="workflowId" value={workflow.id} />
             <input type="hidden" name="killSwitch" value={workflow.killSwitch ? 'false' : 'true'} />
-            <Button type="submit" variant={workflow.killSwitch ? 'secondary' : 'danger'} pending={stopping}>
+            <Button
+              type="submit"
+              variant={workflow.killSwitch ? 'secondary' : 'danger'}
+              pending={stopping}
+            >
               {workflow.killSwitch ? 'Clear the stop' : 'Stop everything'}
             </Button>
           </form>

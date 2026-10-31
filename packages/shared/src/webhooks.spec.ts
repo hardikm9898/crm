@@ -328,7 +328,9 @@ describe('classifyWebhookUrl', () => {
 
   it('allows any port where insecure endpoints are allowed, because that is a local machine', () => {
     // A test receiver listens on whatever port the operating system hands it, which is not 443.
-    expect(classifyWebhookUrl('http://127.0.0.1:41235/hook', { allowInsecure: true }).ok).toBe(true);
+    expect(classifyWebhookUrl('http://127.0.0.1:41235/hook', { allowInsecure: true }).ok).toBe(
+      true,
+    );
     expect(classifyWebhookUrl('https://hooks.example.com:41235/hook').reason).toBe('port');
   });
 

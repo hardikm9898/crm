@@ -88,7 +88,11 @@ export default async function IngestionPage() {
       </p>
 
       <div className="mb-5 grid gap-3 sm:grid-cols-3">
-        <StatCard label="Payloads stored" value={payloads.total} hint="Nothing is ever discarded." />
+        <StatCard
+          label="Payloads stored"
+          value={payloads.total}
+          hint="Nothing is ever discarded."
+        />
         <StatCard
           label="Not yet leads"
           value={unfinished.length}
@@ -122,8 +126,7 @@ export default async function IngestionPage() {
                         >
                           {PAYLOAD_STATUS_LABELS[row.status]}
                         </span>{' '}
-                        {row.apiKey?.name ?? 'An integration'} ·{' '}
-                        {relativeWhen(row.receivedAt)}
+                        {row.apiKey?.name ?? 'An integration'} · {relativeWhen(row.receivedAt)}
                       </p>
                       <p className="mt-1 text-[var(--color-text-muted)]">
                         {row.errors[0]

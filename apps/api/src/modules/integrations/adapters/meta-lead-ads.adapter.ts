@@ -18,7 +18,6 @@ import {
   verifyHubSignature,
 } from './meta-signature.js';
 
-
 /** How long a probe or a lead fetch waits before giving up. */
 const TIMEOUT_MS = 8_000;
 
@@ -228,7 +227,11 @@ export class MetaLeadAdsAdapter implements IntegrationAdapter {
       const code = metaErrorCode(body);
 
       if (response.ok && code === null) {
-        return { outcome: 'ok', latencyMs, detail: { status: response.status, page: metaName(body) } };
+        return {
+          outcome: 'ok',
+          latencyMs,
+          detail: { status: response.status, page: metaName(body) },
+        };
       }
       const unauthorized = isCredentialFailure(response.status, code);
       return {

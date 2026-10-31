@@ -43,7 +43,7 @@ refreshed by replying. Using one column for both would either lose ownership whe
 a tab or leave a conversation permanently claimed by whoever opened it first.
 
 A reply by somebody who is not the holder **goes through**. The requirement asks that two agents on
-one conversation *see* each other, which is a sentence on a screen; refusing the second one means a
+one conversation _see_ each other, which is a sentence on a screen; refusing the second one means a
 customer waits until a colleague's five minutes run out, possibly while that colleague is at lunch.
 Taking over somebody's lock is allowed and written to the audit log, which is the accountability a
 refusal would have bought at the customer's expense.
@@ -68,7 +68,7 @@ every minute. The sweep wakes the row with a conditional `UPDATE … WHERE statu
 conversation somebody closed a second earlier is not dragged back by a job that is behind.
 
 **6. `STOP` is applied in the request that received the message.** Not in a job: `FR-WA-10` says a
-revocation suppresses marketing sends *immediately*, and a queue hop is a window in which a
+revocation suppresses marketing sends _immediately_, and a queue hop is a window in which a
 campaign reads the old value and sends the person the thing they asked to stop. The write, the
 timeline entry and the audit row are one transaction.
 
@@ -109,7 +109,7 @@ id is checked against `Membership`, because an array column cannot carry a forei
   the word the customer actually sent so "why did we stop messaging her?" has an answer.
 - **A second `STOP` writes nothing.** They were already stopped, and a product that logged it twice
   would read as not having listened the first time.
-- **An automatic acknowledgement is *returned*, not sent.** `consentAcknowledgement` gives the
+- **An automatic acknowledgement is _returned_, not sent.** `consentAcknowledgement` gives the
   workspace the words; whether to send them is the send path's decision, because a reply to `STOP`
   is itself a message and the 24-hour window rules apply to it. One rule about sending, in the one
   service that owns it.

@@ -2342,7 +2342,7 @@ violation as the normal case, counts it, and answers 200. Meta's retry carries a
 so a hash of the body would have made it a new event; `leadgen_id` is what Meta promises to repeat.
 
 **A provider with no event id of its own does not touch the ledger.** The generic webhook has
-nothing to deduplicate on, and a key *we* invented would make every distinct lead look like a
+nothing to deduplicate on, and a key _we_ invented would make every distinct lead look like a
 replay — so that door keeps `Idempotency-Key` and `idempotency_keys`, stays synchronous, and answers
 the lead id. One table per guarantee, rather than one table pretending to offer both.
 
@@ -2361,7 +2361,7 @@ not deliver anything until the callback URL echoes a `hub.challenge`, answered a
 outside the envelope: `{"success":true,"data":"1158201444"}` would never confirm the subscription.
 `parseDelivery` exists because one request is zero or more events. `fetchLead` is the first method in
 this product that reads **from** a provider: Meta sends an id and the answers are a second request,
-with a *different* credential from the one that signed the delivery. A provider that claims a shape
+with a _different_ credential from the one that signed the delivery. A provider that claims a shape
 its adapter cannot honour now fails startup, which is the same stance as "every route declares its
 authorization".
 
@@ -2390,7 +2390,7 @@ test at all. Meta's unsubscribed `page` changes are dropped and acknowledged for
 
 **Two defects found by running it.** The first draft's "does this provider have an inbound door"
 read `authKind === 'shared_secret'`, which was right for the two providers that existed and would
-have answered **404 on Meta's own callback URL** — Meta holds a token we send *and* posts to us, so
+have answered **404 on Meta's own callback URL** — Meta holds a token we send _and_ posts to us, so
 the question is `inboundVerification`, not the auth kind. And the health service's import of
 `sharedSecretField` from the main service closed an ESM cycle that fails as a `ReferenceError` at
 boot rather than a type error; the constants moved to `adapters/secret-names.ts`, which is where the
@@ -2609,7 +2609,7 @@ variable rows appear as the body is typed and each row carries WhatsApp's standi
 
 - **14 in `@leados/shared`**, over the window rule, the template validator (a name, a language and
   a variable gap Meta would refuse hours later), the renderer that refuses a blank rather than
-  sending "Hi  ,", the status ordering, and the `statusesBeatenBy` list that makes the ordering an
+  sending "Hi ,", the status ordering, and the `statusesBeatenBy` list that makes the ordering an
   atomic `UPDATE`.
 - **8 on the web side**, reconciling the template vocabulary with the API's and covering the four
   describers — including the one that reads WhatsApp's own reason for a refusal in red.
@@ -2752,7 +2752,7 @@ end". Both are now met.
 column, so every data scope narrower than the whole workspace resolved to `assigned_user_id = me`.
 A seeded **sales executive** holds `conversation:read` and `conversation:reply` at **own** scope,
 and a workspace with no assignment rule leaves every incoming conversation unassigned — so a new
-customer's first message was visible to nobody but an owner or an admin. A *shared* inbox was
+customer's first message was visible to nobody but an owner or an admin. A _shared_ inbox was
 unreadable by the people it is for, and the conversations at the greatest risk of never being
 answered were the ones it hid. That is the `/my/today` lesson one module later, and the file's own
 comment had claimed the right behaviour while the code did the other thing. `conversationScopeWhere`
@@ -2767,7 +2767,7 @@ scope can be seen at all.
 drives "my conversations" and is audited when it changes; `lock_user_id` with `lock_expires_at` is
 five minutes of "I am typing", taken by opening a conversation. One column for both would either
 lose ownership when somebody closed a tab or leave a conversation permanently claimed. A reply from
-somebody who is not the holder **goes through**: the requirement asks that two agents *see* each
+somebody who is not the holder **goes through**: the requirement asks that two agents _see_ each
 other, which is a sentence on a screen, and refusing the second one means a customer waits while a
 colleague is at lunch. Taking over is allowed and written to the audit log — the accountability a
 refusal would have bought at the customer's expense.
@@ -2786,7 +2786,7 @@ made and why both run every minute. Both writes are conditional on the state the
 conversation somebody closed a second earlier is not dragged back.
 
 **`STOP` is applied in the request that carried it.** `FR-WA-10` says a revocation suppresses
-marketing sends *immediately*, and a queue hop is a window in which a campaign reads the old value.
+marketing sends _immediately_, and a queue hop is a window in which a campaign reads the old value.
 The keyword list is short and matched against the **whole** message — and `no`, `cancel`, `end` and
 `quit` are deliberately **off** it, though each appears on somebody's published opt-out list: each
 is a word a customer uses mid-conversation, and a false positive silences somebody **invisibly**,
@@ -2865,7 +2865,7 @@ conversation with its lead context 11 ms, and the body search slowest at **p95 1
 **And the measurement found a defect four steps of review had not.** `GET /conversations` answered
 `nextCursor: null, hasMore: false` on **every** page, beside a `total` of 4 000 — so a real
 workspace would have been told its inbox held the fifty rows it had loaded, with the other 3 950
-unreachable. With one conversation that response is *correct*, which is exactly why nothing but a
+unreachable. With one conversation that response is _correct_, which is exactly why nothing but a
 fixture at this size would have shown it. The list now carries a keyset cursor over
 `(last_message_at, id)` — **both** halves, because `last_message_at` ties and an instant alone
 skips whatever shares it — refuses a cursor it did not issue, and reads `hasMore` from `limit + 1`
@@ -2908,7 +2908,7 @@ the payload: Meta's prices are per-country and change, so a rate card here would
 quarter and wrong **silently**, on somebody's invoice.
 
 **Two screens and two inbox additions** (`frontend-architecture.md` §10.17): the composer offers a
-saved reply while the shortcut is still being typed — and only when the message *is* the shortcut,
+saved reply while the shortcut is still being typed — and only when the message _is_ the shortcut,
 the same whole-message rule the opt-out keywords use — `/settings/whatsapp/replies` prints each
 shortcut as text above its editor with "sent 4 times" beside it, `/settings/whatsapp/usage` shows
 counts and no money, and the conversation card gained a tag box whose saved values are printed
@@ -2978,7 +2978,7 @@ hand-written form, and therefore a release, per action.
 
 What is left is a **declaration the API serves and both halves read**. `packages/shared/src/automation.ts`
 declares 11 triggers, 11 condition fields and 13 actions, each with a list of parameter fields
-carrying a type, a label, a hint and — where the value is a row in this workspace — which *kind* of
+carrying a type, a label, a hint and — where the value is a row in this workspace — which _kind_ of
 row. `GET /automation/catalogue` hands that to the editor, which branches on a parameter's **type**
 and never on an action's key; `validateWorkflowDefinition` checks a saved graph against the same
 declarations, pure and in `@leados/shared` so a preview and a refusal cannot disagree. The proof is
@@ -3021,7 +3021,7 @@ three-column FKs, six GIN, five trigram, two partial indexes), removed by hand a
 migration since Phase 1 step 2. Hand-written and listed in `schema-objects.int-spec.ts`: the partial
 unique `workflows_live_name` on `(organization_id, lower(btrim(name))) WHERE deleted_at IS NULL` —
 the `WHERE` is what lets a deleted workflow's name be reused — and **twelve CHECKs**. Two are worth
-reading: `workflows_cooldown_matches_policy` is a `CASE` biconditional because *both* directions are
+reading: `workflows_cooldown_matches_policy` is a `CASE` biconditional because _both_ directions are
 contradictions, while `workflow_versions_publisher_published_it` is deliberately **one-way**, since
 the mirror would make a version published by the system (an industry template's starter workflow)
 unrepresentable. **No grant migration**: `automation:manage` has been in the catalogue since Phase 1
@@ -3050,7 +3050,7 @@ scheduler, and **29 browser checks** in Chromium.
 Two defects in existing tests came out of the full run rather than out of the new code, and both
 are fixed here. `whatsapp-sending.e2e-spec.ts` drained queued sends with no `orderBy` and then
 asserted on `sentMessages().at(-1)` — green on its own, red in a full run, which is the shape that
-looks like a flake and is not; the drain is ordered and the assertion now names *this* test's
+looks like a flake and is not; the drain is ordered and the assertion now names _this_ test's
 template. And the inbound suite had no assertion that `whatsapp.message_received` reaches the
 outbox at all: a side effect with no record is one nobody can count, which is how two verification
 emails per registration survived four phases.
@@ -3061,7 +3061,7 @@ enrollment, no run log, no guardrail counter and no loop detection: `reentry_pol
 `automation_enrollments`, `automation_runs`, `automation_run_steps` and
 `automation_guardrail_counters` are unbuilt, which is why `tasks.automation_run_id` is still absent.
 Nothing reaches a lead's timeline yet either, by the same reasoning rule 6 allows: a workflow is
-configuration, and the entries the rule asks for are what *runs* write, where there is a lead to
+configuration, and the entries the rule asks for are what _runs_ write, where there is a lead to
 write them about. Configuration is audited instead. The `manual` trigger has no button yet, and
 `FR-AUT-7`'s per-lead run view and retry-from-failed-step, the dry run, and the starter workflow
 templates per industry all wait for something to run.
@@ -3084,7 +3084,7 @@ delayed job on purpose** and asserts the sweep finishes the run.
 A workflow has no `actorId` — it is not a person — and `DataScopeService` defaults an absent scope
 to `own`, which compares a row against the actor. So every action that went through a service
 answered **"Lead not found"**: the data scope working exactly as designed against a principal who is
-nobody. The answer is not to widen the scope quietly but to say what a workflow *is*:
+nobody. The answer is not to widen the scope quietly but to say what a workflow _is_:
 `automationPrincipal` holds permissions at **organization** scope, because a workflow is the
 workspace's standing instruction — and the permissions are **enumerated** in `ENGINE_PERMISSIONS`
 rather than granted wholesale, with `automation:manage`, every `*:delete`, billing and settings
@@ -3168,7 +3168,7 @@ are step 3's.
 ### Step 3 — the preview, the retry, and a workspace that arrives with workflows ✅ _(landed 2026-10-26)_
 
 The engine ran, and nothing in the product would have persuaded a business owner to switch one on.
-This step is the three things that do: a way to see what a workflow *would* do before it does it, a
+This step is the three things that do: a way to see what a workflow _would_ do before it does it, a
 way to pick a failed run back up, and something already in the box on the first day. All three are
 in [ADR-0043](./decisions/ADR-0043-a-preview-is-one-branch-in-the-interpreter-and-a-starter-workflow-is-a-draft.md);
 the decisions worth repeating here are the ones that could have gone the other way.
@@ -3180,7 +3180,7 @@ The import's dry run and the ingestion test tool have each already paid for that
 codebase. So a preview **is** a run: a row in `automation_runs` with `dry_run = true`, driven by
 `AutomationExecutorService.advance`, with every decision above the handler call — the conditions,
 the branch arms, the wait arithmetic, the step log, the ordering — being the same code. There is
-exactly **one** `if (run.dryRun)` on the path to a handler, plus three where a *control shape*
+exactly **one** `if (run.dryRun)` on the path to a handler, plus three where a _control shape_
 would otherwise reach outside: the wait continues instead of suspending (a preview that slept for
 two days answers nothing anybody asked), `enroll` records what it would hand over instead of
 handing it over, and no timeline row is written.
@@ -3191,7 +3191,7 @@ happened" and "it did not run" look identical on a screen:
 - **It is enrolled in nothing.** `enrollment_id` is now nullable and
   `automation_runs_real_run_is_enrolled` pairs the columns both ways. A preview that took an
   enrolment would spend the lead's one allowed cycle under the `once` policy, so the real run
-  afterwards would be refused *by the thing the preview was checking*; a real run with no enrolment
+  afterwards would be refused _by the thing the preview was checking_; a real run with no enrolment
   is a run outside the policy. Both mirrors are contradictions, which is the test this codebase
   applies to a biconditional CHECK after the two payments constraints that together made a refund
   impossible — and it is a `CASE`, because every sub-expression of a CHECK has to be non-NULL to
@@ -3207,13 +3207,13 @@ happened" and "it did not run" look identical on a screen:
 - **It spends no cap**, because the counter is incremented below the branch.
 
 **It previews the draft** — the unsaved version when there is one, the published one otherwise,
-which is the version the *next* run would use. A preview that only worked on a published workflow
+which is the version the _next_ run would use. A preview that only worked on a published workflow
 would be a tool for checking something already live, which is the opposite of the point. And it
 answers **200, inline**, where `POST :id/start` is 202 and queued: a preview calls no provider, so
 there is nothing to wait for and the answer is the whole reason somebody pressed the button.
 
 **The retry reopens the run it failed in, and the step log is append-only.** `current_step_id`
-points at the last step that *succeeded* — `finish` deliberately leaves it alone — so `nextStep`
+points at the last step that _succeeded_ — `finish` deliberately leaves it alone — so `nextStep`
 returns the failed one and nothing before it runs again. The requirement
 (`queue-event-architecture.md`: "retryable from the failed step… side effects already applied are
 not repeated") falls out of a column rather than needing a plan. The new attempt writes a **new**
@@ -3227,7 +3227,7 @@ preview cannot be retried at all: it is tested again.
 **The industry starter workflows arrive as drafts.** Publishing a guessed workflow into somebody's
 workspace during onboarding would start it creating follow-ups on their customers before they had
 read it. `workflow_versions_publisher_published_it` is one-way precisely so a system-published
-version *could* exist, and this step chooses not to use that latitude. A template cannot carry ids
+version _could_ exist, and this step chooses not to use that latitude. A template cannot carry ids
 — the statuses and task types it points at are created in the same transaction that applies it — so
 a parameter value may be `{ $taskType: 'Site visit' }` or `{ $status: 'Site visit scheduled' }` and
 `applyIndustryTemplate` resolves it. An unresolvable reference throws rather than installing a draft
@@ -3266,7 +3266,7 @@ and **1 700 integration** (946 api e2e, 754 db). New: **6** registry and templat
 `@leados/shared`, **3** in the web lib, **4** in `@leados/db` reconciling the starter workflows
 against what a workspace actually has, **14 e2e** across the preview, the retry and the starters,
 **1** for the nurture flow end to end (in `whatsapp-sending.e2e-spec.ts`, where its four fixtures
-already live), and **3 schema-object cases** — two of which read the *predicate* rather than the
+already live), and **3 schema-object cases** — two of which read the _predicate_ rather than the
 name, because a later migration that keeps a constraint's name and loses half its meaning is
 invisible to an existence check. Then **35 HTTP checks** against a live API, worker and scheduler,
 and **20 browser checks** in Chromium, including both screens at 375 px.
@@ -3280,7 +3280,7 @@ rate-limit tests counted against a wall-clock window — one spent the limit a `
 other asserted "the 101st call is refused" — which holds when the file runs alone and does not under
 a full suite: a hundred sequential Redis round-trips stop fitting inside one second, the window
 rolls over mid-loop, and the failure reads as the limiter being broken while it is the limiter being
-right. The first now writes the counter directly for this second *and* the next; the second counts
+right. The first now writes the counter directly for this second _and_ the next; the second counts
 allowances **within** the second rather than from the start of the loop.
 
 **Carried forward, named rather than assumed.** `tasks.automation_run_id` is still absent; a
@@ -3292,14 +3292,14 @@ abandoned-checkout reference flow needs a checkout to abandon — see the criter
 
 ### Phase 6 exit criteria, measured
 
-| Criterion | State |
-| --- | --- |
-| Adding a new action type requires **no engine change and no frontend release** (proven by adding one) | **Done** — `change_priority` cost one registry declaration and one handler method. The editor renders its `select` from `GET /automation/catalogue`, and a browser check reads its label off that response rather than off the web bundle. |
-| Editing a live workflow does not alter in-flight runs (version pinning tested) | **Done** — a run holds `version_id`, a published version is never written again, and the step-2 e2e edits and republishes a workflow mid-run and asserts the run still executes the graph it started on. |
-| A deliberately dropped delayed job is recovered by the reconciliation sweep | **Done** — `automation_runs.resume_at` is the promise and the delayed job only the fast path; the e2e drops the job and asserts `maintenance.automation-resume` finishes the run. |
-| Loop detection stops a self-triggering workflow; daily action cap enforced; kill switch stops sends within seconds | **Done** — depth rides on `TenantPrincipal.automation` and `OutboxService.emit` defaults from it, so a workflow that re-triggers itself climbs to `MAX_CAUSATION_DEPTH` and is refused with a sentence; the cap is one atomic `INSERT … ON CONFLICT … RETURNING count`; the kill switch is read by the dispatcher *and* re-asked by a retry. |
-| Every automation decision, including "skipped because", is on the lead timeline | **Done** — `automation.enrolled`, `.action_executed`, `.skipped`, `.failed` and `.exited`, each with the engine's own sentence, visible to anyone with `lead:read` and with a describer per type. A **preview** deliberately writes none, which is why its run log carries them instead. |
-| The brief's two reference flows work end to end | **One of two, and the one that can be.** New-lead nurture — `send_whatsapp_template` → `wait` (working hours) → `create_task` → `branch` — is published and driven end to end in `whatsapp-sending.e2e-spec.ts`, where the fixtures it needs already are: the template reaches the fake Graph API as an `accepted` message, the two-hour wait suspends with the instant it is owed and is finished by the reconciliation sweep, the follow-up is a real assigned task with the lead's name interpolated into its title, and the branch takes the **reply** arm, because a lead who arrived through WhatsApp consented by arriving. **Abandoned checkout is not, and cannot be here:** its trigger is a checkout that was started and not paid for, and this product has no checkout until Phase 7's websites and Phase 8's payments. Every piece it needs exists (`wait`, `send_whatsapp_template`, `stop`, and `payment.received` as a trigger); what is missing is the event that starts it, which is named in Phase 7's scope rather than claimed here. |
+| Criterion                                                                                                          | State                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Adding a new action type requires **no engine change and no frontend release** (proven by adding one)              | **Done** — `change_priority` cost one registry declaration and one handler method. The editor renders its `select` from `GET /automation/catalogue`, and a browser check reads its label off that response rather than off the web bundle.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Editing a live workflow does not alter in-flight runs (version pinning tested)                                     | **Done** — a run holds `version_id`, a published version is never written again, and the step-2 e2e edits and republishes a workflow mid-run and asserts the run still executes the graph it started on.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| A deliberately dropped delayed job is recovered by the reconciliation sweep                                        | **Done** — `automation_runs.resume_at` is the promise and the delayed job only the fast path; the e2e drops the job and asserts `maintenance.automation-resume` finishes the run.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Loop detection stops a self-triggering workflow; daily action cap enforced; kill switch stops sends within seconds | **Done** — depth rides on `TenantPrincipal.automation` and `OutboxService.emit` defaults from it, so a workflow that re-triggers itself climbs to `MAX_CAUSATION_DEPTH` and is refused with a sentence; the cap is one atomic `INSERT … ON CONFLICT … RETURNING count`; the kill switch is read by the dispatcher _and_ re-asked by a retry.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Every automation decision, including "skipped because", is on the lead timeline                                    | **Done** — `automation.enrolled`, `.action_executed`, `.skipped`, `.failed` and `.exited`, each with the engine's own sentence, visible to anyone with `lead:read` and with a describer per type. A **preview** deliberately writes none, which is why its run log carries them instead.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| The brief's two reference flows work end to end                                                                    | **One of two, and the one that can be.** New-lead nurture — `send_whatsapp_template` → `wait` (working hours) → `create_task` → `branch` — is published and driven end to end in `whatsapp-sending.e2e-spec.ts`, where the fixtures it needs already are: the template reaches the fake Graph API as an `accepted` message, the two-hour wait suspends with the instant it is owed and is finished by the reconciliation sweep, the follow-up is a real assigned task with the lead's name interpolated into its title, and the branch takes the **reply** arm, because a lead who arrived through WhatsApp consented by arriving. **Abandoned checkout is not, and cannot be here:** its trigger is a checkout that was started and not paid for, and this product has no checkout until Phase 7's websites and Phase 8's payments. Every piece it needs exists (`wait`, `send_whatsapp_template`, `stop`, and `payment.received` as a trigger); what is missing is the event that starts it, which is named in Phase 7's scope rather than claimed here. |
 
 **Phase 6 is complete but for that one flow**, which is blocked on a phase that has not happened
 rather than on anything in this one. The registry is a declaration both halves read, a workflow is
@@ -3447,16 +3447,16 @@ above. Last reviewed 2026-10-20, after Phase 5 step 5._
 one is tested is in its own section above. **Phase 5 is finished too: all eight of its exit
 criteria are met**, each with the test or the measurement that shows it:
 
-| Exit criterion                                                               | Status                                                            |
-| ---------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| A retried delivery ⇒ one message, one activity, one automation trigger        | **Message and activity: done** (`whatsapp.e2e-spec.ts`). No automation exists to trigger until Phase 6. |
-| Conversation events on the lead timeline                                      | **Done** — `whatsapp.received`, `whatsapp.sent`, `whatsapp.template_sent`, `whatsapp.failed`, each with a describer. |
-| Out-of-window free-form send blocked; template send succeeds                  | **Done** — `whatsapp-sending.e2e-spec.ts`, and the browser check that finds the text box disabled. |
-| A failed send shows the provider's reason and reaches the timeline            | **Done** — on the message, on the timeline, and as a notification quiet hours do not hold. |
-| Two agents see the ownership lock; transfer is audited                        | Not started — the columns exist with no writer.                    |
-| Media round-trip with type/size validation and signed-URL delivery            | **Round trip and validation: done** (`whatsapp-media.e2e-spec.ts`, 30 HTTP checks). **No signed URL**, deliberately and for a named reason: `StoragePort` cannot sign one, so the bytes are served behind `conversation:read` ([ADR-0038](./decisions/ADR-0038-an-attachment-is-served-by-this-product-not-by-a-signed-url.md)). |
-| Opt-out keyword suppresses marketing sends immediately                        | **Done** — applied in the request that carried the message, not by a job; the marketing template is then refused with its own sentence, and a sentence merely *containing* the word changes nothing. |
-| Inbox p95 < 500 ms with 100 k messages                                       | **Done** — `inbox-100k.sql` builds 4 000 conversations and 100 000 messages across three partitions; the list's p95 is **56 ms** and the body search, the slowest, **100 ms**. Numbers and commands in `packages/db/perf/README.md`. |
+| Exit criterion                                                         | Status                                                                                                                                                                                                                                                                                                                           |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A retried delivery ⇒ one message, one activity, one automation trigger | **Message and activity: done** (`whatsapp.e2e-spec.ts`). No automation exists to trigger until Phase 6.                                                                                                                                                                                                                          |
+| Conversation events on the lead timeline                               | **Done** — `whatsapp.received`, `whatsapp.sent`, `whatsapp.template_sent`, `whatsapp.failed`, each with a describer.                                                                                                                                                                                                             |
+| Out-of-window free-form send blocked; template send succeeds           | **Done** — `whatsapp-sending.e2e-spec.ts`, and the browser check that finds the text box disabled.                                                                                                                                                                                                                               |
+| A failed send shows the provider's reason and reaches the timeline     | **Done** — on the message, on the timeline, and as a notification quiet hours do not hold.                                                                                                                                                                                                                                       |
+| Two agents see the ownership lock; transfer is audited                 | Not started — the columns exist with no writer.                                                                                                                                                                                                                                                                                  |
+| Media round-trip with type/size validation and signed-URL delivery     | **Round trip and validation: done** (`whatsapp-media.e2e-spec.ts`, 30 HTTP checks). **No signed URL**, deliberately and for a named reason: `StoragePort` cannot sign one, so the bytes are served behind `conversation:read` ([ADR-0038](./decisions/ADR-0038-an-attachment-is-served-by-this-product-not-by-a-signed-url.md)). |
+| Opt-out keyword suppresses marketing sends immediately                 | **Done** — applied in the request that carried the message, not by a job; the marketing template is then refused with its own sentence, and a sentence merely _containing_ the word changes nothing.                                                                                                                             |
+| Inbox p95 < 500 ms with 100 k messages                                 | **Done** — `inbox-100k.sql` builds 4 000 conversations and 100 000 messages across three partitions; the list's p95 is **56 ms** and the body search, the slowest, **100 ms**. Numbers and commands in `packages/db/perf/README.md`.                                                                                             |
 
 **Phase 5 is complete.** WhatsApp is connected, receives, replies, carries files both ways, is
 shared between agents with an advisory lock and an audited transfer, honours a `STOP`, has tags and

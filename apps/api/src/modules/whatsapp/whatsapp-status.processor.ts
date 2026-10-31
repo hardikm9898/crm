@@ -59,14 +59,24 @@ export class WhatsAppIngestStatusProcessor implements JobProcessor {
 
     const receipt = this.receiptFor(row.raw, row.externalEventId);
     if (receipt === null) {
-      await this.settle(organizationId, eventId, 'failed', 'the stored delivery no longer contains that receipt');
+      await this.settle(
+        organizationId,
+        eventId,
+        'failed',
+        'the stored delivery no longer contains that receipt',
+      );
       return;
     }
     try {
       const applied = await this.statuses.record(organizationId, receipt);
       // `stale` and `ignored` are both honest outcomes rather than failures: a receipt that
       // overtook another, or one about a message we never sent, has been dealt with.
-      await this.settle(organizationId, eventId, applied === 'applied' ? 'processed' : 'duplicate', null);
+      await this.settle(
+        organizationId,
+        eventId,
+        applied === 'applied' ? 'processed' : 'duplicate',
+        null,
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message.slice(0, 500) : 'unknown error';
       await this.settle(organizationId, eventId, 'failed', message);

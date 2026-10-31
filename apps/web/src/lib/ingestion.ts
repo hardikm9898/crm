@@ -97,7 +97,6 @@ export const STAGE_LABELS: Record<IngestionStage, string> = {
   notify: 'Telling somebody failed',
 };
 
-
 // ── What the API answers ────────────────────────────────────────────────────
 
 export interface ApiKeyRecord {
@@ -296,7 +295,9 @@ export function suggestedFieldType(samples: readonly string[]): string {
   if (every((value) => /^(true|false|yes|no)$/i.test(value))) return 'boolean';
   if (every((value) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value))) return 'email';
   if (every((value) => /^https?:\/\//i.test(value))) return 'url';
-  if (every((value) => /^\+?[\d\s().-]{7,20}$/.test(value) && /\d{7}/.test(value.replace(/\D/g, ''))))
+  if (
+    every((value) => /^\+?[\d\s().-]{7,20}$/.test(value) && /\d{7}/.test(value.replace(/\D/g, '')))
+  )
     return 'phone';
   if (every((value) => /^-?\d+$/.test(value))) return 'number';
   if (every((value) => /^-?\d+\.\d+$/.test(value))) return 'decimal';

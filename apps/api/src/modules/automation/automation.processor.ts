@@ -41,9 +41,9 @@ export class AutomationTriggerProcessor implements JobProcessor {
       leadId,
       eventName,
       eventId: typeof payload['eventId'] === 'string' ? payload['eventId'] : null,
-      payload: typeof inner === 'object' && inner !== null ? (inner as Record<string, unknown>) : {},
-      causationDepth:
-        typeof payload['causationDepth'] === 'number' ? payload['causationDepth'] : 0,
+      payload:
+        typeof inner === 'object' && inner !== null ? (inner as Record<string, unknown>) : {},
+      causationDepth: typeof payload['causationDepth'] === 'number' ? payload['causationDepth'] : 0,
       ...(typeof payload['workflowId'] === 'string' ? { workflowId: payload['workflowId'] } : {}),
     });
   }
@@ -124,7 +124,8 @@ export class AutomationResumeSweepProcessor implements JobProcessor {
         );
       }
     }
-    if (due.length > 0) this.logger.info({ examined: due.length, resumed }, 'automation runs resumed');
+    if (due.length > 0)
+      this.logger.info({ examined: due.length, resumed }, 'automation runs resumed');
     return { examined: due.length, resumed };
   }
 }

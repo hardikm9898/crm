@@ -1,11 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import {
-  ACTIVITY_TYPES,
-  AppError,
-  newId,
-  noteProblem,
-  tenantContext,
-} from '@leados/shared';
+import { ACTIVITY_TYPES, AppError, newId, noteProblem, tenantContext } from '@leados/shared';
 import { DbService } from '../../infra/db/db.service.js';
 import { TimelineService } from '../../infra/timeline/timeline.service.js';
 import { NotificationsService } from '../notifications/notifications.service.js';

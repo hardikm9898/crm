@@ -139,7 +139,10 @@ export interface AutomationConditionOutcome {
   readonly reason: string;
 }
 
-export function evaluateAutomationConditions(group: ConditionGroup | undefined, facts: AutomationFacts): AutomationConditionOutcome {
+export function evaluateAutomationConditions(
+  group: ConditionGroup | undefined,
+  facts: AutomationFacts,
+): AutomationConditionOutcome {
   if (group === undefined) return { passed: true, reason: 'no conditions' };
   return evaluateGroup(group, facts);
 }
@@ -168,7 +171,10 @@ function evaluateGroup(group: ConditionGroup, facts: AutomationFacts): Automatio
   return { passed: true, reason: 'no conditions' };
 }
 
-function evaluateEntry(entry: ConditionLeaf | ConditionGroup, facts: AutomationFacts): AutomationConditionOutcome {
+function evaluateEntry(
+  entry: ConditionLeaf | ConditionGroup,
+  facts: AutomationFacts,
+): AutomationConditionOutcome {
   if ('all' in entry || 'any' in entry) return evaluateGroup(entry as ConditionGroup, facts);
   return evaluateLeaf(entry as ConditionLeaf, facts);
 }

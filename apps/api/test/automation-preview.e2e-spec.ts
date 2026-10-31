@@ -213,9 +213,7 @@ describe('the dry run (`FR-AUT-6`)', () => {
     // `note.added` rather than looking for one.
     expect(await ctx.db.activity.count({ where: { leadId, type: 'note.added' } })).toBe(0);
     // No enrolment, which is what keeps the `once` policy intact for the real run.
-    expect(
-      await ctx.db.automationEnrollment.count({ where: { workflowId, leadId } }),
-    ).toBe(0);
+    expect(await ctx.db.automationEnrollment.count({ where: { workflowId, leadId } })).toBe(0);
     // Nothing on the lead's own history: a timeline row claiming a workflow acted when it did not
     // is the one lie that would make the rest of the timeline unusable.
     const timeline = await setup<{ type: string }[]>('GET', `/leads/${leadId}/timeline`, {
@@ -432,11 +430,10 @@ describe('retry from the failed step (`FR-AUT-7`)', () => {
       { id: 'note', action: 'add_note', params: { body: 'Preview.' } },
     ]);
     const leadId = await lead();
-    const preview = await setup<RunBody>(
-      'POST',
-      `/automation/workflows/${workflowId}/test-run`,
-      { token: org.token, payload: { leadId } },
-    );
+    const preview = await setup<RunBody>('POST', `/automation/workflows/${workflowId}/test-run`, {
+      token: org.token,
+      payload: { leadId },
+    });
     // Force it into the one terminal state a retry would accept, so the refusal being asserted is
     // the dry-run one rather than the status one.
     await ctx.db.automationRun.update({
@@ -521,9 +518,7 @@ describe('the industry starter workflows (`FR-AUT-3`)', () => {
     const workflows = await setup<
       { id: string; name: string; status: string; currentVersionId: string | null }[]
     >('GET', '/automation/workflows', { token });
-    expect(workflows.map((row) => row.name).sort()).toEqual(
-      expected.map((row) => row.name).sort(),
-    );
+    expect(workflows.map((row) => row.name).sort()).toEqual(expected.map((row) => row.name).sort());
     // Drafts, every one: publishing into somebody's workspace during onboarding would start it
     // creating follow-ups on their customers before they had read what it does.
     expect(workflows.every((row) => row.status === 'draft')).toBe(true);
@@ -533,18 +528,21 @@ describe('the industry starter workflows (`FR-AUT-3`)', () => {
     // publishable the moment somebody opens it.
     // `/settings/task-types`, which is what `REFERENCE_SOURCES` names — the editor's own picker
     // reads the same path, so a test aimed elsewhere would be testing a route nothing uses.
-    const taskTypes = await setup<{ id: string; name: string }[]>(
-      'GET',
-      '/settings/task-types',
-      { token },
-    );
+    const taskTypes = await setup<{ id: string; name: string }[]>('GET', '/settings/task-types', {
+      token,
+    });
     const statuses = await setup<{ id: string; name: string }[]>('GET', '/crm/statuses', { token });
     const ids = new Set([...taskTypes, ...statuses].map((row) => row.id));
 
     for (const summary of workflows) {
       const detail = await setup<{
         problems: unknown[];
-        draft: { definition: { trigger: { params?: Record<string, unknown> }; steps: { params?: Record<string, unknown> }[] } };
+        draft: {
+          definition: {
+            trigger: { params?: Record<string, unknown> };
+            steps: { params?: Record<string, unknown> }[];
+          };
+        };
       }>('GET', `/automation/workflows/${summary.id}`, { token });
       // No problems means Publish is enabled: a starter somebody has to debug is worse than none.
       expect(detail.problems, summary.name).toEqual([]);

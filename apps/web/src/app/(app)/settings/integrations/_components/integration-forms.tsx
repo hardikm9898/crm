@@ -103,46 +103,38 @@ function ShownOnceSecret({
  * would discard exactly the sentence somebody can act on. That is the `ERROR_COPY` lesson, one
  * layer in: a refusal the API wrote for a person is the one thing not to paraphrase.
  */
-function MappingRow({
-  row,
-  index,
-  error,
-}: {
-  row: FieldMapping;
-  index: number;
-  error?: string;
-}) {
+function MappingRow({ row, index, error }: { row: FieldMapping; index: number; error?: string }) {
   return (
     <div className="flex flex-col gap-1" data-mapping-row={index}>
-    <div className="grid gap-2 sm:grid-cols-[2fr_2fr_1fr]">
-      <input
-        name="mapSource"
-        className={controlClassName}
-        defaultValue={row.source}
-        placeholder="contact.full_name"
-        aria-label={`What they send, row ${index + 1}`}
-      />
-      <input
-        name="mapTarget"
-        className={controlClassName}
-        defaultValue={row.target}
-        placeholder="name"
-        list="leados-fields"
-        aria-label={`What it becomes, row ${index + 1}`}
-      />
-      <select
-        name="mapTransform"
-        className={controlClassName}
-        defaultValue={row.transform ?? 'none'}
-        aria-label={`What to do to the value, row ${index + 1}`}
-      >
-        {MAPPING_TRANSFORMS.map((transform) => (
-          <option key={transform} value={transform}>
-            {TRANSFORM_LABELS[transform]}
-          </option>
-        ))}
-      </select>
-    </div>
+      <div className="grid gap-2 sm:grid-cols-[2fr_2fr_1fr]">
+        <input
+          name="mapSource"
+          className={controlClassName}
+          defaultValue={row.source}
+          placeholder="contact.full_name"
+          aria-label={`What they send, row ${index + 1}`}
+        />
+        <input
+          name="mapTarget"
+          className={controlClassName}
+          defaultValue={row.target}
+          placeholder="name"
+          list="leados-fields"
+          aria-label={`What it becomes, row ${index + 1}`}
+        />
+        <select
+          name="mapTransform"
+          className={controlClassName}
+          defaultValue={row.transform ?? 'none'}
+          aria-label={`What to do to the value, row ${index + 1}`}
+        >
+          {MAPPING_TRANSFORMS.map((transform) => (
+            <option key={transform} value={transform}>
+              {TRANSFORM_LABELS[transform]}
+            </option>
+          ))}
+        </select>
+      </div>
       {error && (
         <span className="text-xs text-[var(--color-danger)]" data-mapping-error={index}>
           {error}
@@ -171,12 +163,10 @@ export function MappingEditor({ connection }: { connection: ConnectionRecord }) 
    * `submittedValues` exists for, in a form whose fields repeat.
    */
   const echoed = state.status === 'error' ? parseMapping(state.values?.['mapping']) : null;
-  const rows: FieldMapping[] =
-    echoed ??
-    [
-      ...connection.fieldMappings,
-      ...Array.from({ length: extra }, () => ({ source: '', target: '' })),
-    ];
+  const rows: FieldMapping[] = echoed ?? [
+    ...connection.fieldMappings,
+    ...Array.from({ length: extra }, () => ({ source: '', target: '' })),
+  ];
 
   return (
     <form action={action} className="flex flex-col gap-3" data-mapping-form={connection.id}>
@@ -228,7 +218,8 @@ export function MappingEditor({ connection }: { connection: ConnectionRecord }) 
       </div>
       <p className="text-xs text-[var(--color-text-muted)]">
         A field nothing maps is still kept with the payload, so you can turn it into a field of your
-        own from the integration log. Use <code>custom.your_key</code> to write one you already have.
+        own from the integration log. Use <code>custom.your_key</code> to write one you already
+        have.
       </p>
     </form>
   );
@@ -406,7 +397,10 @@ export function ConnectionRow({
           <p className="text-sm font-medium" data-connection-name={connection.id}>
             {connection.name}
           </p>
-          <p className="text-xs text-[var(--color-text-muted)]" data-connection-activity={connection.id}>
+          <p
+            className="text-xs text-[var(--color-text-muted)]"
+            data-connection-activity={connection.id}
+          >
             {connection.providerLabel} · {connection.statusSummary} {describeActivity(connection)}
           </p>
         </div>
@@ -464,7 +458,12 @@ export function ConnectionRow({
 
       {provider !== undefined && provider.inboundVerification !== 'none' && (
         <Field label="They post leads to" hint={inboundInstruction(connection.provider)}>
-          <input readOnly value={inbound} className={controlClassName} data-inbound-url={connection.id} />
+          <input
+            readOnly
+            value={inbound}
+            className={controlClassName}
+            data-inbound-url={connection.id}
+          />
         </Field>
       )}
 
@@ -526,19 +525,20 @@ export function ConnectionRow({
 
       {provider?.mappable === true && <MappingEditor connection={connection} />}
 
-      {provider?.inboundVerification === 'hmac_header' && provider.credentialFields.length === 0 && (
-        <details>
-          <summary className="cursor-pointer text-xs text-[var(--color-text-muted)]">
-            How the sending system signs a request
-          </summary>
-          <pre
-            className="mt-1 overflow-x-auto rounded-md bg-[var(--color-surface-muted)] p-3 text-xs"
-            data-signing-snippet={connection.id}
-          >
-            {signingSnippet(inbound)}
-          </pre>
-        </details>
-      )}
+      {provider?.inboundVerification === 'hmac_header' &&
+        provider.credentialFields.length === 0 && (
+          <details>
+            <summary className="cursor-pointer text-xs text-[var(--color-text-muted)]">
+              How the sending system signs a request
+            </summary>
+            <pre
+              className="mt-1 overflow-x-auto rounded-md bg-[var(--color-surface-muted)] p-3 text-xs"
+              data-signing-snippet={connection.id}
+            >
+              {signingSnippet(inbound)}
+            </pre>
+          </details>
+        )}
     </div>
   );
 }

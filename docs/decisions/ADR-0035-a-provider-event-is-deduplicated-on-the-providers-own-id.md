@@ -17,7 +17,7 @@ the four is a property of how a real provider works, and none of them has a sens
   than a point read — the same event id next month would be allowed.
 - **Meta sends an id, not the answers.** The lead is a second request, with a different credential
   from the one that signed the delivery.
-- **Google Ads does not sign anything.** It echoes a key *inside* the body, which it asked you for
+- **Google Ads does not sign anything.** It echoes a key _inside_ the body, which it asked you for
   when you configured the lead form.
 - **Meta will not deliver anything** until the callback URL answers a `hub.challenge` echo.
 
@@ -26,7 +26,7 @@ the four is a property of how a real provider works, and none of them has a sens
 ### 1. `provider_events` is the ledger, keyed on the provider's own id
 
 `UNIQUE (organization_id, provider, external_event_id)` on a table that is **not partitioned**.
-That unique *is* the guarantee: the second insert fails, and "a duplicate webhook delivery produces
+That unique _is_ the guarantee: the second insert fails, and "a duplicate webhook delivery produces
 exactly one lead" is a database constraint rather than a check somebody remembered to write. The
 service treats the violation as the **normal case**, counts it, and answers 200.
 
@@ -36,7 +36,7 @@ Two things follow from where the key comes from:
   a body hash would make it a new event; Google's retry is byte-identical, so a hash would work by
   luck. `leadgen_id` and `lead_id` are what both providers promise to repeat.
 - **A provider with no event id of its own does not use the ledger at all.** The generic webhook has
-  nothing to deduplicate on, and a key *we* invented would make every distinct lead look like a
+  nothing to deduplicate on, and a key _we_ invented would make every distinct lead look like a
   replay. That door keeps `Idempotency-Key` and `idempotency_keys`, which is what `FR-API-5` already
   specifies, and stays synchronous so it can answer the lead id. One table per guarantee, rather
   than one table pretending to offer both.
@@ -74,7 +74,7 @@ the optionality safe rather than a hole.
 
 `inboundVerification` is a property of the **provider**, not of its auth kind. An earlier draft
 decided "does this provider have an inbound door" from `authKind === 'shared_secret'`, which was
-right for the two providers that existed and wrong for Meta — which holds a token we send *and*
+right for the two providers that existed and wrong for Meta — which holds a token we send _and_
 posts to us, and would have been given a 404 on its own callback URL.
 
 ### 4. A connection holds a **set** of secrets, in one envelope
@@ -85,7 +85,7 @@ to fetch the lead it refers to. A single `credential` column would have forced t
 audit log — the three things a secret must never be. So `credentialFields` is a list on the provider
 and the vault seals the whole set as one JSON envelope under the row's own id.
 
-**One envelope, not one per field**, because the set is what a connection *is*: two columns would
+**One envelope, not one per field**, because the set is what a connection _is_: two columns would
 make "the app secret was rotated and the page token was not" a state the schema allowed and nothing
 checked, which is exactly the half-reconnection that looks fine and fails on the next delivery. The
 API accepts `credentials` as all-or-nothing for the same reason.
@@ -129,7 +129,7 @@ captured payload and a duplicate lead; that is Google's design, not ours, and it
 connector could not have been built before the ledger. And `provider_events` is pruned by nothing
 until Phase 9's retention sweep.
 
-**What would change this decision.** A provider that sends the lead *and* an id would make
+**What would change this decision.** A provider that sends the lead _and_ an id would make
 `deliveryIsAReference` a per-payload question rather than a per-provider one. The honest answer then
 is two registry entries, not a conditional: a provider that sometimes sends the answers and
 sometimes a pointer is two providers wearing one name.

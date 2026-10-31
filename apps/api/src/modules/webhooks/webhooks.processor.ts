@@ -61,8 +61,7 @@ export class WebhookDeliverProcessor implements JobProcessor {
 
   async process(payload: JobPayload, _job: Job): Promise<void> {
     const organizationId = payload.organizationId;
-    const deliveryId =
-      typeof payload['aggregateId'] === 'string' ? payload['aggregateId'] : null;
+    const deliveryId = typeof payload['aggregateId'] === 'string' ? payload['aggregateId'] : null;
     if (!organizationId || !deliveryId) {
       this.logger.warn({ payload }, 'webhook delivery job has no subject');
       return;

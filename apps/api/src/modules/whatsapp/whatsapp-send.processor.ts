@@ -152,7 +152,13 @@ export class WhatsAppSendMessageProcessor implements JobProcessor {
       const stored = await this.inTenant(organizationId, async () =>
         this.db.client.messageMedia.findFirst({
           where: { messageId },
-          select: { id: true, fileKey: true, fileName: true, mimeType: true, providerMediaId: true },
+          select: {
+            id: true,
+            fileKey: true,
+            fileName: true,
+            mimeType: true,
+            providerMediaId: true,
+          },
         }),
       );
       if (!stored || stored.fileKey === null) {
@@ -281,7 +287,10 @@ export class WhatsAppSendMessageProcessor implements JobProcessor {
         });
       }
     });
-    this.logger.info({ messageId: message.id, providerMessageId }, 'a whatsapp message was accepted by meta');
+    this.logger.info(
+      { messageId: message.id, providerMessageId },
+      'a whatsapp message was accepted by meta',
+    );
   }
 
   /** It will not send. Said on the message, on the lead, and to whoever sent it. */

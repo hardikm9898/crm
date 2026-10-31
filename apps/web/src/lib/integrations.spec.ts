@@ -186,9 +186,9 @@ describe('what a row says about itself', () => {
 
   it('distinguishes never used from working from broken', () => {
     expect(describeActivity(base, now)).toBe('Nothing has used it yet.');
-    expect(
-      describeActivity({ ...base, lastSuccessAt: '2026-10-19T11:30:00.000Z' }, now),
-    ).toMatch(/^Last worked /);
+    expect(describeActivity({ ...base, lastSuccessAt: '2026-10-19T11:30:00.000Z' }, now)).toMatch(
+      /^Last worked /,
+    );
     expect(
       describeActivity(
         {
@@ -217,7 +217,10 @@ describe('what a row says about itself', () => {
 
   it('reads a probe without a latency as "no answer", never as 0 ms', () => {
     expect(
-      describeCheck({ outcome: 'unreachable', latencyMs: null, checkedAt: now.toISOString(), detail: {} }, now),
+      describeCheck(
+        { outcome: 'unreachable', latencyMs: null, checkedAt: now.toISOString(), detail: {} },
+        now,
+      ),
     ).toContain('no answer');
     expect(
       describeCheck(

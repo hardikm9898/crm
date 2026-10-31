@@ -125,18 +125,17 @@ async function post(
     (options.secret === undefined
       ? undefined
       : `sha256=${createHmac('sha256', options.secret).update(raw).digest('hex')}`);
-  return call<EnvelopeBody<{ accepted: number; duplicates: number; ignored: number; message: string }>>(
-    ctx.app,
-    {
-      method: 'POST',
-      url: `/api/v1/wh/whatsapp_cloud/${options.connectionId ?? connectionId}`,
-      payload: raw,
-      headers: {
-        'content-type': 'application/json',
-        ...(signature === undefined ? {} : { 'x-hub-signature-256': signature }),
-      },
+  return call<
+    EnvelopeBody<{ accepted: number; duplicates: number; ignored: number; message: string }>
+  >(ctx.app, {
+    method: 'POST',
+    url: `/api/v1/wh/whatsapp_cloud/${options.connectionId ?? connectionId}`,
+    payload: raw,
+    headers: {
+      'content-type': 'application/json',
+      ...(signature === undefined ? {} : { 'x-hub-signature-256': signature }),
     },
-  );
+  });
 }
 
 /** Drives the queued ingestion for every event that has not been processed. */
@@ -229,7 +228,9 @@ describe('connecting a WhatsApp Business Account', () => {
     expect(account.status).toBe('connected');
     // Two requests: the WABA, then its numbers. Both with the access token, not the app secret.
     expect(graphRequests.length).toBe(before + 2);
-    expect(graphRequests.every((entry) => entry.authorization === `Bearer ${ACCESS_TOKEN}`)).toBe(true);
+    expect(graphRequests.every((entry) => entry.authorization === `Bearer ${ACCESS_TOKEN}`)).toBe(
+      true,
+    );
 
     expect(account.numbers.length).toBe(1);
     const [number] = account.numbers;
@@ -250,18 +251,25 @@ describe('connecting a WhatsApp Business Account', () => {
             status: 200,
             body: JSON.stringify({
               data: [
-                { id: PHONE_NUMBER_ID, display_phone_number: '+91 98450 00000', quality_rating: 'YELLOW' },
-                { id: '99887766', display_phone_number: '+91 98450 00001', verified_name: 'Rao Sales' },
+                {
+                  id: PHONE_NUMBER_ID,
+                  display_phone_number: '+91 98450 00000',
+                  quality_rating: 'YELLOW',
+                },
+                {
+                  id: '99887766',
+                  display_phone_number: '+91 98450 00001',
+                  verified_name: 'Rao Sales',
+                },
               ],
             }),
           }
         : { status: 200, body: JSON.stringify({ id: WABA_ID, name: 'Rao Interiors' }) };
 
-    const account = await setup<{ id: string; numbers: { phoneNumberId: string; qualityRating: string | null }[] }>(
-      'POST',
-      '/whatsapp/accounts',
-      { token: orgA.token, payload: { connectionId } },
-    );
+    const account = await setup<{
+      id: string;
+      numbers: { phoneNumberId: string; qualityRating: string | null }[];
+    }>('POST', '/whatsapp/accounts', { token: orgA.token, payload: { connectionId } });
     expect(account.numbers.length).toBe(2);
     // The rating Meta now reports, not the one we stored a minute ago.
     expect(
@@ -275,7 +283,13 @@ describe('connecting a WhatsApp Business Account', () => {
         ? {
             status: 200,
             body: JSON.stringify({
-              data: [{ id: PHONE_NUMBER_ID, display_phone_number: '+91 98450 00000', quality_rating: 'GREEN' }],
+              data: [
+                {
+                  id: PHONE_NUMBER_ID,
+                  display_phone_number: '+91 98450 00000',
+                  quality_rating: 'GREEN',
+                },
+              ],
             }),
           }
         : { status: 200, body: JSON.stringify({ id: WABA_ID, name: 'Rao Interiors' }) };
@@ -284,7 +298,9 @@ describe('connecting a WhatsApp Business Account', () => {
       '/whatsapp/accounts',
       { token: orgA.token, payload: { connectionId } },
     );
-    expect(after.numbers.find((number) => number.phoneNumberId === '99887766')?.isActive).toBe(false);
+    expect(after.numbers.find((number) => number.phoneNumberId === '99887766')?.isActive).toBe(
+      false,
+    );
     expect(after.numbers.length).toBe(2);
   });
 
@@ -420,7 +436,13 @@ describe('an inbound message', () => {
 
     // And the message itself, readable, with Meta's own id on it.
     const messages = await setup<
-      { direction: string; type: string; body: string | null; status: string; providerMessageId: string | null }[]
+      {
+        direction: string;
+        type: string;
+        body: string | null;
+        status: string;
+        providerMessageId: string | null;
+      }[]
     >('GET', `/conversations/${conversation?.id}/messages`, { token: orgA.token });
     expect(messages.length).toBe(1);
     expect(messages[0]?.direction).toBe('inbound');
@@ -467,7 +489,10 @@ describe('an inbound message', () => {
 
     // And once more with a different envelope so the bytes differ: the ledger is keyed on Meta's
     // own message id, not on a hash of the body.
-    const third = await post({ ...body, object: 'whatsapp_business_account_v2' }, { secret: APP_SECRET });
+    const third = await post(
+      { ...body, object: 'whatsapp_business_account_v2' },
+      { secret: APP_SECRET },
+    );
     expect(third.body.data.duplicates).toBe(1);
 
     await drain();
@@ -512,9 +537,13 @@ describe('an inbound message', () => {
     expect(await ctx.db.lead.count({ where: { organizationId: orgA.organizationId } })).toBe(
       leadsBefore,
     );
-    const conversations = await setup<{ id: string; unreadCount: number }[]>('GET', '/conversations', {
-      token: orgA.token,
-    });
+    const conversations = await setup<{ id: string; unreadCount: number }[]>(
+      'GET',
+      '/conversations',
+      {
+        token: orgA.token,
+      },
+    );
     // One conversation, however many messages: keyed on `(number, contact)`.
     expect(conversations.length).toBe(1);
     expect(conversations[0]?.unreadCount).toBeGreaterThan(1);
@@ -569,7 +598,11 @@ describe('an inbound message', () => {
       delivery([], {
         messages: undefined,
         statuses: [
-          { id: 'wamid.ours', status: 'delivered', timestamp: String(Math.floor(Date.now() / 1000)) },
+          {
+            id: 'wamid.ours',
+            status: 'delivered',
+            timestamp: String(Math.floor(Date.now() / 1000)),
+          },
         ],
       }),
       { secret: APP_SECRET },
@@ -629,7 +662,12 @@ describe('the inbox', () => {
       token: orgA.token,
     });
     const detail = await setup<{
-      lead: { id: string; fullName: string; phone: string | null; status: { name: string } | null } | null;
+      lead: {
+        id: string;
+        fullName: string;
+        phone: string | null;
+        status: { name: string } | null;
+      } | null;
     }>('GET', `/conversations/${conversation!.id}`, { token: orgA.token });
     // `FR-WA-8`: the whole point of an inbox in a CRM is that the person's history is on the same
     // screen as their message.
@@ -702,7 +740,9 @@ describe('the inbox', () => {
     );
     // A different page, not the same one: an id alone would select the wrong rows on a table
     // partitioned by `created_at`.
-    expect(next.every((message) => !first.body.data.some((row) => row.id === message.id))).toBe(true);
+    expect(next.every((message) => !first.body.data.some((row) => row.id === message.id))).toBe(
+      true,
+    );
   });
 
   it('refuses a conversation from another workspace', async () => {

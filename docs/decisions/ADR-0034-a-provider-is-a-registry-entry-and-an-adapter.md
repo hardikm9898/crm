@@ -51,7 +51,7 @@ needs no migration.**
 
 ### 2. `probe` is optional, and a provider that cannot be asked says so by not having it
 
-`generic_webhook` has no `probe`. Its credential is a secret *we* generated; the sender holds it and
+`generic_webhook` has no `probe`. Its credential is a secret _we_ generated; the sender holds it and
 signs with it, so there is no endpoint of theirs to call. "Is this connection healthy" for an
 inbound webhook means "has anything arrived", which is `last_success_at` and not a request.
 
@@ -138,14 +138,13 @@ Two properties follow from the same place:
   custom field still has something to see. Without that, the feature would be unreachable for every
   mapped provider.
 - **The preview runs the step it is previewing.** `POST /integrations/:id/preview` applies the
-  mapping *and* the capture's own normalisation, through the same two functions the write path uses,
+  mapping _and_ the capture's own normalisation, through the same two functions the write path uses,
   and answers the phone as it would be stored beside the phone as sent. A preview that echoed the
   mapping's output would be the import's lie in a third place.
 
 ### 7. The inbound door is the public lead API's authentication, minus the key
 
-`POST /wh/{provider}/{connectionId}` — the path the webhooks module's note has promised since step
-3. The signature is the authentication: HMAC-SHA256 over `"<timestamp>.<raw body>"`, five-minute
+`POST /wh/{provider}/{connectionId}` — the path the webhooks module's note has promised since step 3. The signature is the authentication: HMAC-SHA256 over `"<timestamp>.<raw body>"`, five-minute
 window, `verifySignature` and `IngestAuthService.signatureMessage` shared with the public lead API,
 so an integrator who has wired one has wired the other and reads the same sentences when it is
 wrong.

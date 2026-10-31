@@ -19,10 +19,7 @@ function refresh(id?: string): void {
   if (id !== undefined) revalidatePath(`/settings/automation/${id}`);
 }
 
-export async function createWorkflow(
-  _previous: ActionState,
-  form: FormData,
-): Promise<ActionState> {
+export async function createWorkflow(_previous: ActionState, form: FormData): Promise<ActionState> {
   const result = await callApi<{ id: string }>(
     '/automation/workflows',
     {
@@ -39,10 +36,7 @@ export async function createWorkflow(
   return result;
 }
 
-export async function saveDefinition(
-  _previous: ActionState,
-  form: FormData,
-): Promise<ActionState> {
+export async function saveDefinition(_previous: ActionState, form: FormData): Promise<ActionState> {
   const id = text(form, 'workflowId');
   const raw = text(form, 'definition') ?? '{}';
   let definition: unknown;
@@ -85,10 +79,7 @@ export async function publishWorkflow(
  * route would be a second answer to "what changes a workflow". The button that sets it says what
  * it does; the audit row records `workflow.stopped` rather than `workflow.updated`.
  */
-export async function updateWorkflow(
-  _previous: ActionState,
-  form: FormData,
-): Promise<ActionState> {
+export async function updateWorkflow(_previous: ActionState, form: FormData): Promise<ActionState> {
   const id = text(form, 'workflowId');
   const status = text(form, 'status');
   const killSwitch = text(form, 'killSwitch');
@@ -122,10 +113,7 @@ export async function updateWorkflow(
   return result;
 }
 
-export async function deleteWorkflow(
-  _previous: ActionState,
-  form: FormData,
-): Promise<ActionState> {
+export async function deleteWorkflow(_previous: ActionState, form: FormData): Promise<ActionState> {
   const result = await callApi(
     `/automation/workflows/${text(form, 'workflowId')}`,
     { method: 'DELETE' },
@@ -144,10 +132,7 @@ export async function deleteWorkflow(
  * That is the honest record — it survives a refresh, where a message held in `useActionState`
  * does not — and it is the same list somebody will read the real runs in.
  */
-export async function testWorkflow(
-  _previous: ActionState,
-  form: FormData,
-): Promise<ActionState> {
+export async function testWorkflow(_previous: ActionState, form: FormData): Promise<ActionState> {
   const id = text(form, 'workflowId');
   const result = await callApi(
     `/automation/workflows/${id}/test-run`,

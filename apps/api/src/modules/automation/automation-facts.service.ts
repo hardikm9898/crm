@@ -1,8 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import {
-  isWithinBusinessHours,
-  type AutomationFacts,
-} from '@leados/shared';
+import { isWithinBusinessHours, type AutomationFacts } from '@leados/shared';
 import { DbService } from '../../infra/db/db.service.js';
 import { SlaCalendarService } from '../sla/sla-calendar.service.js';
 
@@ -25,7 +22,10 @@ export class AutomationFactsService {
     private readonly calendar: SlaCalendarService,
   ) {}
 
-  async forLead(leadId: string, extra: Readonly<Record<string, unknown>> = {}): Promise<AutomationFacts> {
+  async forLead(
+    leadId: string,
+    extra: Readonly<Record<string, unknown>> = {},
+  ): Promise<AutomationFacts> {
     const lead = await this.db.client.lead.findFirst({
       where: { id: leadId, deletedAt: null },
       include: {

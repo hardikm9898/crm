@@ -87,10 +87,7 @@ export async function sendMessage(_previous: ActionState, form: FormData): Promi
  * is the same number, and refusing locally saves somebody waiting for a sixteen-megabyte upload to
  * be told no. The API's refusal is still the one that decides.
  */
-export async function sendAttachment(
-  _previous: ActionState,
-  form: FormData,
-): Promise<ActionState> {
+export async function sendAttachment(_previous: ActionState, form: FormData): Promise<ActionState> {
   const conversationId = String(form.get('conversationId') ?? '');
   const token = await readAccessToken();
   if (!token) return { status: 'error', message: 'Please sign in again.' };
@@ -175,7 +172,11 @@ export async function claimConversation(
   form: FormData,
 ): Promise<ActionState> {
   const id = String(form.get('conversationId') ?? '');
-  const result = await callApi(`/conversations/${id}/claim`, { method: 'POST', body: {} }, 'Opened.');
+  const result = await callApi(
+    `/conversations/${id}/claim`,
+    { method: 'POST', body: {} },
+    'Opened.',
+  );
   if (result.status === 'success') revalidatePath('/inbox');
   return result;
 }

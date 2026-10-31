@@ -230,12 +230,7 @@ export function buildWebhookPayload(input: {
  * 127.0.0.1 is the same attack wearing a hat, and DNS is not something this package can do.
  */
 export type UrlRefusal =
-  | 'not_a_url'
-  | 'scheme'
-  | 'credentials'
-  | 'port'
-  | 'blocked_host'
-  | 'blocked_address';
+  'not_a_url' | 'scheme' | 'credentials' | 'port' | 'blocked_host' | 'blocked_address';
 
 export interface UrlVerdict {
   readonly ok: boolean;
@@ -271,7 +266,10 @@ const BLOCKED_HOSTS = new Set([
  * stable, and the failure mode of getting it wrong is an SSRF, so the check errs towards refusing.
  */
 export function isBlockedAddress(address: string): boolean {
-  const value = address.trim().toLowerCase().replace(/^\[|\]$/g, '');
+  const value = address
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, '');
   if (value === '') return true;
 
   // IPv4-mapped IPv6 (`::ffff:127.0.0.1`) is the classic way past a v4-only check.

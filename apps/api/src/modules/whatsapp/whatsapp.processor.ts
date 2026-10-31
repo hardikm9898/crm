@@ -90,7 +90,10 @@ export class WhatsAppIngestMessageProcessor implements JobProcessor {
       // A number that has been removed from the workspace is not worth retrying; anything else is,
       // and the retry sweep reads the row.
       if (error instanceof AppError && error.status === 404) {
-        this.logger.warn({ eventId, err: error }, 'a whatsapp message names a number we do not have');
+        this.logger.warn(
+          { eventId, err: error },
+          'a whatsapp message names a number we do not have',
+        );
         return;
       }
       throw error;

@@ -284,7 +284,9 @@ export class WebhooksService {
           type: WEBHOOK_TEST_EVENT,
           occurredAt: createdAt,
           organizationId: endpoint.organizationId,
-          data: { message: 'This is a test delivery from Lead OS. Nothing in your workspace changed.' },
+          data: {
+            message: 'This is a test delivery from Lead OS. Nothing in your workspace changed.',
+          },
         }) as never,
         nextAttemptAt: createdAt,
         // Written by the service, never left to the column default: it is half of the primary key

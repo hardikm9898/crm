@@ -329,7 +329,11 @@ export class WebhookDispatchService {
       await this.queues.enqueue(
         QUEUES.WEBHOOKS,
         JOBS.WEBHOOK_DELIVER,
-        { organizationId: row.organizationId, aggregateId: row.id, attemptNo: row.attemptCount + 1 },
+        {
+          organizationId: row.organizationId,
+          aggregateId: row.id,
+          attemptNo: row.attemptCount + 1,
+        },
         { jobId: `webhook-deliver-${row.id}-${row.attemptCount + 1}` },
       );
     }
@@ -362,7 +366,8 @@ export class WebhookDispatchService {
           responseBody: input.responseBody ?? null,
           // A CHECK refuses an attempt with neither a status code nor a reason, so an attempt that
           // somehow has neither is recorded as what it is: unexplained.
-          error: input.error ?? (input.statusCode === null ? 'No answer, and no reason given.' : null),
+          error:
+            input.error ?? (input.statusCode === null ? 'No answer, and no reason given.' : null),
         },
       });
     } catch (cause) {
