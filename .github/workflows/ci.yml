@@ -42,6 +42,17 @@ jobs:
       DATABASE_URL_TEST: postgresql://leados:leados@localhost:5432/leados_test
       REDIS_URL_TEST: redis://localhost:6379/1
 
+      # Boot-time config validation refuses to start without these three, so the API e2e suite
+      # could not run here at all: they live in a gitignored .env locally, which is why this was
+      # invisible until CI ran for the first time. These are throwaway CI values, not secrets --
+      # they sign tokens and encrypt rows in a database that is created and destroyed by this job,
+      # and they are deliberately in plain sight rather than in repository secrets so that a run
+      # is reproducible. `assertProductionSafety` returns early unless NODE_ENV=production, so the
+      # "dev-only" shape is accepted here and would be refused in production, which is the point.
+      JWT_ACCESS_SECRET: ci-only-access-secret-not-a-real-secret-0001
+      JWT_REFRESH_SECRET: ci-only-refresh-secret-not-a-real-secret-0002
+      ENCRYPTION_MASTER_KEY: Y2ktb25seS10ZXN0LWtleS1ub3QtYS1zZWNyZXQhISE=
+
     steps:
       - uses: actions/checkout@v4
 
