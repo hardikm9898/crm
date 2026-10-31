@@ -11,18 +11,43 @@ attribution — built so a small business can answer four questions without trai
 
 ## Status
 
-**Phase 1 — Foundation. Steps 1–5 landed.** Two Phase 1 exit criteria remain open, both about
-verification rather than code (a CI run, and a compose boot on a machine with Docker) — they are named
-in [implementation-roadmap.md](./docs/implementation-roadmap.md#exit-criteria--reviewed-2026-09-27)
-along with the limitations carried forward. **Phase 2 (CRM core) has not started.**
+**Phases 0–6 landed.** Phase 6 (automation) is complete but for one of the brief's two reference
+flows — abandoned checkout — which is blocked on Phase 7's websites and payments rather than on
+anything in Phase 6; every Phase 6 exit criterion is measured in
+[implementation-roadmap.md](./docs/implementation-roadmap.md). **Phase 7 (websites & landing pages)
+has not started**, and nor have Phases 8–12.
 
-What works today: multi-tenant workspaces with three of the four planned isolation layers (row-level
-security is deliberately Phase 12 — see [ADR-0001](./docs/decisions/ADR-0001-multi-tenancy-model.md)),
-authentication (password, TOTP,
-sessions, invitations, multi-organization membership), data-driven RBAC with data scopes, plans and
-entitlements with a trial lifecycle, a transactional outbox with workers and a scheduler, an audit
-trail, and a web app covering sign-in, the authenticated shell, and workspace administration.
-**333 tests** (166 unit, 167 integration) run against real PostgreSQL and Redis.
+What works today:
+
+- **Foundation** — multi-tenant workspaces with three of the four planned isolation layers (row-level
+  security is deliberately Phase 12, see [ADR-0001](./docs/decisions/ADR-0001-multi-tenancy-model.md));
+  authentication (password, TOTP, sessions, invitations, multi-organization membership); data-driven
+  RBAC with data scopes; plans, entitlements and the trial lifecycle; a transactional outbox with a
+  worker fleet and a scheduler; an audit trail.
+- **CRM core** — leads with a custom-field engine, duplicate detection and merge, the assignment
+  engine, scoring, saved views and a filter DSL, CSV import/export, customers and conversion, deals
+  with products and line items, quotations with versioning and a rendered PDF, payments, and
+  industry templates behind an onboarding wizard.
+- **Work management** — tasks and follow-ups, an SLA clock that runs on business hours, `/today`,
+  the notification centre with quiet hours, manager oversight, the call log, and email sending with
+  bounce suppression.
+- **Capture & developer platform** — hosted capture forms, the signed public lead API, outbound
+  webhooks, API keys with a request log, a published OpenAPI contract generated from the validators
+  that guard the routes, and Meta Lead Ads + Google Ads lead-form ingestion.
+- **WhatsApp** — a connected Cloud API number, template sending inside the 24-hour window, media in
+  both directions, the shared inbox with canned replies, and usage metering.
+- **Automation** — a registry-driven workflow engine with version pinning, durable steps, five
+  guardrails, a preview that executes nothing, retry-from-failed-step, and starter workflows per
+  industry.
+
+**2 977 tests** — 1 277 unit (728 shared, 366 web, 175 api, 8 db) and 1 700 integration (946 api
+e2e, 754 db) — run against real PostgreSQL and Redis, as reported by the Phase 6 step 3 run. The API
+publishes **351 operations across 256 paths** ([docs/openapi.json](./docs/openapi.json)).
+
+**One Phase 1 exit criterion is still open:** the compose stack has never been booted on a machine
+with Docker — it was built in a container with no Docker daemon, with PostgreSQL and Redis run
+natively. The other, "the tenancy suite runs in CI", is closed: `main` exists and
+[the workflow](./.github/workflows/ci.yml) runs on it and on every pull request.
 
 ## Getting started
 
@@ -64,7 +89,7 @@ code and docs disagree, one of them is a bug and both get fixed in the same chan
 | [deployment-architecture.md](./docs/deployment-architecture.md)   | Docker, CI/CD, observability, backup/restore, runbooks             |
 | [implementation-roadmap.md](./docs/implementation-roadmap.md)     | Phases 1–12 with **exit criteria**                                 |
 | [traceability.md](./docs/traceability.md)                         | Every brief section → requirement → design location                |
-| [decisions/](./docs/decisions/)                                   | ADRs 0001–0013 with rejected alternatives                          |
+| [decisions/](./docs/decisions/)                                   | ADRs 0001–0043 with rejected alternatives                          |
 | [open-questions.md](./docs/open-questions.md)                     | Gaps, working assumptions, decisions still needed                  |
 
 ## Stack, as built
@@ -82,7 +107,7 @@ query cache) the reasons are recorded in
 
 ## Next step
 
-**Phase 2, step 1 — the lead model:** leads, the custom-field engine, pipelines and statuses as
-tenant data, and the append-only timeline that every later feature writes to. Plus the two open
-Phase 1 verifications (open a pull request so CI runs; boot the compose stack on a machine with
-Docker).
+**Phase 7, step 1 — the website and page model:** versioning with draft/publish/rollback, which is
+also what unblocks Phase 6's abandoned-checkout reference flow. Phase 7 is still only a scope
+paragraph and exit criteria in the roadmap and needs decomposing into steps first. The one remaining
+Phase 1 verification — booting the compose stack on a machine with Docker — is the other open item.
