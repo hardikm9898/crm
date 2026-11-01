@@ -102,3 +102,31 @@ jobs:
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # gitleaks-action reports what it found in the job summary and an uploaded artifact, and
+      # nowhere else: the check run carries no output, and its own attempt to comment on the PR
+      # fails with "Resource not accessible by integration". So a red secret scan says "see job
+      # summary for details" and a reviewer has to open a browser to learn whether the build is
+      # blocked by a real credential or by a fixture. Mirroring the SARIF into annotations puts the
+      # finding where `gh run view` and the checks API can read it.
+      - name: Report gitleaks findings
+        if: failure()
+        run: |
+          shopt -s nullglob
+          reports=(*.sarif)
+          if [ ${#reports[@]} -eq 0 ]; then
+            echo "::warning::gitleaks failed but left no SARIF report to read"
+            exit 0
+          fi
+          for report in "${reports[@]}"; do
+            jq -r '.runs[].results[]
+              | "::error file=\(.locations[0].physicalLocation.artifactLocation.uri),line=\(.locations[0].physicalLocation.region.startLine)::\(.ruleId) — \(.message.text)"' \
+              "$report" || echo "::warning::could not parse $report"
+            {
+              echo "### gitleaks findings in \`$report\`"
+              echo
+              jq -r '.runs[].results[]
+                | "- **\(.ruleId)** in `\(.locations[0].physicalLocation.artifactLocation.uri)` line \(.locations[0].physicalLocation.region.startLine) — \(.message.text)"' \
+                "$report" || true
+            } >> "$GITHUB_STEP_SUMMARY"
+          done
