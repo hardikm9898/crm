@@ -167,7 +167,10 @@ export function WebhookEndpointRow({ endpoint }: { endpoint: WebhookEndpointReco
           <p className="text-sm font-medium" data-endpoint-url={endpoint.id}>
             {endpoint.url}
           </p>
-          <p className="text-xs text-[var(--color-text-muted)]" data-endpoint-activity={endpoint.id}>
+          <p
+            className="text-xs text-[var(--color-text-muted)]"
+            data-endpoint-activity={endpoint.id}
+          >
             {endpoint.description ? `${endpoint.description} · ` : ''}
             {describeEndpointActivity(endpoint)}
           </p>

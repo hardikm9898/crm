@@ -168,8 +168,8 @@ export default async function WebhooksPage() {
                           </code>
                         </p>
                         <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-                          {row.endpoint?.url ?? 'a deleted endpoint'} ·{' '}
-                          {describeDelivery(row)} · {relativeWhen(row.createdAt)}
+                          {row.endpoint?.url ?? 'a deleted endpoint'} · {describeDelivery(row)} ·{' '}
+                          {relativeWhen(row.createdAt)}
                         </p>
                         {row.lastResponseBody && (
                           <p className="mt-1 text-xs text-[var(--color-text-muted)]">

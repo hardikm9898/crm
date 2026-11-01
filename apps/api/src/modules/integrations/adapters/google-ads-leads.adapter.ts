@@ -8,7 +8,6 @@ import type {
   VerificationResult,
 } from '../integration.port.js';
 
-
 /**
  * Google Ads lead form extensions.
  *

@@ -4,7 +4,6 @@ import { IngestAuthService } from '../../ingestion/ingest-auth.service.js';
 import { SHARED_SECRET_KEY } from './secret-names.js';
 import type { IntegrationAdapter, VerificationResult } from '../integration.port.js';
 
-
 /**
  * Any other system, posting leads here with its own field names.
  *

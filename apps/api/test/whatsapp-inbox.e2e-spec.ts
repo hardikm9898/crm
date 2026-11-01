@@ -232,9 +232,13 @@ beforeAll(async () => {
   accountId = account.id;
 
   await customerSays('Is the 3BHK still available?');
-  const [conversation] = await setup<{ id: string; lead: { id: string } }[]>('GET', '/conversations', {
-    token: owner.token,
-  });
+  const [conversation] = await setup<{ id: string; lead: { id: string } }[]>(
+    'GET',
+    '/conversations',
+    {
+      token: owner.token,
+    },
+  );
   if (!conversation) throw new Error('the inbound message did not become a conversation');
   conversationId = conversation.id;
   leadId = conversation.lead.id;
@@ -359,7 +363,10 @@ describe('assignment and transfer (`FR-WA-7`)', () => {
     const assigned = await setup<{ assignedTo: { id: string; name: string } | null }>(
       'POST',
       `/conversations/${conversationId}/assign`,
-      { token: owner.token, payload: { assignedUserId: mate.userId, reason: 'They know the site' } },
+      {
+        token: owner.token,
+        payload: { assignedUserId: mate.userId, reason: 'They know the site' },
+      },
     );
     expect(assigned.assignedTo?.id).toBe(mate.userId);
 
@@ -472,10 +479,14 @@ describe('assignment and transfer (`FR-WA-7`)', () => {
 
 describe('close, reopen and snooze (`FR-WA-7`)', () => {
   it('closes with the reason on the timeline, and refuses a second close', async () => {
-    const closed = await setup<{ status: string }>('POST', `/conversations/${conversationId}/close`, {
-      token: owner.token,
-      payload: { note: 'Booked a site visit' },
-    });
+    const closed = await setup<{ status: string }>(
+      'POST',
+      `/conversations/${conversationId}/close`,
+      {
+        token: owner.token,
+        payload: { note: 'Booked a site visit' },
+      },
+    );
     expect(closed.status).toBe('closed');
     const entry = await ctx.db.activity.findFirst({
       where: { organizationId: owner.organizationId, leadId, type: 'conversation.closed' },
@@ -772,7 +783,10 @@ describe('the word that stops a send (`FR-WA-10`)', () => {
     // answer somebody who just messaged us would be the wrong rule in the other direction.
     const replied = await api('POST', `/conversations/${conversationId}/messages`, {
       token: owner.token,
-      payload: { kind: 'text', body: 'Understood — no more offers. We are still here if you need us.' },
+      payload: {
+        kind: 'text',
+        body: 'Understood — no more offers. We are still here if you need us.',
+      },
     });
     expect(replied.statusCode).toBe(202);
   });

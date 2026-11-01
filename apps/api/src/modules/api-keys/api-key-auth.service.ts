@@ -16,7 +16,11 @@ import { EncryptionService } from '../../infra/crypto/encryption.service.js';
 import { RedisService } from '../../infra/redis/redis.service.js';
 import { LOGGER } from '../../infra/observability/logger.module.js';
 import { PrincipalService } from '../auth/application/principal.service.js';
-import { DEFAULT_RATE_LIMIT_PER_MIN, apiKeyAad, matchesCidr } from '../ingestion/ingest-auth.service.js';
+import {
+  DEFAULT_RATE_LIMIT_PER_MIN,
+  apiKeyAad,
+  matchesCidr,
+} from '../ingestion/ingest-auth.service.js';
 
 /** What the guard needs back: the principal to run as, and the key it belongs to for the log. */
 export interface AuthenticatedKey {
@@ -122,11 +126,7 @@ export class ApiKeyAuthService {
       }),
     );
 
-    if (
-      !key ||
-      key.revokedAt !== null ||
-      (key.expiresAt !== null && key.expiresAt <= new Date())
-    ) {
+    if (!key || key.revokedAt !== null || (key.expiresAt !== null && key.expiresAt <= new Date())) {
       // One indistinguishable answer for unknown, revoked and expired: the shape of the refusal
       // must not say which of the three it was.
       throw new AppError('INVALID_API_KEY', 'That API key is not valid.', 401);
@@ -134,7 +134,10 @@ export class ApiKeyAuthService {
     return key;
   }
 
-  private assertSecretMatches(key: { id: string; secretEncrypted: string }, presented: string): void {
+  private assertSecretMatches(
+    key: { id: string; secretEncrypted: string },
+    presented: string,
+  ): void {
     const stored = this.decryptSecret(key.id, key.secretEncrypted);
     const a = Buffer.from(stored);
     const b = Buffer.from(presented);

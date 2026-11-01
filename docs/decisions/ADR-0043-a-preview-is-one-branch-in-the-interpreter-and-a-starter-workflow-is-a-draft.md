@@ -8,7 +8,7 @@
 ## Context
 
 The engine runs. What it does not yet have is the three things that decide whether a non-technical
-owner ever turns a workflow on: a way to see what it *would* do before it does it, a way to pick a
+owner ever turns a workflow on: a way to see what it _would_ do before it does it, a way to pick a
 run back up after a provider was down, and something in the box on the first day so the screen is
 not an empty list beside a graph editor.
 
@@ -29,7 +29,7 @@ So a preview **is** a run. It gets a row in `automation_runs` with `dry_run = tr
 by `AutomationExecutorService.advance`, and every decision above the handler call — the entry
 conditions, the branch arms, the wait arithmetic, the step ordering, the step log — is the same
 code. There is exactly one `if (run.dryRun)` on the path to a handler, plus three small ones where
-a *control shape* would otherwise have an external effect: the wait continues instead of
+a _control shape_ would otherwise have an external effect: the wait continues instead of
 suspending, `enroll` records what it would hand over instead of handing it over, and no timeline
 row is written.
 
@@ -38,7 +38,7 @@ What follows from "it is a run" is the part worth writing down:
 - **It is enrolled in nothing.** `enrollment_id` is nullable and
   `automation_runs_real_run_is_enrolled` pairs the two columns in both directions. A preview that
   took an enrolment would spend the lead's one allowed cycle under the `once` policy, so the real
-  run afterwards would be refused *by the very thing the preview was checking*. And a real run with
+  run afterwards would be refused _by the very thing the preview was checking_. And a real run with
   no enrolment is a run outside the re-entry policy. Both mirrors are contradictions, which is the
   test this codebase applies to a biconditional CHECK after the two payments constraints that
   together made a refund impossible.
@@ -53,7 +53,7 @@ What follows from "it is a run" is the part worth writing down:
   is below the branch.
 
 **It previews the draft.** The version a preview pins to is the unsaved draft when there is one and
-the published version otherwise — the version the *next* run would use. A preview that could only
+the published version otherwise — the version the _next_ run would use. A preview that could only
 run against a published workflow would be a tool for checking something already live, which is the
 opposite of what it is for.
 
@@ -89,7 +89,7 @@ real.
 somebody's workspace during onboarding would start it creating follow-ups on their customers before
 they had read what it does. A template is a guess about a business; the point is that somebody opens
 it, changes two things, and then turns it on. `workflow_versions_publisher_published_it` is one-way
-precisely so a version published by the system *could* exist — and this step chooses not to use
+precisely so a version published by the system _could_ exist — and this step chooses not to use
 that latitude.
 
 **A template cannot carry ids, so a parameter may name a row.** The statuses and task types a
@@ -135,6 +135,6 @@ only package that can see both halves of the question.
 - **Publishing the starter workflows.** Rejected: see above. A workspace whose first WhatsApp
   message was sent by a template they had not read would be right to distrust the product.
 - **Starter workflows as rows in `industry_templates.definition` JSON only.** They already are —
-  the catalogue row carries the whole template — but the *application* of them has to resolve ids,
+  the catalogue row carries the whole template — but the _application_ of them has to resolve ids,
   which is code either way. What matters is that there is one definition of a template, and there
   still is.

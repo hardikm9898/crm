@@ -76,10 +76,7 @@ export default async function WhatsAppUsagePage() {
         />
       </div>
 
-      <Card
-        title="By category"
-        description="The category WhatsApp billed each conversation under."
-      >
+      <Card title="By category" description="The category WhatsApp billed each conversation under.">
         {usage.byCategory.length === 0 ? (
           <EmptyState
             title="Nothing billable this month"

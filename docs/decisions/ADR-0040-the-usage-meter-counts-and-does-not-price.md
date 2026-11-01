@@ -27,7 +27,7 @@ receipt would be a second answer to a question the messages already answer, and 
 two disagreed nobody would know which to believe. `GET /whatsapp/usage` counts `messages` where
 `billable` in a window, grouped by `conversation_category`.
 
-**2. It reports *conversations*, because that is Meta's unit.** Meta bills per conversation and
+**2. It reports _conversations_, because that is Meta's unit.** Meta bills per conversation and
 marks exactly one message in each as the billable one, with the category it was billed under.
 Labelling the figure "messages" would be a wrong answer measured precisely.
 
@@ -46,7 +46,7 @@ excluded: a message that has not left is not one that was sent, and a meter that
 flatter the figure an owner reconciles. The e2e asserts the zero that follows from this, because a
 suite that never drives the send job should read zero and seeing why is the point.
 
-**6. A canned reply's `usage_count` counts *sends*, never clicks.** The picker is ordered by it, so
+**6. A canned reply's `usage_count` counts _sends_, never clicks.** The picker is ordered by it, so
 a count of clicks would promote whatever is easiest to misclick. The send carries the id it used,
 and the message keeps it in a column as well — which makes "which wording actually gets used"
 answerable from the messages rather than from a number that could drift.

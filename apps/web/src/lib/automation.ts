@@ -131,7 +131,9 @@ export interface ReferenceLists {
   readonly [kind: string]: readonly ParamOption[];
 }
 
-export async function loadCatalogue(token: string | null | undefined): Promise<AutomationCatalogue> {
+export async function loadCatalogue(
+  token: string | null | undefined,
+): Promise<AutomationCatalogue> {
   const response = await request<AutomationCatalogue>('/automation/catalogue', { token });
   return response.data;
 }
@@ -285,22 +287,24 @@ export function cleanDefinition(definition: WorkflowDefinition): WorkflowDefinit
  * `automation.spec.ts` runs in Node, imports `@leados/shared`, and asserts this map covers every
  * kind the registry declares: a kind with no label function is a picker that renders ids.
  */
-export const REFERENCE_LABELS: Record<string, (row: Record<string, unknown>) => ParamOption | null> =
-  {
-    // A person-reference in this product is a membership's **user** id, which is what every
-    // assignment column stores — not the membership's own id.
-    user: (row) => option(row['userId'], row['name'] ?? row['email']),
-    team: (row) => option(row['id'], row['name']),
-    lead_status: (row) => option(row['id'], row['name']),
-    pipeline: (row) => option(row['id'], row['name']),
-    pipeline_stage: () => null,
-    task_type: (row) => option(row['id'], row['name']),
-    lead_source: (row) => option(row['id'], row['name']),
-    whatsapp_template: (row) =>
-      option(row['id'], `${String(row['name'])} · ${String(row['status'])}`),
-    workflow: (row) => option(row['id'], row['name']),
-    webhook_endpoint: (row) => option(row['id'], row['url']),
-  };
+export const REFERENCE_LABELS: Record<
+  string,
+  (row: Record<string, unknown>) => ParamOption | null
+> = {
+  // A person-reference in this product is a membership's **user** id, which is what every
+  // assignment column stores — not the membership's own id.
+  user: (row) => option(row['userId'], row['name'] ?? row['email']),
+  team: (row) => option(row['id'], row['name']),
+  lead_status: (row) => option(row['id'], row['name']),
+  pipeline: (row) => option(row['id'], row['name']),
+  pipeline_stage: () => null,
+  task_type: (row) => option(row['id'], row['name']),
+  lead_source: (row) => option(row['id'], row['name']),
+  whatsapp_template: (row) =>
+    option(row['id'], `${String(row['name'])} · ${String(row['status'])}`),
+  workflow: (row) => option(row['id'], row['name']),
+  webhook_endpoint: (row) => option(row['id'], row['url']),
+};
 
 function option(value: unknown, label: unknown): ParamOption | null {
   if (typeof value !== 'string' || value === '') return null;
@@ -334,7 +338,10 @@ export async function loadReferenceLists(
             const stages = pipeline['stages'];
             if (!Array.isArray(stages)) return [];
             return stages.flatMap((stage: Record<string, unknown>) => {
-              const entry = option(stage['id'], `${String(pipeline['name'])} → ${String(stage['name'])}`);
+              const entry = option(
+                stage['id'],
+                `${String(pipeline['name'])} → ${String(stage['name'])}`,
+              );
               return entry === null ? [] : [entry];
             });
           });
@@ -451,10 +458,9 @@ export async function loadLeadChoices(
   limit = 25,
 ): Promise<ParamOption[]> {
   try {
-    const response = await request<{ id: string; fullName: string }[]>(
-      `/leads?limit=${limit}`,
-      { token },
-    );
+    const response = await request<{ id: string; fullName: string }[]>(`/leads?limit=${limit}`, {
+      token,
+    });
     const rows = Array.isArray(response.data) ? response.data : [];
     return rows.flatMap((row) => {
       const entry = option(row.id, row.fullName);
@@ -467,10 +473,7 @@ export async function loadLeadChoices(
   }
 }
 
-export async function loadRun(
-  token: string | null | undefined,
-  id: string,
-): Promise<RunRecord> {
+export async function loadRun(token: string | null | undefined, id: string): Promise<RunRecord> {
   const response = await request<RunRecord>(`/automation/runs/${id}`, { token });
   return response.data;
 }
@@ -488,7 +491,8 @@ export function describeStep(step: RunStep, catalogue: AutomationCatalogue | nul
   const name = spec?.label ?? step.action;
   if (step.status === 'failed') return `${name} — failed: ${step.error ?? 'no reason recorded'}`;
   if (step.status === 'skipped') return `${name} — skipped: ${step.reason ?? 'no reason recorded'}`;
-  if (step.decision !== null) return `${name} — took the “${step.decision}” path: ${step.reason ?? ''}`.trim();
+  if (step.decision !== null)
+    return `${name} — took the “${step.decision}” path: ${step.reason ?? ''}`.trim();
   return step.reason === null ? name : `${name} — ${step.reason}`;
 }
 

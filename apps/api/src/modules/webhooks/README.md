@@ -27,8 +27,8 @@ which is the one job that suite has.)
 
 ## Outbound: the tables
 
-| Table                | What it holds                                                                 |
-| -------------------- | ----------------------------------------------------------------------------- |
+| Table                | What it holds                                                                  |
+| -------------------- | ------------------------------------------------------------------------------ |
 | `webhook_endpoints`  | A URL, its events, its encrypted signing secret, its consecutive-failure count |
 | `webhook_deliveries` | One event aimed at one endpoint, with the body as signed. Partitioned monthly  |
 | `webhook_attempts`   | One row per attempt: status code, duration, response body or the error         |
@@ -61,7 +61,7 @@ which is the one job that suite has.)
   is the point read before it.
 - **The test ping is a real delivery** of the reserved `webhook.test` type: signed, logged and
   retried like everything else, because a test that took a different path would test the wrong thing.
-- **Deleting an endpoint takes its log with it.** The log is a record of what we sent *that*
+- **Deleting an endpoint takes its log with it.** The log is a record of what we sent _that_
   endpoint; keeping it would leave rows nothing can be read against, and refusing the delete would
   make a mistyped URL permanent.
 

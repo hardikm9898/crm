@@ -110,11 +110,7 @@ export function WorkflowEditor({
   return (
     <form action={submit} className="flex flex-col gap-4" data-workflow-editor={workflowId}>
       <input type="hidden" name="workflowId" value={workflowId} />
-      <input
-        type="hidden"
-        name="definition"
-        value={JSON.stringify(cleanDefinition(definition))}
-      />
+      <input type="hidden" name="definition" value={JSON.stringify(cleanDefinition(definition))} />
 
       {state.status === 'error' && <ErrorNotice>{state.message}</ErrorNotice>}
       {state.status === 'success' && (
@@ -302,7 +298,9 @@ function StepCard({
             />
           ))}
           {problemsAt(problems, path)[0] && (
-            <p className="text-xs text-[var(--color-danger)]">{problemsAt(problems, path)[0]!.message}</p>
+            <p className="text-xs text-[var(--color-danger)]">
+              {problemsAt(problems, path)[0]!.message}
+            </p>
           )}
         </div>
       )}
@@ -373,9 +371,7 @@ function ParamInput({
 
   if (field.type === 'select' || field.type === 'reference') {
     const options =
-      field.type === 'select'
-        ? (field.options ?? [])
-        : (references[field.reference ?? ''] ?? []);
+      field.type === 'select' ? (field.options ?? []) : (references[field.reference ?? ''] ?? []);
     return (
       <Field label={label} hint={field.hint} error={error}>
         <select {...common} value={asText} onChange={(event) => onChange(event.target.value)}>

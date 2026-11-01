@@ -27,10 +27,7 @@ function variableMapOf(form: FormData): Record<string, string> {
   return map;
 }
 
-export async function createTemplate(
-  _previous: ActionState,
-  form: FormData,
-): Promise<ActionState> {
+export async function createTemplate(_previous: ActionState, form: FormData): Promise<ActionState> {
   const body = text(form, 'body') ?? '';
   const result = await callApi(
     '/whatsapp/templates',
@@ -57,10 +54,7 @@ export async function createTemplate(
 }
 
 /** Sends it to Meta for review. Nothing about it can be edited afterwards, which is Meta's rule. */
-export async function submitTemplate(
-  _previous: ActionState,
-  form: FormData,
-): Promise<ActionState> {
+export async function submitTemplate(_previous: ActionState, form: FormData): Promise<ActionState> {
   const result = await callApi(
     `/whatsapp/templates/${String(form.get('templateId') ?? '')}/submit`,
     { method: 'POST', body: {} },
@@ -84,10 +78,7 @@ export async function archiveTemplate(
 }
 
 /** Asks Meta what it thinks of them all now, which is the button for somebody who cannot wait. */
-export async function syncTemplates(
-  _previous: ActionState,
-  form: FormData,
-): Promise<ActionState> {
+export async function syncTemplates(_previous: ActionState, form: FormData): Promise<ActionState> {
   const result = await callApi(
     '/whatsapp/templates/sync',
     { method: 'POST', body: { accountId: text(form, 'accountId') } },

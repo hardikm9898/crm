@@ -140,8 +140,7 @@ export class AutomationDispatchService {
           // per event about it would bury the lead's actual history. Everything else — the
           // re-entry policy, the cap, the loop ceiling — is a thing the business would want to see,
           // because it is the answer to "why didn't they get the message".
-          const quiet =
-            listener.workflow.killSwitch || listener.workflow.status !== 'active';
+          const quiet = listener.workflow.killSwitch || listener.workflow.status !== 'active';
           if (!quiet) await this.recordSkip(request, listener, guard.refusal);
           return quiet ? 'silent' : 'skipped';
         }

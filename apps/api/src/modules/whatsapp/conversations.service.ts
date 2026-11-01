@@ -139,7 +139,9 @@ export class ConversationsService {
         // other 3 950 unreachable and `total` sitting beside the lie saying 4 000. Found by
         // measuring against the 100 k fixture, which is the only thing that would have.
         nextCursor:
-          rows.length > query.limit && last ? `${last.lastMessageAt.toISOString()}_${last.id}` : null,
+          rows.length > query.limit && last
+            ? `${last.lastMessageAt.toISOString()}_${last.id}`
+            : null,
         hasMore: rows.length > query.limit,
         total,
       },

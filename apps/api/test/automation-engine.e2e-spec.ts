@@ -237,9 +237,7 @@ describe('a workflow that runs', () => {
     expect(first.started).toBe(1);
     // The partial unique is what makes this true, not a check the second call passed.
     expect(second.started).toBe(0);
-    expect(
-      await ctx.db.automationRun.count({ where: { workflowId, leadId } }),
-    ).toBe(1);
+    expect(await ctx.db.automationRun.count({ where: { workflowId, leadId } })).toBe(1);
   });
 
   it('changes the status through the real path, so the history and the event happen too', async () => {

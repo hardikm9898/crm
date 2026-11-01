@@ -20,7 +20,14 @@ export type IntegrationStatus = (typeof INTEGRATION_STATUSES)[number];
 export const PROBE_OUTCOMES = ['ok', 'degraded', 'unauthorized', 'unreachable'] as const;
 export type ProbeOutcome = (typeof PROBE_OUTCOMES)[number];
 
-export const MAPPING_TRANSFORMS = ['none', 'trim', 'lowercase', 'digits', 'phone', 'boolean'] as const;
+export const MAPPING_TRANSFORMS = [
+  'none',
+  'trim',
+  'lowercase',
+  'digits',
+  'phone',
+  'boolean',
+] as const;
 export type MappingTransform = (typeof MAPPING_TRANSFORMS)[number];
 
 export const MAPPABLE_LEAD_FIELDS = [
@@ -220,9 +227,7 @@ export function describeIntegrations(counts: {
       counts.available === 1 ? 'provider is' : 'providers are'
     } available — connect one and it starts working straight away.`;
   }
-  const clauses = [
-    `${counts.connected} ${counts.connected === 1 ? 'connection' : 'connections'}`,
-  ];
+  const clauses = [`${counts.connected} ${counts.connected === 1 ? 'connection' : 'connections'}`];
   if (counts.needsAttention > 0) {
     clauses.push(
       counts.needsAttention === 1
@@ -397,9 +402,8 @@ export async function loadHealthChecks(
   query = '?limit=20',
 ): Promise<(HealthCheckRow & { connection: { id: string; provider: string; name: string } })[]> {
   return (
-    await request<(HealthCheckRow & { connection: { id: string; provider: string; name: string } })[]>(
-      `/integrations/health${query}`,
-      { token },
-    )
+    await request<
+      (HealthCheckRow & { connection: { id: string; provider: string; name: string } })[]
+    >(`/integrations/health${query}`, { token })
   ).data;
 }

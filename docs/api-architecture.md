@@ -477,7 +477,7 @@ POST /whatsapp/campaigns                     consent-checked bulk (FR-WA-10)
 >   decides it, so the screen and the write path cannot disagree.
 > - **A template that is not approved is refused with Meta's own standing** ("WhatsApp is still
 >   reviewing this template"), and a variable nothing can fill is a `400` naming the variable —
->   never a message Meta would happily deliver reading "Hi  , your order…".
+>   never a message Meta would happily deliver reading "Hi , your order…".
 > - **A marketing template needs the recipient's WhatsApp consent**; `utility` and
 >   `authentication` do not, because those are things the customer asked for.
 > - **`PATCH` works on a draft only.** Meta has no edit for a submitted template, so the honest
@@ -535,7 +535,7 @@ POST /whatsapp/campaigns                     consent-checked bulk (FR-WA-10)
 > - **An unclaimed conversation is readable and answerable by anybody who holds the permission**
 >   ([ADR-0039](./decisions/ADR-0039-a-conversation-lock-is-advisory-and-an-unclaimed-conversation-is-everybodys.md)).
 >   A conversation has no branch or team column, so every narrower scope resolved to "assigned to
->   me" — which made a *shared* inbox unreadable by the own-scoped executives it is for, in the
+>   me" — which made a _shared_ inbox unreadable by the own-scoped executives it is for, in the
 >   common case where nothing assigns conversations at all. One decider,
 >   `conversationScopeWhere`, used by all four services that touch a conversation.
 > - **`POST …/claim` answers 200 with the conversation, not 409.** The lock is advisory: taking one
@@ -911,12 +911,12 @@ CRUD /seo/keywords  GET /seo/rankings
 > publish are built, all behind `automation:manage`. The paths differ from the sketch above and the
 > differences are decisions, not drift:
 >
-> | Built                                      | Sketched                      | Why                                                                                          |
-> | ------------------------------------------ | ----------------------------- | -------------------------------------------------------------------------------------------- |
-> | `GET /automation/catalogue`                | `GET /automation/registry`    | It is what the editor renders from, not a list of what exists                                 |
-> | `/automation/workflows…`                   | `/workflows…`                 | One prefix for the module, beside `/automation/catalogue`                                     |
-> | `PUT /automation/workflows/{id}/definition` | `CRUD /steps`                 | A graph is edited as one thing; a `PATCH` on part of a tree is a merge nobody can predict      |
-> | `PATCH /automation/workflows/{id}`          | `POST .../{activate\|deactivate\|kill}` | Status and the kill switch are fields, so there is one writer and one audit trail             |
+> | Built                                       | Sketched                                | Why                                                                                       |
+> | ------------------------------------------- | --------------------------------------- | ----------------------------------------------------------------------------------------- |
+> | `GET /automation/catalogue`                 | `GET /automation/registry`              | It is what the editor renders from, not a list of what exists                             |
+> | `/automation/workflows…`                    | `/workflows…`                           | One prefix for the module, beside `/automation/catalogue`                                 |
+> | `PUT /automation/workflows/{id}/definition` | `CRUD /steps`                           | A graph is edited as one thing; a `PATCH` on part of a tree is a merge nobody can predict |
+> | `PATCH /automation/workflows/{id}`          | `POST .../{activate\|deactivate\|kill}` | Status and the kill switch are fields, so there is one writer and one audit trail         |
 >
 > - **`GET /automation/catalogue`** answers the triggers, condition fields, actions, operators,
 >   reference kinds **with the endpoint behind each one**, the statuses, the re-entry policies and
@@ -938,11 +938,11 @@ CRUD /seo/keywords  GET /seo/rankings
 >
 > **Amendment, 2026-10-26 (implementation, Phase 6 step 2).** The engine is built, and with it:
 >
-> | Built                                      | Sketched                           | Why                                                                                     |
-> | ------------------------------------------ | ---------------------------------- | --------------------------------------------------------------------------------------- |
+> | Built                                      | Sketched                           | Why                                                                                         |
+> | ------------------------------------------ | ---------------------------------- | ------------------------------------------------------------------------------------------- |
 > | `GET /automation/runs?leadId=&workflowId=` | `GET /workflows/{id}/runs`         | One list, filtered — the per-lead read is the one that matters and deserves no second route |
-> | `GET /automation/runs/{id}`                | `GET /automation-runs/{id}`        | One prefix for the module                                                                |
-> | `POST /automation/workflows/{id}/start`    | (the `manual` trigger had no door) | A person starting a workflow on one lead, through the same guards an event goes through  |
+> | `GET /automation/runs/{id}`                | `GET /automation-runs/{id}`        | One prefix for the module                                                                   |
+> | `POST /automation/workflows/{id}/start`    | (the `manual` trigger had no door) | A person starting a workflow on one lead, through the same guards an event goes through     |
 >
 > All three behind `automation:manage` rather than `lead:read`: a run's step log carries the
 > parameters a workflow was configured with, which is workspace configuration rather than a fact
@@ -956,17 +956,16 @@ CRUD /seo/keywords  GET /seo/rankings
 > **Amended, Phase 6 step 3 (2026-10-26).** Both of those are now built, and they answer
 > deliberately different status codes.
 >
-> | Route | Code | Why |
-> | --- | --- | --- |
-> | `POST /automation/workflows/{id}/test-run` | **200**, inline | A preview calls no handler, so there is no provider to wait for — and the answer *is* the point of the button. It previews the unsaved draft when there is one and the published version otherwise: the version the next run would use. A definition with problems is refused **400** with the field list, printed against the rows it names, because previewing a graph the engine cannot execute would answer with a failure about this endpoint rather than about the workflow. |
-> | `POST /automation/runs/{id}/retry` | **202**, queued | This one executes: the first thing it does may be the provider call that failed. Only a `failed` run, never a preview (**422**, "that was a preview… test it again"), and never while the workflow is stopped (**422**) — the kill switch is the one guard a retry re-asks. The re-entry policy is not re-asked: the lead is already enrolled, and a retry is not an entry. |
+> | Route                                      | Code            | Why                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+> | ------------------------------------------ | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+> | `POST /automation/workflows/{id}/test-run` | **200**, inline | A preview calls no handler, so there is no provider to wait for — and the answer _is_ the point of the button. It previews the unsaved draft when there is one and the published version otherwise: the version the next run would use. A definition with problems is refused **400** with the field list, printed against the rows it names, because previewing a graph the engine cannot execute would answer with a failure about this endpoint rather than about the workflow. |
+> | `POST /automation/runs/{id}/retry`         | **202**, queued | This one executes: the first thing it does may be the provider call that failed. Only a `failed` run, never a preview (**422**, "that was a preview… test it again"), and never while the workflow is stopped (**422**) — the kill switch is the one guard a retry re-asks. The re-entry policy is not re-asked: the lead is already enrolled, and a retry is not an entry.                                                                                                        |
 >
 > `GET /automation/runs` gained **`dryRun`**, three-way like `killSwitch` and for the same reason:
 > absent means both, and folding it to `false` would hide every preview from the log that is the
 > only place a preview is read. Every run — real or preview — answers `dryRun`, and `cycle` is now
 > **nullable**, because "this lead's first time through" and "this never counted" are different
 > facts and a `1` would state the first of them falsely.
-
 
 ### Dashboards, billing, notifications
 
@@ -1244,10 +1243,10 @@ return `401` and are counted per connection with alerting on spikes.
 > **Amendment, 2026-10-19 (implementation, Phase 5 step 1).** WhatsApp Cloud's two routes are built,
 > and they are the integration framework's own door rather than a pair of their own:
 >
-> | Route                                     | Provider | Verification                                        |
-> | ----------------------------------------- | -------- | --------------------------------------------------- |
-> | `GET /api/v1/wh/whatsapp_cloud/{id}`      | Meta     | `hub.verify_token`, answered as **plain text**      |
-> | `POST /api/v1/wh/whatsapp_cloud/{id}`     | Meta     | `X-Hub-Signature-256` over the raw body (`FR-WA-6`) |
+> | Route                                 | Provider | Verification                                        |
+> | ------------------------------------- | -------- | --------------------------------------------------- |
+> | `GET /api/v1/wh/whatsapp_cloud/{id}`  | Meta     | `hub.verify_token`, answered as **plain text**      |
+> | `POST /api/v1/wh/whatsapp_cloud/{id}` | Meta     | `X-Hub-Signature-256` over the raw body (`FR-WA-6`) |
 >
 > - **`whatsapp_cloud`, not `whatsapp`**: the path segment is the registry's provider key, so the
 >   door is the one every provider uses and a new provider needs no route.
@@ -1268,9 +1267,9 @@ return `401` and are counted per connection with alerting on spikes.
 > `/wh/{provider}/{connectionId}` shape above is now built, with one route and one provider
 > ([ADR-0034](./decisions/ADR-0034-a-provider-is-a-registry-entry-and-an-adapter.md)):
 >
-> | Route                                          | Provider          | Verification                                              |
-> | ---------------------------------------------- | ----------------- | --------------------------------------------------------- |
-> | `POST /api/v1/wh/generic_webhook/{connectionId}` | Any sender      | `X-Signature: t=…,v1=…` HMAC over the **raw** body, ±5 min |
+> | Route                                            | Provider   | Verification                                               |
+> | ------------------------------------------------ | ---------- | ---------------------------------------------------------- |
+> | `POST /api/v1/wh/generic_webhook/{connectionId}` | Any sender | `X-Signature: t=…,v1=…` HMAC over the **raw** body, ±5 min |
 >
 > - **The signature is the whole authentication**, with the secret this workspace generated and was
 >   shown once. It is the same construction, the same five-minute window, the same
@@ -1282,8 +1281,7 @@ return `401` and are counted per connection with alerting on spikes.
 >   the "cross-check the payload's account id" half does not apply to a provider that sends no
 >   account id. The provider segment is part of the lookup rather than decoration: a request posted
 >   to the right id under the wrong provider's path answers 404.
-> - **A wrong id, a disconnected connection and a provider with no inbound door all answer the same
->   404.** The shape of an id must not become an oracle, which is the rule `UuidParamPipe` exists
+> - **A wrong id, a disconnected connection and a provider with no inbound door all answer the same 404.** The shape of an id must not become an oracle, which is the rule `UuidParamPipe` exists
 >   for.
 > - **`201` for a new lead, `200` for a duplicate or a replay**, as §6 promises for the public
 >   endpoint, with `Idempotency-Key` honoured in **its own** key space: the same key sent to both
@@ -1300,18 +1298,18 @@ return `401` and are counted per connection with alerting on spikes.
 > **Amendment, 2026-10-19 (implementation, Phase 4 step 7 — Meta Lead Ads and Google Ads lead
 > forms).** Two more providers, and the first `GET` on this surface:
 >
-> | Route                                               | Provider          | Verification                                                         |
-> | --------------------------------------------------- | ----------------- | -------------------------------------------------------------------- |
-> | `GET  /api/v1/wh/meta_lead_ads/{connectionId}`       | Meta Lead Ads     | `hub.verify_token` echo, constant-time, against the connection's own |
-> | `POST /api/v1/wh/meta_lead_ads/{connectionId}`       | Meta Lead Ads     | `X-Hub-Signature-256` HMAC over the **raw** body, with the app secret |
-> | `POST /api/v1/wh/google_ads_leads/{connectionId}`    | Google lead forms | `google_key` **inside** the body, compared in constant time          |
+> | Route                                             | Provider          | Verification                                                          |
+> | ------------------------------------------------- | ----------------- | --------------------------------------------------------------------- |
+> | `GET  /api/v1/wh/meta_lead_ads/{connectionId}`    | Meta Lead Ads     | `hub.verify_token` echo, constant-time, against the connection's own  |
+> | `POST /api/v1/wh/meta_lead_ads/{connectionId}`    | Meta Lead Ads     | `X-Hub-Signature-256` HMAC over the **raw** body, with the app secret |
+> | `POST /api/v1/wh/google_ads_leads/{connectionId}` | Google lead forms | `google_key` **inside** the body, compared in constant time           |
 >
 > This is the table §7 sketched, built — and the three differences from the sketch are each the
 > provider's doing rather than ours:
 >
 > - **The verification shape is a property of the provider**, declared in the registry
 >   (`inboundVerification`) and reconciled against the adapter at boot. Google Ads does not sign
->   anything: it asks *you* for a webhook key and echoes it in the body, so a framework that had
+>   anything: it asks _you_ for a webhook key and echoes it in the body, so a framework that had
 >   assumed an HMAC header would have been reopened for it. One consequence worth stating: a Google
 >   delivery is replayable by anybody who has ever seen one, and `provider_events`' unique on
 >   Google's own `lead_id` is the only thing between a captured payload and a duplicate lead.

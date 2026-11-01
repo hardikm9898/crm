@@ -299,7 +299,9 @@ export class IntegrationsService {
     await adapter.validate({ secrets: supplied, settings: input.settings });
     // For a `shared_secret` provider the whole credential is ours, filed under the one name its
     // adapter reads. Nothing is generated for an `api_key` provider: the secrets are the caller's.
-    const secrets = shared ? { [sharedSecretField(provider.key)]: this.vault.generateSharedSecret() } : supplied;
+    const secrets = shared
+      ? { [sharedSecretField(provider.key)]: this.vault.generateSharedSecret() }
+      : supplied;
 
     await this.db.client.$transaction(async (tx) => {
       await tx.integrationConnection.create({
@@ -362,7 +364,9 @@ export class IntegrationsService {
         : input.settings;
     if (input.settings !== undefined) this.assertSettings(provider, settings);
     const mapping =
-      input.fieldMappings === undefined ? undefined : this.checkMapping(provider, input.fieldMappings);
+      input.fieldMappings === undefined
+        ? undefined
+        : this.checkMapping(provider, input.fieldMappings);
 
     if (input.credentials !== undefined) {
       if (provider.authKind === 'shared_secret') {
@@ -407,7 +411,9 @@ export class IntegrationsService {
           ...(input.name !== undefined ? { name: input.name } : {}),
           ...(input.settings !== undefined ? { settings: input.settings } : {}),
           ...(mapping !== undefined ? { fieldMappings: mapping } : {}),
-          ...(input.credentials !== undefined ? { credentialsRotated: Object.keys(input.credentials) } : {}),
+          ...(input.credentials !== undefined
+            ? { credentialsRotated: Object.keys(input.credentials) }
+            : {}),
         },
       });
     });
@@ -429,7 +435,8 @@ export class IntegrationsService {
         `${provider.label}’s credential comes from ${provider.label}. Paste a new token instead.`,
       );
     }
-    if (row.disconnectedAt !== null) throw AppError.businessRule('That connection is disconnected.');
+    if (row.disconnectedAt !== null)
+      throw AppError.businessRule('That connection is disconnected.');
 
     const secret = this.vault.generateSharedSecret();
     await this.db.client.$transaction(async (tx) => {
@@ -473,7 +480,12 @@ export class IntegrationsService {
     await this.db.client.$transaction(async (tx) => {
       await tx.integrationConnection.update({
         where: { id },
-        data: { disconnectedAt, status: 'revoked', lastErrorAt: disconnectedAt, lastError: 'Disconnected by the workspace' },
+        data: {
+          disconnectedAt,
+          status: 'revoked',
+          lastErrorAt: disconnectedAt,
+          lastError: 'Disconnected by the workspace',
+        },
       });
       await this.audit.recordInTransaction(tx, {
         action: 'integration.disconnected',
@@ -569,10 +581,7 @@ export class IntegrationsService {
    * request posted to the right id under the wrong provider's path is somebody confused at best,
    * and the composite read means the path cannot be used to enumerate which provider a given id is.
    */
-  async openForInbound(
-    provider: string,
-    connectionId: string,
-  ): Promise<InboundConnection> {
+  async openForInbound(provider: string, connectionId: string): Promise<InboundConnection> {
     const { provider: registered } = this.registry.require(provider);
     if (registered.inboundVerification === 'none') {
       // A provider that does not post to us has no inbound door. Decided by **how it verifies**
@@ -775,7 +784,10 @@ export class IntegrationsService {
     try {
       await this.check(id);
     } catch (error) {
-      this.logger.warn({ err: error, connectionId: id }, 'the first probe of a new connection failed');
+      this.logger.warn(
+        { err: error, connectionId: id },
+        'the first probe of a new connection failed',
+      );
     }
   }
 

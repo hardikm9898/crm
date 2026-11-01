@@ -228,37 +228,39 @@ describe('what a new member starts with', () => {
     // `email` joined the list in step 7, when there was a sender behind it. `whatsapp` and `push`
     // have not, and the screen still says so rather than offering a tick box that drops messages.
     expect(settings.deliverableChannels).toEqual(['in_app', 'email']);
-    expect(settings.types.map((entry) => entry.type).sort()).toEqual([
-      // Phase 6 step 2: what a workflow was told to tell somebody. Held for quiet hours — a
-      // workflow is a standing instruction somebody wrote in daylight, so a 02:00 delivery wakes
-      // them about work that waits until the morning.
-      'automation.notice',
-      // Phase 3 step 6: the nudge that asks what happened on a call nobody recorded.
-      'call.outcome_missing',
-      // Phase 5 step 4: the shared inbox's three. `assigned` covers a transfer too — being handed
-      // work is one event however it happened — and `woke` is a reminder somebody set for
-      // themselves, which is why it *is* held for quiet hours while a failed send is not.
-      'conversation.assigned',
-      'conversation.mentioned',
-      'conversation.woke',
-      // Phase 4 step 6: a connected provider that refused our credential. Also not opt-out, and
-      // for the same reason: the email or the leads it carries have stopped, silently.
-      'integration.revoked',
-      'lead.unassigned_pool',
-      'member.joined',
-      'sla.at_risk',
-      'sla.breached',
-      'task.overdue',
-      'task.reminder',
-      'trial.expired',
-      // Phase 4 step 3: an endpoint the product stopped posting to. Like `trial.expired`, it
-      // cannot be switched off — an integration disabled silently is one nobody can diagnose.
-      'webhook.disabled',
-      // Phase 5 step 2: a WhatsApp reply WhatsApp refused. The only work notification that is
-      // **not** held for quiet hours — the cost of holding one is paid by a customer waiting for
-      // an answer that never came.
-      'whatsapp.send_failed',
-    ].sort());
+    expect(settings.types.map((entry) => entry.type).sort()).toEqual(
+      [
+        // Phase 6 step 2: what a workflow was told to tell somebody. Held for quiet hours — a
+        // workflow is a standing instruction somebody wrote in daylight, so a 02:00 delivery wakes
+        // them about work that waits until the morning.
+        'automation.notice',
+        // Phase 3 step 6: the nudge that asks what happened on a call nobody recorded.
+        'call.outcome_missing',
+        // Phase 5 step 4: the shared inbox's three. `assigned` covers a transfer too — being handed
+        // work is one event however it happened — and `woke` is a reminder somebody set for
+        // themselves, which is why it *is* held for quiet hours while a failed send is not.
+        'conversation.assigned',
+        'conversation.mentioned',
+        'conversation.woke',
+        // Phase 4 step 6: a connected provider that refused our credential. Also not opt-out, and
+        // for the same reason: the email or the leads it carries have stopped, silently.
+        'integration.revoked',
+        'lead.unassigned_pool',
+        'member.joined',
+        'sla.at_risk',
+        'sla.breached',
+        'task.overdue',
+        'task.reminder',
+        'trial.expired',
+        // Phase 4 step 3: an endpoint the product stopped posting to. Like `trial.expired`, it
+        // cannot be switched off — an integration disabled silently is one nobody can diagnose.
+        'webhook.disabled',
+        // Phase 5 step 2: a WhatsApp reply WhatsApp refused. The only work notification that is
+        // **not** held for quiet hours — the cost of holding one is paid by a customer waiting for
+        // an answer that never came.
+        'whatsapp.send_failed',
+      ].sort(),
+    );
     for (const entry of settings.types) {
       // A switch with no sentence under it is a switch somebody turns off to find out what it does.
       expect(entry.label, entry.type).toBeTruthy();

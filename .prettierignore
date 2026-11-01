@@ -8,3 +8,11 @@ coverage
 # Next regenerates this on every build, always with double quotes, and the file itself says not to
 # edit it. Formatting it makes `prettier --check` fail after any `next build`.
 apps/web/next-env.d.ts
+
+# Generated from the routing table by `pnpm --filter @leados/api openapi:write`, which writes
+# JSON.stringify(_, 2). Prettier collapses its short arrays onto one line, and then
+# openapi.e2e-spec.ts — which compares the committed artifact byte-for-byte against what the
+# build generates — reports the document as out of date while the API has not changed. Same
+# reason next-env.d.ts is above: a generated file formatted by something other than its
+# generator fails one of the two checks whichever way it is written.
+docs/openapi.json

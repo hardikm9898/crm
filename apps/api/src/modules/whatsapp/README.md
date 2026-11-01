@@ -11,22 +11,22 @@ This module is what a WhatsApp delivery becomes once that door has verified it.
 
 ## What is here
 
-| File | What it decides |
-| --- | --- |
-| `whatsapp-inbound.service.ts` | One message → a number, a lead, a conversation, a message row, a timeline entry. |
-| `whatsapp.processor.ts` | `whatsapp.ingest-message`: one `provider_events` row, idempotently. |
-| `conversations.service.ts` | The inbox, read: the list, one conversation with its lead context, its messages, mark-read, search. |
-| `whatsapp-accounts.service.ts` | Connecting a WABA, discovering its numbers, and who answers each. |
-| `whatsapp.controller.ts` | `/conversations` behind `conversation:read`; `/whatsapp/*` behind `whatsapp:manage`. |
-| `whatsapp-send.service.ts` | Sending: the window rule, the template's variables, and the row written before the send. |
-| `whatsapp-send.processor.ts` | `whatsapp.send-message`, and the sweep that re-queues one a worker never sent. |
-| `whatsapp-status.service.ts` | What Meta says became of a message: the summary, the history, and the shout. |
-| `whatsapp-status.processor.ts` | `whatsapp.ingest-status` and `whatsapp.sync-templates`. |
-| `whatsapp-templates.service.ts` | Templates: authored here, reviewed by Meta, reconciled by a sweep. |
-| `whatsapp-rate-limiter.service.ts` | One second's worth of sends per number, in Redis. |
-| `whatsapp-presenters.ts` | The one presenter every screen reads a message through. |
-| `whatsapp-ids.ts` | A stable timeline event id from a provider's own id, in its own file to break a cycle. |
-| `whatsapp.dto.ts` | The request shapes, and the one schema that makes "nobody by default" expressible. |
+| File                               | What it decides                                                                                     |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `whatsapp-inbound.service.ts`      | One message → a number, a lead, a conversation, a message row, a timeline entry.                    |
+| `whatsapp.processor.ts`            | `whatsapp.ingest-message`: one `provider_events` row, idempotently.                                 |
+| `conversations.service.ts`         | The inbox, read: the list, one conversation with its lead context, its messages, mark-read, search. |
+| `whatsapp-accounts.service.ts`     | Connecting a WABA, discovering its numbers, and who answers each.                                   |
+| `whatsapp.controller.ts`           | `/conversations` behind `conversation:read`; `/whatsapp/*` behind `whatsapp:manage`.                |
+| `whatsapp-send.service.ts`         | Sending: the window rule, the template's variables, and the row written before the send.            |
+| `whatsapp-send.processor.ts`       | `whatsapp.send-message`, and the sweep that re-queues one a worker never sent.                      |
+| `whatsapp-status.service.ts`       | What Meta says became of a message: the summary, the history, and the shout.                        |
+| `whatsapp-status.processor.ts`     | `whatsapp.ingest-status` and `whatsapp.sync-templates`.                                             |
+| `whatsapp-templates.service.ts`    | Templates: authored here, reviewed by Meta, reconciled by a sweep.                                  |
+| `whatsapp-rate-limiter.service.ts` | One second's worth of sends per number, in Redis.                                                   |
+| `whatsapp-presenters.ts`           | The one presenter every screen reads a message through.                                             |
+| `whatsapp-ids.ts`                  | A stable timeline event id from a provider's own id, in its own file to break a cycle.              |
+| `whatsapp.dto.ts`                  | The request shapes, and the one schema that makes "nobody by default" expressible.                  |
 
 The adapter (`../integrations/adapters/whatsapp-cloud.adapter.ts`) and the registry entry
 (`@leados/shared/src/integrations.ts`) live with the framework, because that is what makes a

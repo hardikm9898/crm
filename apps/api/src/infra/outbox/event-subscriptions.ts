@@ -55,11 +55,18 @@ export const EVENT_SUBSCRIPTIONS: Readonly<Record<string, readonly EventSubscrip
   // A missed follow-up is told about through the event rather than by the sweep, so "mark it
   // reported" and "tell somebody" retry independently — and a second consumer (the Phase 3
   // escalation policy, a WhatsApp nudge) is a line here rather than a change to the sweep.
-  'task.overdue': [{ queue: QUEUES.NOTIFICATIONS, jobName: JOBS.NOTIFY_TASK_OVERDUE }, WEBHOOK, AUTOMATION],
+  'task.overdue': [
+    { queue: QUEUES.NOTIFICATIONS, jobName: JOBS.NOTIFY_TASK_OVERDUE },
+    WEBHOOK,
+    AUTOMATION,
+  ],
   // One processor serves both, dispatching on the envelope's event name — and the recipients were
   // resolved and stored by the sweep, so the escalation row and the notifications cannot disagree.
   'sla.at_risk': [{ queue: QUEUES.NOTIFICATIONS, jobName: JOBS.NOTIFY_SLA_ESCALATION }],
-  'sla.breached': [{ queue: QUEUES.NOTIFICATIONS, jobName: JOBS.NOTIFY_SLA_ESCALATION }, AUTOMATION],
+  'sla.breached': [
+    { queue: QUEUES.NOTIFICATIONS, jobName: JOBS.NOTIFY_SLA_ESCALATION },
+    AUTOMATION,
+  ],
   // Scoring reacts to what a lead does (`FR-SCR-2`). Every one of these is a trigger a tenant may
   // write a rule on, and the job name is the same for all of them — the processor reads which event
   // it was from the envelope, so adding a trigger is a line here and an entry in `SCORING_TRIGGERS`.

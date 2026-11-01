@@ -1,4 +1,15 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  Param,
+  Patch,
+  Post,
+  Put,
+  Query,
+} from '@nestjs/common';
 import { PERMISSIONS } from '@leados/shared';
 import { RequirePermission } from '../../infra/authz/permission.decorator.js';
 import { withMessage } from '../../infra/http/envelope.interceptor.js';
@@ -132,11 +143,16 @@ export class AutomationController {
    */
   @Put('workflows/:id/definition')
   @RequirePermission(PERMISSIONS.AUTOMATION_MANAGE)
-  async saveDefinition(@Param('id') id: string, @Body(zodBody(saveDefinitionSchema)) body: unknown) {
+  async saveDefinition(
+    @Param('id') id: string,
+    @Body(zodBody(saveDefinitionSchema)) body: unknown,
+  ) {
     const saved = await this.automation.saveDefinition(id, body as SaveDefinitionInput);
     return withMessage(
       saved,
-      saved.problems.length === 0 ? 'Draft saved' : 'Draft saved — some details still need filling in',
+      saved.problems.length === 0
+        ? 'Draft saved'
+        : 'Draft saved — some details still need filling in',
     );
   }
 

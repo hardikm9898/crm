@@ -82,7 +82,9 @@ describe('walking the graph', () => {
   it('answers null for a step the version does not contain, rather than starting again', () => {
     // A run whose `current_step_id` is not in its pinned version cannot happen — a published
     // version is immutable — and re-running step one would be the expensive way to be wrong.
-    expect(nextStep(branched, { after: 'a-step-from-another-graph', branchDecisions: {} })).toBeNull();
+    expect(
+      nextStep(branched, { after: 'a-step-from-another-graph', branchDecisions: {} }),
+    ).toBeNull();
   });
 
   it('treats an un-decided branch arm as unreachable', () => {
@@ -293,7 +295,11 @@ describe('re-entry', () => {
 
   it('lets a lead in the first time, whatever the policy', () => {
     for (const policy of ['once', 'cooldown', 'always'] as const) {
-      const decision = reentryDecision({ ...base, policy, cooldownHours: policy === 'cooldown' ? 24 : null });
+      const decision = reentryDecision({
+        ...base,
+        policy,
+        cooldownHours: policy === 'cooldown' ? 24 : null,
+      });
       expect(decision.allowed, policy).toBe(true);
       expect(decision.cycle).toBe(1);
     }

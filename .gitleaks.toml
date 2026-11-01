@@ -1,0 +1,37 @@
+# Secret-scanning configuration for Lead OS.
+#
+# `useDefault` keeps gitleaks' whole rule set; this file only records matches that have been
+# examined and are not credentials. Each entry is a regex matched against the **line**, not a path:
+# allowlisting a path would hide a real secret committed to that same file later, which is the one
+# thing this job exists to prevent.
+#
+# Nothing here is a way to quiet the scanner. A new entry means somebody read the match and can say
+# why it is not a credential, in a sentence, next to it.
+
+title = "Lead OS"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Examined matches that are not credentials"
+regexTarget = "line"
+regexes = [
+  # `packages/shared/src/api-surface.spec.ts` — the spec for `parseApiCredential`, which has to
+  # contain an example of the credential form it parses (`<keyId>.<secret>`) in order to test it.
+  # `sk_live_def456` is deliberately the `sk_` shape that `api_keys_secret_is_encrypted` refuses:
+  # the product will not store a value beginning `sk_`, so this literal could not be a working
+  # credential for this system even if somebody wanted it to be.
+  '''sk_live_def456''',
+  '''sk_live_b''',
+
+  # `.github/workflows/ci.yml` — the three values the API's boot-time config validation requires.
+  # They sign tokens and encrypt rows in a PostgreSQL database that this workflow's `services`
+  # block creates and destroys within the job, so there is nothing for them to protect once the
+  # run ends. They are committed rather than kept in repository secrets so that a CI run is
+  # reproducible by anyone reading the workflow, and `assertProductionSafety` refuses values of
+  # exactly this shape (`/dev-only|change-me|localhost|^a{8,}/` and a matching access/refresh pair)
+  # when NODE_ENV=production.
+  '''ci-only-(access|refresh)-secret-not-a-real-secret-\d+''',
+  '''Y2ktb25seS10ZXN0LWtleS1ub3QtYS1zZWNyZXQhISE=''',
+]

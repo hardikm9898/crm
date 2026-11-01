@@ -422,7 +422,10 @@ describe('what a probe does to a connection', () => {
 
     postmarkAnswer = () => ({
       status: 401,
-      body: JSON.stringify({ ErrorCode: 10, Message: 'No account or server API tokens were supplied.' }),
+      body: JSON.stringify({
+        ErrorCode: 10,
+        Message: 'No account or server API tokens were supplied.',
+      }),
     });
     try {
       const result = await setup<{ outcome: string; statusAfter: string }>(
@@ -732,10 +735,16 @@ describe('the inbound door', () => {
   it('answers a replay with the first answer and does not create a second lead', async () => {
     const key = `replay-${newToken(6)}`;
     const body = { contact: { full_name: 'Replay Singh', mobile: '+919845011133' } };
-    const first = await post(connection.id, body, { secret: connection.secret, idempotencyKey: key });
+    const first = await post(connection.id, body, {
+      secret: connection.secret,
+      idempotencyKey: key,
+    });
     expect(first.statusCode).toBe(201);
 
-    const again = await post(connection.id, body, { secret: connection.secret, idempotencyKey: key });
+    const again = await post(connection.id, body, {
+      secret: connection.secret,
+      idempotencyKey: key,
+    });
     expect(again.statusCode).toBe(200);
     expect(again.body.data.status).toBe('replayed');
     expect(again.body.data.leadId).toBe(first.body.data.leadId);
@@ -772,7 +781,12 @@ describe('the inbound door', () => {
     const payload = await ctx.db.inboundPayload.findFirstOrThrow({
       where: { organizationId: door.organizationId, integrationConnectionId: connection.id },
       orderBy: { receivedAt: 'desc' },
-      select: { status: true, error: true, id: true, errors: { select: { stage: true, isReplayable: true } } },
+      select: {
+        status: true,
+        error: true,
+        id: true,
+        errors: { select: { stage: true, isReplayable: true } },
+      },
     });
     expect(payload.status).toBe('failed');
     expect(payload.errors[0]?.stage).toBe('validate');
@@ -812,7 +826,11 @@ describe('the inbound door', () => {
   });
 
   it('answers 404 for the wrong provider in the path', async () => {
-    const response = await post(connection.id, { a: 1 }, { secret: connection.secret, provider: 'postmark' });
+    const response = await post(
+      connection.id,
+      { a: 1 },
+      { secret: connection.secret, provider: 'postmark' },
+    );
     expect(response.statusCode).toBe(404);
   });
 });

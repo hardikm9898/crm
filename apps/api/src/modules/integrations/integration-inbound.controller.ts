@@ -1,4 +1,15 @@
-import { Body, Controller, Get, Headers, HttpCode, Param, Post, Query, Req, Res } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Headers,
+  HttpCode,
+  Param,
+  Post,
+  Query,
+  Req,
+  Res,
+} from '@nestjs/common';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { AppError, findProvider } from '@leados/shared';
 import { Public } from '../auth/guards/public.decorator.js';
@@ -162,12 +173,18 @@ export class IntegrationInboundController {
             : 'Already received — here is the original answer',
     };
   }
-
 }
 
 /** The headers worth keeping, with the proof removed. The payload is stored; the signature is not. */
 function keptHeaders(headers: Record<string, unknown>): Record<string, string> {
-  const keep = ['content-type', 'user-agent', 'idempotency-key', 'x-forwarded-for', 'origin', 'referer'];
+  const keep = [
+    'content-type',
+    'user-agent',
+    'idempotency-key',
+    'x-forwarded-for',
+    'origin',
+    'referer',
+  ];
   const kept: Record<string, string> = {};
   for (const name of keep) {
     const value = headers[name];

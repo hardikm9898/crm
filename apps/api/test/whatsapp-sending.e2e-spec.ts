@@ -177,7 +177,10 @@ beforeAll(async () => {
         path.includes('/messages') && request.method === 'POST'
           ? sendAnswer()
           : path.includes('message_templates') && request.method === 'POST'
-            ? { status: 200, body: JSON.stringify({ id: `meta-tpl-${newToken(4)}`, status: 'PENDING' }) }
+            ? {
+                status: 200,
+                body: JSON.stringify({ id: `meta-tpl-${newToken(4)}`, status: 'PENDING' }),
+              }
             : path.includes('message_templates')
               ? templateList()
               : path.includes('phone_numbers')
@@ -261,9 +264,13 @@ beforeAll(async () => {
     }),
   );
   await drain();
-  const [conversation] = await setup<{ id: string; lead: { id: string } }[]>('GET', '/conversations', {
-    token: orgA.token,
-  });
+  const [conversation] = await setup<{ id: string; lead: { id: string } }[]>(
+    'GET',
+    '/conversations',
+    {
+      token: orgA.token,
+    },
+  );
   if (!conversation) throw new Error('the inbound message did not become a conversation');
   conversationId = conversation.id;
   leadId = conversation.lead.id;
@@ -297,7 +304,13 @@ describe('sending a reply inside the window (`FR-WA-1`)', () => {
     await flushSends();
     const row = await ctx.db.message.findFirstOrThrow({
       where: { id: messageId },
-      select: { status: true, providerMessageId: true, sendAttempts: true, body: true, senderUserId: true },
+      select: {
+        status: true,
+        providerMessageId: true,
+        sendAttempts: true,
+        body: true,
+        senderUserId: true,
+      },
     });
     // `accepted`, not `sent`: Meta taking it means it is queued at Meta.
     expect(row.status).toBe('accepted');
@@ -330,10 +343,14 @@ describe('sending a reply inside the window (`FR-WA-1`)', () => {
   });
 
   it('sends nothing twice, however many times the job is delivered', async () => {
-    const message = await setup<{ id: string }>('POST', `/conversations/${conversationId}/messages`, {
-      token: orgA.token,
-      payload: { kind: 'text', body: 'The showroom is open until seven.' },
-    });
+    const message = await setup<{ id: string }>(
+      'POST',
+      `/conversations/${conversationId}/messages`,
+      {
+        token: orgA.token,
+        payload: { kind: 'text', body: 'The showroom is open until seven.' },
+      },
+    );
     const before = sentMessages().length;
     const processor = ctx.app.get(WhatsAppSendMessageProcessor);
     await processor.handle(orgA.organizationId, message.id);
@@ -369,10 +386,14 @@ describe('sending a reply inside the window (`FR-WA-1`)', () => {
 
 describe('status receipts (`FR-WA-4`)', () => {
   it('advances the message, keeps every receipt, and never goes backwards', async () => {
-    const message = await setup<{ id: string }>('POST', `/conversations/${conversationId}/messages`, {
-      token: orgA.token,
-      payload: { kind: 'text', body: 'Saturday at eleven, then.' },
-    });
+    const message = await setup<{ id: string }>(
+      'POST',
+      `/conversations/${conversationId}/messages`,
+      {
+        token: orgA.token,
+        payload: { kind: 'text', body: 'Saturday at eleven, then.' },
+      },
+    );
     await flushSends();
     const accepted = await ctx.db.message.findFirstOrThrow({
       where: { id: message.id },
@@ -455,7 +476,11 @@ describe('status receipts (`FR-WA-4`)', () => {
     const response = await post(
       delivery({
         statuses: [
-          { id: 'wamid.somebody-elses', status: 'delivered', timestamp: String(Math.floor(Date.now() / 1000)) },
+          {
+            id: 'wamid.somebody-elses',
+            status: 'delivered',
+            timestamp: String(Math.floor(Date.now() / 1000)),
+          },
         ],
       }),
     );
@@ -556,25 +581,26 @@ describe('templates (`FR-WA-5`)', () => {
   });
 
   it('saves a draft, submits it, and takes WhatsApp’s word for what happens next', async () => {
-    const created = await setup<{ id: string; status: string; sendable: boolean; blockedReason: string | null }>(
-      'POST',
-      '/whatsapp/templates',
-      {
-        token: orgA.token,
-        payload: {
-          accountId,
-          name: `visit_${SUFFIX}`,
-          language: 'en',
-          category: 'utility',
-          components: {
-            header: 'Rao Interiors',
-            body: 'Hello {{1}}, your site visit is confirmed for {{2}}.',
-            footer: 'Reply STOP to opt out',
-          },
-          variableMap: { '1': 'lead.firstName', '2': 'literal:Saturday at 11am' },
+    const created = await setup<{
+      id: string;
+      status: string;
+      sendable: boolean;
+      blockedReason: string | null;
+    }>('POST', '/whatsapp/templates', {
+      token: orgA.token,
+      payload: {
+        accountId,
+        name: `visit_${SUFFIX}`,
+        language: 'en',
+        category: 'utility',
+        components: {
+          header: 'Rao Interiors',
+          body: 'Hello {{1}}, your site visit is confirmed for {{2}}.',
+          footer: 'Reply STOP to opt out',
         },
+        variableMap: { '1': 'lead.firstName', '2': 'literal:Saturday at 11am' },
       },
-    );
+    });
     templateId = created.id;
     expect(created.status).toBe('draft');
     expect(created.sendable).toBe(false);
@@ -597,7 +623,11 @@ describe('templates (`FR-WA-5`)', () => {
       components: { type: string; text?: string; example?: { body_text: string[][] } }[];
     };
     expect(body.category).toBe('UTILITY');
-    expect(body.components.map((component) => component.type)).toEqual(['HEADER', 'BODY', 'FOOTER']);
+    expect(body.components.map((component) => component.type)).toEqual([
+      'HEADER',
+      'BODY',
+      'FOOTER',
+    ]);
     // Meta requires an example per variable, and it must not be a real customer's data: a reviewer
     // is reading the wording, not the record.
     expect(body.components[1]?.example?.body_text[0]).toEqual(['firstName', 'Saturday at 11am']);
@@ -701,7 +731,11 @@ describe('templates (`FR-WA-5`)', () => {
     expect(sentMessages().length).toBe(before + 1);
     const payload = JSON.parse(sentMessages().at(-1)?.body ?? '{}') as {
       type: string;
-      template: { name: string; language: { code: string }; components: { parameters: { text: string }[] }[] };
+      template: {
+        name: string;
+        language: { code: string };
+        components: { parameters: { text: string }[] }[];
+      };
     };
     expect(payload.type).toBe('template');
     expect(payload.template.name).toBe(`visit_${SUFFIX}`);
@@ -792,9 +826,12 @@ describe('templates (`FR-WA-5`)', () => {
     // The request for **this** template, not merely the most recent one: `at(-1)` reads whatever
     // was sent last, which is a different message the moment anything else is queued.
     const payload = sentMessages()
-      .map((request) => JSON.parse(request.body) as {
-        template?: { name?: string; components?: { parameters: { text: string }[] }[] };
-      })
+      .map(
+        (request) =>
+          JSON.parse(request.body) as {
+            template?: { name?: string; components?: { parameters: { text: string }[] }[] };
+          },
+      )
       .findLast((body) => body.template?.name === `needs_city_${SUFFIX}`);
     expect(payload?.template?.components?.[0]?.parameters[0]?.text).toBe('Pune');
   });
@@ -821,10 +858,14 @@ describe('templates (`FR-WA-5`)', () => {
 
 describe('a failure nobody can miss (`FR-WA-9`)', () => {
   it('records Meta’s own reason, tells the sender, and can be tried again', async () => {
-    const message = await setup<{ id: string }>('POST', `/conversations/${conversationId}/messages`, {
-      token: orgA.token,
-      payload: { kind: 'template', templateId: (await approvedTemplate()).id },
-    });
+    const message = await setup<{ id: string }>(
+      'POST',
+      `/conversations/${conversationId}/messages`,
+      {
+        token: orgA.token,
+        payload: { kind: 'template', templateId: (await approvedTemplate()).id },
+      },
+    );
 
     const previous = sendAnswer;
     sendAnswer = () => ({
@@ -845,7 +886,13 @@ describe('a failure nobody can miss (`FR-WA-9`)', () => {
 
     const failed = await ctx.db.message.findFirstOrThrow({
       where: { id: message.id },
-      select: { status: true, errorCode: true, errorMessage: true, failedAt: true, sendAttempts: true },
+      select: {
+        status: true,
+        errorCode: true,
+        errorMessage: true,
+        failedAt: true,
+        sendAttempts: true,
+      },
     });
     expect(failed.status).toBe('failed');
     expect(failed.errorCode).toBe('132001');
@@ -898,10 +945,14 @@ describe('a failure nobody can miss (`FR-WA-9`)', () => {
   });
 
   it('leaves a message queued when Meta is merely busy, and counts the attempt', async () => {
-    const message = await setup<{ id: string }>('POST', `/conversations/${conversationId}/messages`, {
-      token: orgA.token,
-      payload: { kind: 'template', templateId: (await approvedTemplate()).id },
-    });
+    const message = await setup<{ id: string }>(
+      'POST',
+      `/conversations/${conversationId}/messages`,
+      {
+        token: orgA.token,
+        payload: { kind: 'template', templateId: (await approvedTemplate()).id },
+      },
+    );
     const previous = sendAnswer;
     sendAnswer = () => ({
       status: 429,
@@ -923,13 +974,17 @@ describe('a failure nobody can miss (`FR-WA-9`)', () => {
 
     // And the sweep is what picks it up if the worker died in the meantime.
     await ctx.db.message.update({
-      where: { id_createdAt: { id: message.id, createdAt: (await createdAtOf(message.id)) } },
+      where: { id_createdAt: { id: message.id, createdAt: await createdAtOf(message.id) } },
       data: {},
     });
     await flushSends();
     expect(
-      (await ctx.db.message.findFirstOrThrow({ where: { id: message.id }, select: { status: true } }))
-        .status,
+      (
+        await ctx.db.message.findFirstOrThrow({
+          where: { id: message.id },
+          select: { status: true },
+        })
+      ).status,
     ).toBe('accepted');
   });
 
@@ -939,9 +994,13 @@ describe('a failure nobody can miss (`FR-WA-9`)', () => {
       select: { id: true },
       take: 1,
     });
-    const refused = await api('POST', `/conversations/${conversationId}/messages/${inbound?.id}/retry`, {
-      token: orgA.token,
-    });
+    const refused = await api(
+      'POST',
+      `/conversations/${conversationId}/messages/${inbound?.id}/retry`,
+      {
+        token: orgA.token,
+      },
+    );
     expect(refused.statusCode).toBe(422);
     expect(refused.body.error?.message).toMatch(/they sent you/i);
   });
@@ -987,10 +1046,14 @@ describe('per-number rate limiting (`FR-WA-9`)', () => {
   });
 
   it('re-queues rather than failing, and does not count the attempt', async () => {
-    const message = await setup<{ id: string }>('POST', `/conversations/${conversationId}/messages`, {
-      token: orgA.token,
-      payload: { kind: 'template', templateId: (await approvedTemplate()).id },
-    });
+    const message = await setup<{ id: string }>(
+      'POST',
+      `/conversations/${conversationId}/messages`,
+      {
+        token: orgA.token,
+        payload: { kind: 'template', templateId: (await approvedTemplate()).id },
+      },
+    );
     const redis = ctx.app.get(RedisService);
     /**
      * The bucket is filled **by writing the counter**, for this second and the next.
@@ -1024,18 +1087,26 @@ describe('per-number rate limiting (`FR-WA-9`)', () => {
     await redis.del(...buckets, `wa:send-rate:${PHONE_NUMBER_ID}:${Math.floor(Date.now() / 1000)}`);
     await ctx.app.get(WhatsAppSendMessageProcessor).handle(orgA.organizationId, message.id);
     expect(
-      (await ctx.db.message.findFirstOrThrow({ where: { id: message.id }, select: { status: true } }))
-        .status,
+      (
+        await ctx.db.message.findFirstOrThrow({
+          where: { id: message.id },
+          select: { status: true },
+        })
+      ).status,
     ).toBe('accepted');
   });
 });
 
 describe('the sweep that re-queues an unsent message (`FR-WA-9`)', () => {
   it('finds a message a worker never handed to Meta', async () => {
-    const message = await setup<{ id: string }>('POST', `/conversations/${conversationId}/messages`, {
-      token: orgA.token,
-      payload: { kind: 'template', templateId: (await approvedTemplate()).id },
-    });
+    const message = await setup<{ id: string }>(
+      'POST',
+      `/conversations/${conversationId}/messages`,
+      {
+        token: orgA.token,
+        payload: { kind: 'template', templateId: (await approvedTemplate()).id },
+      },
+    );
     // Older than the two-minute grace period, which is what the sweep selects on. Within the same
     // month, because `created_at` is the partition key.
     await ctx.db.$executeRawUnsafe(
@@ -1054,7 +1125,10 @@ describe('the sweep that re-queues an unsent message (`FR-WA-9`)', () => {
 
 describe('the scheduled template sync', () => {
   it('reconciles every connected account without ending the tick on one failure', async () => {
-    templateList = () => ({ status: 500, body: JSON.stringify({ error: { message: 'Meta is down' } }) });
+    templateList = () => ({
+      status: 500,
+      body: JSON.stringify({ error: { message: 'Meta is down' } }),
+    });
     try {
       // One workspace's broken account must not throw out of the sweep.
       await expect(ctx.app.get(WhatsAppSyncTemplatesProcessor).process()).resolves.toBeUndefined();
@@ -1105,7 +1179,9 @@ describe('the new-lead nurture flow, end to end (Phase 6, `FR-AUT-3`)', () => {
               action: 'branch',
               // A boolean field offers `equals`, not `is_true`: the registry declares the
               // operators per field and `publish` refuses the rest.
-              conditions: { all: [{ field: 'lead.consentWhatsapp', operator: 'equals', value: true }] },
+              conditions: {
+                all: [{ field: 'lead.consentWhatsapp', operator: 'equals', value: true }],
+              },
               then: [{ id: 'warm', action: 'change_priority', params: { priority: 'high' } }],
               otherwise: [{ id: 'cold', action: 'add_note', params: { body: 'Still no reply.' } }],
             },
@@ -1205,7 +1281,11 @@ describe('the new-lead nurture flow, end to end (Phase 6, `FR-AUT-3`)', () => {
 /** The approved template this workspace has, for the tests that only need one. */
 async function approvedTemplate(): Promise<{ id: string }> {
   return ctx.db.whatsAppTemplate.findFirstOrThrow({
-    where: { organizationId: orgA.organizationId, status: 'approved', name: { startsWith: 'visit_' } },
+    where: {
+      organizationId: orgA.organizationId,
+      status: 'approved',
+      name: { startsWith: 'visit_' },
+    },
     select: { id: true },
   });
 }

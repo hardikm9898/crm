@@ -34,7 +34,9 @@ export class AutomationRegistryCheck implements OnApplicationBootstrap {
           problems.push(`“${action.key}” is declared as a control shape the engine does not know`);
         }
         if (handled.has(action.key)) {
-          problems.push(`“${action.key}” is both a control shape and a handler, which is two answers`);
+          problems.push(
+            `“${action.key}” is both a control shape and a handler, which is two answers`,
+          );
         }
         continue;
       }
@@ -56,7 +58,9 @@ export class AutomationRegistryCheck implements OnApplicationBootstrap {
       if (trigger.subject !== 'lead') {
         // Every table the engine writes carries `lead_id` with a composite FK. A trigger about
         // anything else needs a column before it needs a screen.
-        problems.push(`“${trigger.key}” is about a ${trigger.subject}, which the engine cannot run`);
+        problems.push(
+          `“${trigger.key}” is about a ${trigger.subject}, which the engine cannot run`,
+        );
       }
     }
 

@@ -784,11 +784,14 @@ describe('the test tool (FR-CAP-6)', () => {
     // Beside it, so "why is this not the number I typed" has an answer on the same screen.
     expect(good.normalized['phoneAsSent']).toBe('98460 99997');
 
-    const bad = await setup<{ wouldCreate: boolean; normalized: Record<string, unknown>; notes: string[] }>(
-      'POST',
-      '/ingestion/test',
-      { token: orgA.token, payload: { payload: { name: 'Bad Number', phone: '12' } } },
-    );
+    const bad = await setup<{
+      wouldCreate: boolean;
+      normalized: Record<string, unknown>;
+      notes: string[];
+    }>('POST', '/ingestion/test', {
+      token: orgA.token,
+      payload: { payload: { name: 'Bad Number', phone: '12' } },
+    });
     expect(bad.normalized['phone']).toBeNull();
     expect(bad.notes.join(' ')).toMatch(/does not look like a phone number/i);
     // And the verdict is honest: the real endpoint refuses a phone it cannot read, so a tool that

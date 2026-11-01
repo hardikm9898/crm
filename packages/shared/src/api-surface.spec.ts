@@ -73,7 +73,10 @@ describe('the scopes a key may hold', () => {
 describe('the credential header', () => {
   it('reads the documented form', () => {
     const parsed = parseApiCredential('Bearer pk_live_abc123.sk_live_def456');
-    expect(parsed).toEqual({ ok: true, credential: { keyId: 'pk_live_abc123', secret: 'sk_live_def456' } });
+    expect(parsed).toEqual({
+      ok: true,
+      credential: { keyId: 'pk_live_abc123', secret: 'sk_live_def456' },
+    });
   });
 
   it('is case-insensitive about the scheme and tolerant of extra spaces', () => {

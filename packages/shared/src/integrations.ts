@@ -185,7 +185,14 @@ export type MappableLeadField = (typeof MAPPABLE_LEAD_FIELDS)[number];
  * is a string that means a boolean. Anything more than this is a transformation language, and a
  * transformation language in a JSONB column is a program nobody can review.
  */
-export const MAPPING_TRANSFORMS = ['none', 'trim', 'lowercase', 'digits', 'phone', 'boolean'] as const;
+export const MAPPING_TRANSFORMS = [
+  'none',
+  'trim',
+  'lowercase',
+  'digits',
+  'phone',
+  'boolean',
+] as const;
 export type MappingTransform = (typeof MAPPING_TRANSFORMS)[number];
 
 export interface FieldMapping {
@@ -457,7 +464,10 @@ export function mappingProblems(mapping: readonly FieldMapping[]): FieldMappingP
       });
     }
     if (entry.transform && !(MAPPING_TRANSFORMS as readonly string[]).includes(entry.transform)) {
-      problems.push({ index, message: `“${entry.transform}” is not something we can do to a value.` });
+      problems.push({
+        index,
+        message: `“${entry.transform}” is not something we can do to a value.`,
+      });
     }
     const previous = seen.get(entry.target);
     if (previous !== undefined) {
@@ -553,7 +563,8 @@ function assign(target: Record<string, unknown>, path: string, value: unknown): 
 }
 
 function transform(value: unknown, kind: MappingTransform): unknown {
-  const text = typeof value === 'string' ? value : typeof value === 'number' ? String(value) : value;
+  const text =
+    typeof value === 'string' ? value : typeof value === 'number' ? String(value) : value;
   switch (kind) {
     case 'trim':
       return typeof text === 'string' ? text.trim() : text;
@@ -593,10 +604,7 @@ const TRUTHY = new Set(['true', 'yes', 'y', '1', 'on', 'agreed', 'accepted']);
  * answered and refused", so it carries one. Treating "answered 500 twice" as permanently
  * recoverable would leave a connection reading "nothing to do yet" all afternoon.
  */
-export function nextStatus(
-  current: IntegrationStatus,
-  outcome: ProbeOutcome,
-): IntegrationStatus {
+export function nextStatus(current: IntegrationStatus, outcome: ProbeOutcome): IntegrationStatus {
   if (outcome === 'ok') return 'connected';
   if (outcome === 'unauthorized') return 'revoked';
   return current === 'degraded' || current === 'error' ? 'error' : 'degraded';
@@ -626,7 +634,9 @@ export function flattenMetaFieldData(payload: Record<string, unknown>): Record<s
     const name = (entry as { name?: unknown }).name;
     const values = (entry as { values?: unknown }).values;
     if (typeof name !== 'string' || name === '') continue;
-    const list = Array.isArray(values) ? values.filter((value) => value !== null && value !== undefined) : [];
+    const list = Array.isArray(values)
+      ? values.filter((value) => value !== null && value !== undefined)
+      : [];
     if (list.length === 0) continue;
     flat[name] = list.length === 1 ? list[0] : list.map((value) => String(value)).join(', ');
   }
@@ -656,7 +666,8 @@ export function flattenGoogleColumnData(payload: Record<string, unknown>): Recor
           ? row.column_name
           : null;
     if (key === null) continue;
-    if (row.string_value === null || row.string_value === undefined || row.string_value === '') continue;
+    if (row.string_value === null || row.string_value === undefined || row.string_value === '')
+      continue;
     flat[key] = row.string_value;
   }
   return flat;

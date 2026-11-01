@@ -176,7 +176,10 @@ export class WhatsAppTemplatesService {
       select: { id: true },
     });
     if (!row) throw AppError.notFound('Template');
-    await this.db.client.whatsAppTemplate.update({ where: { id }, data: { deletedAt: new Date() } });
+    await this.db.client.whatsAppTemplate.update({
+      where: { id },
+      data: { deletedAt: new Date() },
+    });
     await this.audit.record({
       action: 'whatsapp_template.archived',
       resourceType: 'whatsapp_template',
@@ -297,7 +300,8 @@ export class WhatsAppTemplatesService {
           data: {
             status,
             providerTemplateId: entry.providerTemplateId,
-            rejectionReason: status === 'rejected' ? (entry.rejectedReason ?? 'WhatsApp did not say why.') : null,
+            rejectionReason:
+              status === 'rejected' ? (entry.rejectedReason ?? 'WhatsApp did not say why.') : null,
             syncedAt: new Date(),
           },
         });
@@ -318,7 +322,8 @@ export class WhatsAppTemplatesService {
             : 'utility') as never,
           status,
           providerTemplateId: entry.providerTemplateId,
-          rejectionReason: status === 'rejected' ? (entry.rejectedReason ?? 'WhatsApp did not say why.') : null,
+          rejectionReason:
+            status === 'rejected' ? (entry.rejectedReason ?? 'WhatsApp did not say why.') : null,
           components: { body: '' } as never,
           variableMap: {} as never,
           syncedAt: new Date(),
@@ -327,7 +332,10 @@ export class WhatsAppTemplatesService {
       adopted += 1;
     }
 
-    this.logger.info({ accountId, remote: remote.length, updated, adopted }, 'whatsapp templates synced');
+    this.logger.info(
+      { accountId, remote: remote.length, updated, adopted },
+      'whatsapp templates synced',
+    );
     return { checked: remote.length, updated, adopted };
   }
 
@@ -343,7 +351,11 @@ export class WhatsAppTemplatesService {
       select: { id: true, components: true, variableMap: true, status: true },
     });
     if (!row) throw AppError.notFound('Template');
-    const resolved = await this.resolveVariables(row.variableMap as Record<string, string>, leadId, {});
+    const resolved = await this.resolveVariables(
+      row.variableMap as Record<string, string>,
+      leadId,
+      {},
+    );
     const rendered = renderTemplate(row.components as unknown as TemplateComponents, resolved);
     return {
       text: rendered.text,
@@ -364,7 +376,9 @@ export class WhatsAppTemplatesService {
     leadId: string | null,
     overrides: Readonly<Record<string, string>>,
   ): Promise<Record<string, string | null>> {
-    const needsLead = Object.values(variableMap).some((source) => source.startsWith('lead.') || source.startsWith('custom.'));
+    const needsLead = Object.values(variableMap).some(
+      (source) => source.startsWith('lead.') || source.startsWith('custom.'),
+    );
     const lead =
       needsLead && leadId !== null
         ? await this.db.client.lead.findFirst({
@@ -508,7 +522,9 @@ function exampleValues(
   components: TemplateComponents,
   variableMap: Record<string, string>,
 ): string[] {
-  const indexes = [...components.body.matchAll(/\{\{\s*(\d+)\s*\}\}/g)].map((match) => Number(match[1]));
+  const indexes = [...components.body.matchAll(/\{\{\s*(\d+)\s*\}\}/g)].map((match) =>
+    Number(match[1]),
+  );
   const unique = [...new Set(indexes)].sort((left, right) => left - right);
   return unique.map((index) => {
     const source = variableMap[String(index)] ?? '';

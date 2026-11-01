@@ -74,8 +74,7 @@ export class MediaUploadInstaller implements OnApplicationBootstrap {
     // which is why this is narrowed rather than assumed: a different adapter has no parsers to
     // register and this installer does nothing at all.
     const adapter = this.adapters.httpAdapter as
-      | (NestFastifyApplication['getHttpAdapter'] extends () => infer A ? A : never)
-      | undefined;
+      (NestFastifyApplication['getHttpAdapter'] extends () => infer A ? A : never) | undefined;
     const withParser = adapter as unknown as
       | {
           useBodyParser?: (

@@ -42,9 +42,8 @@ export class ConversationSweepProcessor implements JobProcessor {
 
     let cleared = 0;
     for (const row of due.staleLocks) {
-      const did = await tenantContext.run(
-        systemPrincipal(row.organizationId, newId()),
-        async () => this.ownership.clearLock(row.id),
+      const did = await tenantContext.run(systemPrincipal(row.organizationId, newId()), async () =>
+        this.ownership.clearLock(row.id),
       );
       if (did) cleared += 1;
     }

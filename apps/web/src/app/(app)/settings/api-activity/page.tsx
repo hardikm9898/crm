@@ -101,11 +101,7 @@ export default async function ApiActivityPage({
       {log.summary.requests > 0 && (
         <div className="mb-5 grid gap-3 sm:grid-cols-4">
           <StatCard label="Requests" value={log.summary.requests} hint="In the last day." />
-          <StatCard
-            label="Refused"
-            value={log.summary.refused}
-            hint="The caller can fix these."
-          />
+          <StatCard label="Refused" value={log.summary.refused} hint="The caller can fix these." />
           <StatCard label="Failed" value={log.summary.failed} hint="These are ours." />
           <StatCard
             label="Typical answer"
@@ -196,8 +192,7 @@ export default async function ApiActivityPage({
                     </div>
                     <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">
                       {row.apiKey?.name ?? 'a deleted key'} · {SURFACE_LABELS[row.surface]}
-                      {row.ip ? ` · from ${row.ip}` : ''} ·{' '}
-                      <code>{row.requestId}</code>
+                      {row.ip ? ` · from ${row.ip}` : ''} · <code>{row.requestId}</code>
                     </p>
                   </li>
                 ))}
@@ -271,15 +266,7 @@ export default async function ApiActivityPage({
   );
 }
 
-function FilterLink({
-  label,
-  href,
-  active,
-}: {
-  label: string;
-  href: string;
-  active: boolean;
-}) {
+function FilterLink({ label, href, active }: { label: string; href: string; active: boolean }) {
   return (
     <Link
       href={href}

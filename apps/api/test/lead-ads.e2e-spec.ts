@@ -353,7 +353,9 @@ describe('a Meta delivery', () => {
     expect(unsigned.statusCode).toBe(401);
     expect(unsigned.body.error?.message).toContain('X-Hub-Signature-256');
 
-    const wrong = await metaPost(connectionId, leadgen('wrong-1'), { secret: 'another-app-secret' });
+    const wrong = await metaPost(connectionId, leadgen('wrong-1'), {
+      secret: 'another-app-secret',
+    });
     expect(wrong.statusCode).toBe(401);
     // The likeliest cause, named: an app secret from a different app signs perfectly.
     expect(wrong.body.error?.message).toMatch(/app secret/i);

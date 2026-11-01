@@ -87,7 +87,11 @@ export class IntegrationInboundService {
       settings: connection.settings,
     });
     if (!check.ok) {
-      throw new AppError('INVALID_API_KEY', check.message ?? 'That delivery could not be verified.', 401);
+      throw new AppError(
+        'INVALID_API_KEY',
+        check.message ?? 'That delivery could not be verified.',
+        401,
+      );
     }
     return connection;
   }
@@ -272,7 +276,12 @@ export class IntegrationInboundService {
       });
       await this.integrations.recordInboundSuccess(organizationId, connection.connectionId);
       this.logger.info(
-        { provider: row.provider, externalId: row.externalEventId, leadId: result.leadId, status: result.status },
+        {
+          provider: row.provider,
+          externalId: row.externalEventId,
+          leadId: result.leadId,
+          status: result.status,
+        },
         'a provider event became a lead',
       );
     } catch (error) {
@@ -327,7 +336,11 @@ export class IntegrationInboundService {
   async captureInline(
     connection: InboundConnection,
     body: Record<string, unknown>,
-    options: { rawBody: string; idempotencyKey: string | undefined; headers: Record<string, string> },
+    options: {
+      rawBody: string;
+      idempotencyKey: string | undefined;
+      headers: Record<string, string>;
+    },
   ) {
     const result = await this.ingestion.capture(
       { organizationId: connection.organizationId, apiKeyRowId: null },

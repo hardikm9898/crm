@@ -45,7 +45,11 @@ let receiver: Server;
 let origin: string;
 let received: Received[] = [];
 /** What the receiver answers next. A function so a test can change its mind mid-suite. */
-let answer: (request: IncomingMessage) => { status: number; body?: string; location?: string } = () => ({
+let answer: (request: IncomingMessage) => {
+  status: number;
+  body?: string;
+  location?: string;
+} = () => ({
   status: 200,
   body: 'ok',
 });
@@ -219,7 +223,14 @@ describe('endpoints (FR-API-4)', () => {
 
   it('refuses a second endpoint for the same URL, which would deliver everything twice', async () => {
     const url = `${origin}/hook/duplicate-${SUFFIX}`;
-    expect((await api('POST', '/webhooks', { token: orgA.token, payload: { url, eventTypes: ['lead.created'] } })).statusCode).toBe(201);
+    expect(
+      (
+        await api('POST', '/webhooks', {
+          token: orgA.token,
+          payload: { url, eventTypes: ['lead.created'] },
+        })
+      ).statusCode,
+    ).toBe(201);
     const second = await api('POST', '/webhooks', {
       token: orgA.token,
       payload: { url, eventTypes: ['lead.created'] },
@@ -321,7 +332,10 @@ describe('delivery', () => {
   it('does not send to an endpoint that is switched off', async () => {
     received = [];
     const off = await endpoint(orgA.token, { eventTypes: ['deal.lost'] });
-    await setup('PATCH', `/webhooks/${off.id}`, { token: orgA.token, payload: { isActive: false } });
+    await setup('PATCH', `/webhooks/${off.id}`, {
+      token: orgA.token,
+      payload: { isActive: false },
+    });
     const eventId = newId();
     await dispatch(orgA.organizationId, { name: 'deal.lost', eventId });
     expect(await ctx.db.webhookDelivery.count({ where: { eventId } })).toBe(0);
@@ -334,8 +348,18 @@ describe('delivery', () => {
     await endpoint(orgA.token, { eventTypes: ['quotation.sent'] });
     const eventId = newId();
     const service = ctx.app.get(WebhookDispatchService);
-    await service.fanOut({ organizationId: orgA.organizationId, eventId, eventName: 'quotation.sent', payload: {} });
-    await service.fanOut({ organizationId: orgA.organizationId, eventId, eventName: 'quotation.sent', payload: {} });
+    await service.fanOut({
+      organizationId: orgA.organizationId,
+      eventId,
+      eventName: 'quotation.sent',
+      payload: {},
+    });
+    await service.fanOut({
+      organizationId: orgA.organizationId,
+      eventId,
+      eventName: 'quotation.sent',
+      payload: {},
+    });
     expect(await ctx.db.webhookDelivery.count({ where: { eventId } })).toBe(1);
   });
 
@@ -369,7 +393,9 @@ describe('when the endpoint does not take it', () => {
     expect(due).toBeGreaterThan(5_000);
     expect(due).toBeLessThan(13_000);
 
-    const endpointRow = await ctx.db.webhookEndpoint.findFirstOrThrow({ where: { id: created.id } });
+    const endpointRow = await ctx.db.webhookEndpoint.findFirstOrThrow({
+      where: { id: created.id },
+    });
     expect(endpointRow.failureCount).toBe(1);
     expect(endpointRow.isActive).toBe(true);
     expect(endpointRow.lastFailureAt).not.toBeNull();
@@ -525,7 +551,9 @@ describe('the delivery log, the sweep and the manual retry', () => {
     expect(rows[0]?.['status']).toBe('succeeded');
     expect((rows[0]?.['attempts'] as unknown[]).length).toBeGreaterThanOrEqual(1);
     // The envelope lifts `items` only when `pagination` is present.
-    expect((page.body.meta as { pagination?: { total?: number } }).pagination?.total).toBeGreaterThanOrEqual(1);
+    expect(
+      (page.body.meta as { pagination?: { total?: number } }).pagination?.total,
+    ).toBeGreaterThanOrEqual(1);
   });
 
   it('queues a delivery whose next attempt is due, and only that one', async () => {
@@ -537,7 +565,9 @@ describe('the delivery log, the sweep and the manual retry', () => {
     const delivery = await ctx.db.webhookDelivery.findFirstOrThrow({ where: { eventId } });
 
     // Not due yet: the sweep must leave it alone.
-    const before = await ctx.app.get(WebhookDispatchService).sweepDue(new Date(Date.now() - 60_000));
+    const before = await ctx.app
+      .get(WebhookDispatchService)
+      .sweepDue(new Date(Date.now() - 60_000));
     expect(before).toBe(0);
 
     await ctx.db.webhookDelivery.updateMany({
@@ -593,7 +623,12 @@ describe('the delivery log, the sweep and the manual retry', () => {
     const created = await endpoint(orgA.token, { eventTypes: ['lead.converted'] });
     const eventId = newId();
     const service = ctx.app.get(WebhookDispatchService);
-    await service.fanOut({ organizationId: orgA.organizationId, eventId, eventName: 'lead.converted', payload: {} });
+    await service.fanOut({
+      organizationId: orgA.organizationId,
+      eventId,
+      eventName: 'lead.converted',
+      payload: {},
+    });
     await setup('PATCH', `/webhooks/${created.id}`, {
       token: orgA.token,
       payload: { isActive: false },
@@ -621,7 +656,9 @@ describe('the delivery log, the sweep and the manual retry', () => {
     const header = `t=${received[0]?.headers['x-leados-timestamp']},${received[0]?.headers['x-leados-signature']}`;
     expect(verifySignature(created.secret, header, received[0]?.body ?? '').ok).toBe(true);
 
-    const delivery = await ctx.db.webhookDelivery.findFirstOrThrow({ where: { id: queued.deliveryId } });
+    const delivery = await ctx.db.webhookDelivery.findFirstOrThrow({
+      where: { id: queued.deliveryId },
+    });
     expect(delivery.status).toBe('succeeded');
     expect(delivery.eventType).toBe(WEBHOOK_TEST_EVENT);
   });
@@ -631,7 +668,9 @@ describe('the delivery log, the sweep and the manual retry', () => {
     answer = () => ({ status: 200 });
     const created = await endpoint(orgA.token, { eventTypes: ['task.created'] });
     await dispatch(orgA.organizationId, { name: 'task.created' });
-    expect(await ctx.db.webhookDelivery.count({ where: { endpointId: created.id } })).toBeGreaterThan(0);
+    expect(
+      await ctx.db.webhookDelivery.count({ where: { endpointId: created.id } }),
+    ).toBeGreaterThan(0);
 
     await setup('DELETE', `/webhooks/${created.id}`, { token: orgA.token });
     expect(await ctx.db.webhookEndpoint.count({ where: { id: created.id } })).toBe(0);
@@ -648,7 +687,12 @@ describe('the delivery log, the sweep and the manual retry', () => {
     await endpoint(orgA.token, { eventTypes: ['quotation.accepted'] });
     const eventId = newId();
     const service = ctx.app.get(WebhookDispatchService);
-    await service.fanOut({ organizationId: orgA.organizationId, eventId, eventName: 'quotation.accepted', payload: {} });
+    await service.fanOut({
+      organizationId: orgA.organizationId,
+      eventId,
+      eventName: 'quotation.accepted',
+      payload: {},
+    });
 
     const pending = await ctx.db.webhookDelivery.findFirstOrThrow({ where: { eventId } });
     expect(pending.status).toBe('pending');
@@ -668,9 +712,12 @@ describe('the delivery log, the sweep and the manual retry', () => {
     await endpoint(orgA.token, { eventTypes: ['call.logged'] });
     const eventId = newId();
     await tenantContext.run(systemPrincipal(orgB.organizationId, newId()), async () => {
-      await ctx.app
-        .get(WebhookDispatchService)
-        .fanOut({ organizationId: orgA.organizationId, eventId, eventName: 'call.logged', payload: {} });
+      await ctx.app.get(WebhookDispatchService).fanOut({
+        organizationId: orgA.organizationId,
+        eventId,
+        eventName: 'call.logged',
+        payload: {},
+      });
     });
     const rows = await ctx.db.webhookDelivery.findMany({ where: { eventId } });
     expect(rows).toHaveLength(1);

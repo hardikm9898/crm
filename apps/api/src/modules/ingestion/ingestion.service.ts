@@ -196,9 +196,7 @@ export class IngestionService {
 
     try {
       const ours = this.applyMapping(payload, options);
-      const mapped = await this.inTenant(caller.organizationId, async () =>
-        this.mapPayload(ours),
-      );
+      const mapped = await this.inTenant(caller.organizationId, async () => this.mapPayload(ours));
       const capture = await this.inTenant(caller.organizationId, async () =>
         this.leads.create(mapped.input as never),
       );
@@ -558,10 +556,7 @@ export class IngestionService {
    *    refusal at the validate stage with the field named — not a Prisma error about a column
    *    width, and not a lead silently stored with a field missing.
    */
-  private applyMapping(
-    payload: Record<string, unknown>,
-    options: CaptureOptions,
-  ): PublicLeadInput {
+  private applyMapping(payload: Record<string, unknown>, options: CaptureOptions): PublicLeadInput {
     if (!options.mapping || options.mapping.length === 0) {
       return { ...(options.defaults ?? {}), ...payload } as PublicLeadInput;
     }

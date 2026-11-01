@@ -263,7 +263,7 @@ export function cannedReplyProblem(input: {
   }
   if (body.length > 1024) {
     // WhatsApp's own ceiling for a text message body.
-    return { field: 'body', message: 'Up to 1024 characters, which is WhatsApp\'s own limit.' };
+    return { field: 'body', message: "Up to 1024 characters, which is WhatsApp's own limit." };
   }
   return null;
 }

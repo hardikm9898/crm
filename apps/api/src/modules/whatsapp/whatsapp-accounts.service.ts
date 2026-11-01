@@ -79,7 +79,8 @@ export class WhatsAppAccountsService {
   async connect(connectionId: string) {
     const principal = tenantContext.require('whatsapp.connect');
     const connection = await this.integrations.openForInbound('whatsapp_cloud', connectionId);
-    const wabaId = typeof connection.settings['wabaId'] === 'string' ? connection.settings['wabaId'] : '';
+    const wabaId =
+      typeof connection.settings['wabaId'] === 'string' ? connection.settings['wabaId'] : '';
     if (wabaId === '') {
       throw AppError.businessRule(
         'That connection has no WhatsApp Business Account id. Edit it and add one, then connect again.',

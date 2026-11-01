@@ -49,7 +49,10 @@ export class WhatsAppStatusService {
    * Platform-scoped only to resolve the number — the same necessity the inbound pipeline has, for
    * the same reason: a delivery names a `phone_number_id` and nothing else.
    */
-  async record(organizationId: string, status: InboundWhatsAppStatus): Promise<'applied' | 'ignored' | 'stale'> {
+  async record(
+    organizationId: string,
+    status: InboundWhatsAppStatus,
+  ): Promise<'applied' | 'ignored' | 'stale'> {
     const number = await withPlatformScope(
       'whatsapp: resolve the business number a status receipt arrived at',
       async () =>

@@ -71,7 +71,11 @@ export default async function WhatsAppTemplatesPage() {
       />
 
       <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <StatCard label="Templates" value={String(templates.items.length)} hint="Including drafts." />
+        <StatCard
+          label="Templates"
+          value={String(templates.items.length)}
+          hint="Including drafts."
+        />
         <StatCard
           label="Approved"
           value={String(templates.approved)}

@@ -32,7 +32,9 @@ export class WhatsAppRateLimiter {
   ) {}
 
   /** Whether this number may send right now, and how long to wait if not. */
-  async take(phoneNumberId: string): Promise<{ allowed: true } | { allowed: false; retryInMs: number }> {
+  async take(
+    phoneNumberId: string,
+  ): Promise<{ allowed: true } | { allowed: false; retryInMs: number }> {
     const limit = this.config.WHATSAPP_SENDS_PER_SECOND;
     if (limit <= 0) return { allowed: true };
     const second = Math.floor(Date.now() / 1000);

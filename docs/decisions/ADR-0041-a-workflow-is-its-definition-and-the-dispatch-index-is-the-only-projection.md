@@ -17,16 +17,16 @@ by adding one)."** Two obvious designs fail it before a line is written.
   action would be a release of `apps/web`.
 
 Separately, `database-design.md` §9 described the workflow graph **twice**: as
-`workflow_versions.definition JSONB` ("normalized graph snapshot") *and* as `workflow_steps` rows,
+`workflow_versions.definition JSONB` ("normalized graph snapshot") _and_ as `workflow_steps` rows,
 with `workflow_triggers` beside them. That is the defect this codebase has already paid for once —
-"a column a feature reads has to be read by *one* thing", which cost `notification_preferences` a
+"a column a feature reads has to be read by _one_ thing", which cost `notification_preferences` a
 per-type copy of somebody's quiet hours — arriving as a plan rather than as code.
 
 ## Decision
 
 **1. The registry is a declaration the API serves, and both halves read.** Each trigger, condition
 field and action in `packages/shared/src/automation.ts` carries a list of parameter fields with a
-type, a label, a hint and — where the value is a row in this workspace — which *kind* of row. The
+type, a label, a hint and — where the value is a row in this workspace — which _kind_ of row. The
 editor renders inputs from that list; the write path validates against the same list
 (`validateWorkflowDefinition`, pure, in `@leados/shared` so a preview and a refusal cannot
 disagree); the executor will dispatch on the key. Adding an action is one entry plus one handler.
@@ -39,7 +39,7 @@ arrives as data, so there is no copy to drift. What `lib/automation.spec.ts` rec
 thing a declaration cannot carry: how a row of each reference kind reads in a picker.
 
 **2. Four actions are declared as the engine's own.** `wait`, `branch`, `stop` and `enroll` change
-the *shape* of a run — a branch carries nested steps, a wait suspends it — so each carries
+the _shape_ of a run — a branch carries nested steps, a wait suspends it — so each carries
 `control: true`. Saying so in the registry is what keeps the first criterion honest: "adding an
 action needs no engine change" is a claim about the other kind, and four control shapes pretending
 to be plug-ins would make it a claim nobody could check.
@@ -51,7 +51,7 @@ independently of its version. §9 was corrected in the same change rather than f
 doc and the code disagree one of them is a bug, and here it was the doc.
 
 **4. `workflow_triggers` earns its place by being an index, not a copy.** Dispatch asks "which
-workflows in this workspace listen to `lead.created`" on *every* domain event, and digging that
+workflows in this workspace listen to `lead.created`" on _every_ domain event, and digging that
 out of JSONB is a scan. So one row per workflow that has something published, written by one
 method from the published definition, inside the publish transaction. It carries the event and the
 trigger's parameters and **no status of its own**: `status` and `kill_switch` live on `workflows`
@@ -70,7 +70,7 @@ workflow does not alter in-flight runs": a run pins `version_id`, and the row it
 immutable.
 
 **7. References are checked against the workspace, not against a schema.** The registry knows a
-parameter points at a status; only the workspace knows whether *that* status still exists. So
+parameter points at a status; only the workspace knows whether _that_ status still exists. So
 `validateWorkflowDefinition` checks shape and the service checks ids — including that a WhatsApp
 template is **approved**, not merely present, because a workflow published with a pending template
 is one that fails at three in the morning. The import's dry run already paid for the version of
@@ -86,7 +86,7 @@ transaction as the message insert, which is also the first transaction that writ
 - Adding an action is two edits: `WORKFLOW_ACTIONS` and, from step 2, a handler. Nothing in
   `apps/web` changes, and `lib/automation.spec.ts` proves it by rendering and collecting an action
   (`send_pigeon`) that does not exist.
-- Adding a new *reference kind* is three: the registry, `REFERENCE_SOURCES` (the endpoint behind
+- Adding a new _reference kind_ is three: the registry, `REFERENCE_SOURCES` (the endpoint behind
   it) and `REFERENCE_LABELS` (how its rows read). The exit criterion is about actions, and this is
   the honest boundary of the claim.
 - `workflows.current_version_id` and `workflow_versions.workflow_id` form a **circular** pair of
@@ -98,7 +98,7 @@ transaction as the message insert, which is also the first transaction that writ
   read by the next. A workflow that can be published and does nothing is honest; the screen says so
   at the top, and the roadmap entry says so too.
 - Nothing reaches a lead's timeline yet, by the same reasoning: a workflow is configuration, and
-  rule 6's entries are what *runs* write, where there is a lead to write them about. Configuration
+  rule 6's entries are what _runs_ write, where there is a lead to write them about. Configuration
   lands in the audit log (`workflow.created`, `workflow.published`, `workflow.stopped`).
 - The editor edits a **linear** list of steps. Branches are representable, validated and stored
   three deep; the visual builder that edits them arrives with the executor.

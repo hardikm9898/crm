@@ -57,7 +57,9 @@ describe('the soft ownership lock (`FR-WA-7`)', () => {
     expect(theirs.held).toBe(true);
     expect(theirs.mine).toBe(false);
     // Four minutes, because the lock lasts five and one minute of it is left.
-    expect(theirs.message).toBe('Nikhil opened this 4 minutes ago — check with them before replying.');
+    expect(theirs.message).toBe(
+      'Nikhil opened this 4 minutes ago — check with them before replying.',
+    );
 
     const mine = conversationLock({ ...held, lockUserId: ME, viewerId: ME });
     expect(mine.mine).toBe(true);
@@ -230,7 +232,11 @@ describe('a canned reply (`FR-WA-7`)', () => {
   });
 
   it('offers a reply while somebody is still typing its shortcut', () => {
-    const replies = [{ shortcut: '/price-list' }, { shortcut: '/pricing-note' }, { shortcut: '/thanks' }];
+    const replies = [
+      { shortcut: '/price-list' },
+      { shortcut: '/pricing-note' },
+      { shortcut: '/thanks' },
+    ];
     expect(matchingShortcuts(replies, '/pri').map((r) => r.shortcut)).toEqual([
       '/price-list',
       '/pricing-note',

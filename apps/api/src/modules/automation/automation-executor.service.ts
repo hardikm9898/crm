@@ -458,7 +458,8 @@ export class AutomationExecutorService {
     });
     const decisions: Record<string, 'then' | 'otherwise'> = {};
     for (const row of rows) {
-      if (row.decision === 'then' || row.decision === 'otherwise') decisions[row.stepId] = row.decision;
+      if (row.decision === 'then' || row.decision === 'otherwise')
+        decisions[row.stepId] = row.decision;
     }
     return decisions;
   }

@@ -895,7 +895,6 @@ generate shown once beside the URL to paste it into, a Google delivery appearing
 id, the summary counting two connections with the right plural and no nought, and the whole screen
 at 375 px with **0 px** of sideways scroll.
 
-
 ### 10.13 As built — Phase 5, step 1 (the WhatsApp inbox, and the number it arrives at)
 
 Two screens, and one of them is the first in this product that is somebody's **whole day**.
@@ -1026,7 +1025,6 @@ in the thread as an attachment, the caption printed under it, an empty submissio
 field error on the input, the chosen name printed before sending, and the inbox at 375 px with
 **0 px** of sideways scroll.
 
-
 ### 10.16 As built — Phase 5, step 4 (who has this conversation)
 
 The thread gained two cards under it — "This conversation" and "Internal notes" — and the first
@@ -1071,14 +1069,13 @@ types, which the deferred list had down for Phase 13 until `FR-WA-10` arrived. E
 where there is one, **why**: a row reading "Conversation assigned" would make a manager open the
 audit log for the two things they came for.
 
-
 ### 10.17 As built — Phase 5, step 5 (shortcuts, tags and what it cost)
 
 Two settings screens and two additions to the inbox. Five decisions:
 
 - **The composer offers a saved reply while the shortcut is still being typed.** `/pri` lists
   `/price-list` and `/pricing`, and only when the message **is** the shortcut — `call me on
-  /price-list` is a sentence, which is the same whole-message rule the opt-out keywords use. The
+/price-list` is a sentence, which is the same whole-message rule the opt-out keywords use. The
   rule lives in `matchingShortcuts` in `@leados/shared`, which a client component may not import
   (it reaches `node:async_hooks` through the tenant context and the Next build fails), so the
   composer mirrors it and a **spec reconciles the two** — the `TASK_BUCKETS` arrangement again.
@@ -1088,7 +1085,7 @@ Two settings screens and two additions to the inbox. Five decisions:
   message nobody would recognise is worse than no count. An agent editing before sending is the
   ordinary case, and the credit survives that.
 - **The tag editor is one comma-separated box.** The API cleans whatever arrives — `Site Visit,
-  pricing` becomes `site-visit`, `pricing` — so a chip component with an add button would be
+pricing` becomes `site-visit`, `pricing` — so a chip component with an add button would be
   ceremony, and a screen doing its own cleaning would be a second answer to one question. The saved
   values are printed as **text** above the input, not only inside it: a value that lives only in a
   form field is one nobody can read at a glance and nothing can assert, which the payment methods
@@ -1145,7 +1142,7 @@ on an action's key, so a new action's fields are drawn by code written before it
   everything configured), and "Archived" is finished. Each row also says what starts it in words.
 - **Both screens read through throwing loaders.** "No workflows yet" on a workspace whose
   automation is live would invite somebody to build a second one, which is the `loadProducts`
-  lesson. The *reference lists* are the exception and are swallowed per kind: a workspace with no
+  lesson. The _reference lists_ are the exception and are swallowed per kind: a workspace with no
   WhatsApp connection has no templates, and "nothing to choose from yet" is the truth.
 - **The screen says that nothing runs.** One card at the top, because a product that explains its
   own half-built state is better than one that looks finished and does nothing.

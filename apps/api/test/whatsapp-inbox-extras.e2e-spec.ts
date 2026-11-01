@@ -203,7 +203,11 @@ describe('a list that can be paged (the 100 k fixture’s finding)', () => {
       token: owner.token,
     });
     expect(first.statusCode).toBe(200);
-    expect(first.body.meta?.pagination).toMatchObject({ hasMore: false, nextCursor: null, total: 1 });
+    expect(first.body.meta?.pagination).toMatchObject({
+      hasMore: false,
+      nextCursor: null,
+      total: 1,
+    });
   });
 
   it('refuses a cursor it did not issue, rather than paging through a shape it invented', async () => {
@@ -267,10 +271,14 @@ describe('tags (`FR-WA-7`)', () => {
   });
 
   it('empties them, which is a real answer rather than an omission', async () => {
-    const cleared = await setup<{ tags: string[] }>('PUT', `/conversations/${conversationId}/tags`, {
-      token: owner.token,
-      payload: { tags: [] },
-    });
+    const cleared = await setup<{ tags: string[] }>(
+      'PUT',
+      `/conversations/${conversationId}/tags`,
+      {
+        token: owner.token,
+        payload: { tags: [] },
+      },
+    );
     expect(cleared.tags).toEqual([]);
   });
 });
@@ -282,7 +290,10 @@ describe('canned replies (`FR-WA-7`)', () => {
     const made = await setup<{ id: string; shortcut: string; usageCount: number }[]>(
       'POST',
       '/canned-replies',
-      { token: owner.token, payload: { shortcut: 'Price List', body: 'Our price list is attached.' } },
+      {
+        token: owner.token,
+        payload: { shortcut: 'Price List', body: 'Our price list is attached.' },
+      },
     );
     const reply = made.find((row) => row.shortcut === '/price-list');
     expect(reply).toBeDefined();
@@ -303,9 +314,11 @@ describe('canned replies (`FR-WA-7`)', () => {
   });
 
   it('counts a send, not a click, and sends what the agent actually typed', async () => {
-    const before = (await setup<{ id: string; usageCount: number }[]>('GET', '/canned-replies', {
-      token: owner.token,
-    })).find((row) => row.id === replyId)!.usageCount;
+    const before = (
+      await setup<{ id: string; usageCount: number }[]>('GET', '/canned-replies', {
+        token: owner.token,
+      })
+    ).find((row) => row.id === replyId)!.usageCount;
 
     const sent = await api<{ id: string; body: string }>(
       'POST',
@@ -314,15 +327,21 @@ describe('canned replies (`FR-WA-7`)', () => {
         token: owner.token,
         // Edited before sending, which is the ordinary case: a send that silently used the stored
         // wording would put words in somebody's mouth.
-        payload: { kind: 'text', body: 'Our price list is attached — shall I book a visit?', cannedReplyId: replyId },
+        payload: {
+          kind: 'text',
+          body: 'Our price list is attached — shall I book a visit?',
+          cannedReplyId: replyId,
+        },
       },
     );
     expect(sent.statusCode).toBe(202);
     expect(sent.body.data.body).toBe('Our price list is attached — shall I book a visit?');
 
-    const after = (await setup<{ id: string; usageCount: number }[]>('GET', '/canned-replies', {
-      token: owner.token,
-    })).find((row) => row.id === replyId)!.usageCount;
+    const after = (
+      await setup<{ id: string; usageCount: number }[]>('GET', '/canned-replies', {
+        token: owner.token,
+      })
+    ).find((row) => row.id === replyId)!.usageCount;
     expect(after).toBe(before + 1);
 
     const row = await ctx.db.message.findFirstOrThrow({
@@ -335,10 +354,14 @@ describe('canned replies (`FR-WA-7`)', () => {
   });
 
   it('lets two people each keep their own private shortcut', async () => {
-    const mine = await setup<{ shortcut: string; visibility: string }[]>('POST', '/canned-replies', {
-      token: owner.token,
-      payload: { shortcut: '/thanks', body: 'Thank you!', visibility: 'private' },
-    });
+    const mine = await setup<{ shortcut: string; visibility: string }[]>(
+      'POST',
+      '/canned-replies',
+      {
+        token: owner.token,
+        payload: { shortcut: '/thanks', body: 'Thank you!', visibility: 'private' },
+      },
+    );
     expect(mine.find((row) => row.shortcut === '/thanks')?.visibility).toBe('private');
     // The same person cannot have two, which the clash check says in a sentence.
     const again = await api('POST', '/canned-replies', {

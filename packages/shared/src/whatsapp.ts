@@ -350,7 +350,10 @@ function readMessage(
  * `sticker` each put it under their own name and a sticker's shape is an image's. A type with no
  * media returns null, which is what stops a text message from being queued for a download.
  */
-function readMedia(message: Record<string, unknown>, type: MessageType): InboundWhatsAppMedia | null {
+function readMedia(
+  message: Record<string, unknown>,
+  type: MessageType,
+): InboundWhatsAppMedia | null {
   if (!MEDIA_MESSAGE_TYPES.includes(type)) return null;
   const block = message[type];
   if (block === null || typeof block !== 'object') return null;
@@ -361,7 +364,10 @@ function readMedia(message: Record<string, unknown>, type: MessageType): Inbound
   if (typeof id !== 'string' || id === '') return null;
   return {
     providerMediaId: id,
-    mimeType: typeof media['mime_type'] === 'string' ? (media['mime_type'] as string).split(';')[0]!.trim() : null,
+    mimeType:
+      typeof media['mime_type'] === 'string'
+        ? (media['mime_type'] as string).split(';')[0]!.trim()
+        : null,
     sha256: typeof media['sha256'] === 'string' ? (media['sha256'] as string) : null,
     fileName: typeof media['filename'] === 'string' ? (media['filename'] as string) : null,
     voice: media['voice'] === true,
@@ -567,7 +573,8 @@ export function templateProblems(input: {
     problems.push({
       field: 'name',
       code: 'INVALID_TEMPLATE_NAME',
-      message: 'WhatsApp allows lower-case letters, digits and underscores only — like order_update.',
+      message:
+        'WhatsApp allows lower-case letters, digits and underscores only — like order_update.',
     });
   }
   if (!/^[a-z]{2}(_[A-Z]{2})?$/.test(input.language)) {
@@ -599,7 +606,10 @@ export function templateProblems(input: {
       message: 'WhatsApp allows 1024 characters in a template body.',
     });
   }
-  if (input.components.header !== undefined && templateVariables(input.components.header).length > 0) {
+  if (
+    input.components.header !== undefined &&
+    templateVariables(input.components.header).length > 0
+  ) {
     problems.push({
       field: 'components.header',
       code: 'HEADER_VARIABLE_UNSUPPORTED',

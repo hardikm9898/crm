@@ -443,7 +443,10 @@ export class WhatsAppTemplatesController {
 
   @Patch(':id')
   @RequirePermission(PERMISSIONS.WHATSAPP_MANAGE)
-  async update(@Param('id') id: string, @Body(zodBody(updateTemplateSchema)) body: UpdateTemplateInput) {
+  async update(
+    @Param('id') id: string,
+    @Body(zodBody(updateTemplateSchema)) body: UpdateTemplateInput,
+  ) {
     return this.templates.update(id, body);
   }
 

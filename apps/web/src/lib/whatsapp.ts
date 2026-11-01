@@ -610,10 +610,7 @@ export async function loadCannedRepliesOrThrow(token: string | null): Promise<Ca
 }
 
 /** What WhatsApp cost this workspace this month (`FR-BIL-4`). Throwing: a figure is why you came. */
-export async function loadWhatsAppUsage(
-  token: string | null,
-  query = '',
-): Promise<WhatsAppUsage> {
+export async function loadWhatsAppUsage(token: string | null, query = ''): Promise<WhatsAppUsage> {
   return (await request<WhatsAppUsage>(`/whatsapp/usage${query}`, { token })).data;
 }
 

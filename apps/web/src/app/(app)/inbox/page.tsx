@@ -66,7 +66,8 @@ export default async function InboxPage({
 }) {
   await requireCurrentUser();
   const params = await searchParams;
-  const one = (key: string) => (typeof params[key] === 'string' ? (params[key] as string) : undefined);
+  const one = (key: string) =>
+    typeof params[key] === 'string' ? (params[key] as string) : undefined;
   const token = await readAccessToken();
 
   const filters = {
@@ -115,7 +116,11 @@ export default async function InboxPage({
       const approved = await loadSendableTemplates(token);
       composerTemplates = await Promise.all(
         approved.map(async (template) => {
-          const resolved = await previewTemplate(template.id, conversation?.lead?.id ?? null, token);
+          const resolved = await previewTemplate(
+            template.id,
+            conversation?.lead?.id ?? null,
+            token,
+          );
           const variables = templateVariables(template.components.body ?? '');
           return {
             id: template.id,
@@ -126,10 +131,7 @@ export default async function InboxPage({
             variables,
             // Keyed by the variable's number, which is how the API's own map is keyed.
             resolved: Object.fromEntries(
-              variables.map((index, position) => [
-                String(index),
-                resolved?.values[position] ?? '',
-              ]),
+              variables.map((index, position) => [String(index), resolved?.values[position] ?? '']),
             ),
             missing: resolved?.missing ?? [],
           };
@@ -320,11 +322,7 @@ export default async function InboxPage({
                 title="Internal notes"
                 description="Only your colleagues see these. Tick a name to tell them."
               >
-                <NotesPanel
-                  conversationId={conversation.id}
-                  notes={notes}
-                  members={members}
-                />
+                <NotesPanel conversationId={conversation.id} notes={notes} members={members} />
               </Card>
               <LeadContext conversation={conversation} />
             </>

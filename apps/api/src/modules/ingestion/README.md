@@ -63,14 +63,14 @@ address outside the allowlist, a suspended workspace) · `404` when the workspac
 
 ## The two screens
 
-| Screen               | What it is for                                                                 |
-| -------------------- | ------------------------------------------------------------------------------ |
-| `/settings/api-keys` | Create a key (secret shown **once**), rotate, revoke, allowlist, the request    |
-| `/ingestion`         | The test tool, the payloads that are not leads, the unmapped fields, the log    |
+| Screen               | What it is for                                                               |
+| -------------------- | ---------------------------------------------------------------------------- |
+| `/settings/api-keys` | Create a key (secret shown **once**), rotate, revoke, allowlist, the request |
+| `/ingestion`         | The test tool, the payloads that are not leads, the unmapped fields, the log |
 
 Both behind `api_key:manage`. The keys screen prints the signed `curl` with this workspace's own
 public key in it and reads both halves of the credential from shell variables — a snippet with a
-secret pasted into it is a secret in a browser's history. A *replay* reports its success from the
+secret pasted into it is a secret in a browser's history. A _replay_ reports its success from the
 re-rendered server tree (the payload's own row says "Tried again just now — it became a lead"),
 because a successful replay takes the row out of the "did not become leads" list and unmounts the
 form that would have shown the message.
@@ -119,7 +119,7 @@ form that would have shown the message.
   field, however somebody noticed they needed one) with the key derived by `customFieldKeyFor` —
   and the **mapper** matches an integration's top-level key with that same function, so
   `propertyType` reaches the `property_type` somebody just made. Without that half the click
-  creates a field nothing ever writes to. The value is validated against the definition *before* it
+  creates a field nothing ever writes to. The value is validated against the definition _before_ it
   is accepted, so making it a `number` field while the integration keeps sending words leaves the
   key unmapped with a note rather than turning a capture that worked yesterday into a 400.
 - **The test tool runs the normalize step for real.** It answers `wouldCreate`, the phone as it

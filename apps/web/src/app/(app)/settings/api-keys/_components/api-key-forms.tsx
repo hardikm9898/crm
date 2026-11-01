@@ -166,7 +166,9 @@ export function NewApiKeyForm({ grantable }: { grantable: readonly ApiKeyScope[]
         <Field
           label="Requests a minute"
           hint="Optional. Leave empty for the workspace default of 120."
-          {...(errorOf(state, 'rateLimitPerMin') ? { error: errorOf(state, 'rateLimitPerMin') } : {})}
+          {...(errorOf(state, 'rateLimitPerMin')
+            ? { error: errorOf(state, 'rateLimitPerMin') }
+            : {})}
         >
           <input
             name="rateLimitPerMin"

@@ -281,7 +281,11 @@ beforeAll(async () => {
             ? {
                 status: 400,
                 body: JSON.stringify({
-                  error: { message: 'Media is not readable', code: 131_053, type: 'OAuthException' },
+                  error: {
+                    message: 'Media is not readable',
+                    code: 131_053,
+                    type: 'OAuthException',
+                  },
                 }),
               }
             : {
@@ -409,17 +413,21 @@ describe('an inbound attachment (`FR-WA-3`)', () => {
 
     // And while it is pending the route says so rather than answering an empty body, which a
     // browser renders as a broken image with no explanation.
-    const early = await api(
-      'GET',
-      `/conversations/${conversationId}/messages/${messageId}/media`,
-      { token: orgA.token },
-    );
+    const early = await api('GET', `/conversations/${conversationId}/messages/${messageId}/media`, {
+      token: orgA.token,
+    });
     expect(early.statusCode).toBe(422);
 
     await flushDownloads();
     const stored = await ctx.db.messageMedia.findFirstOrThrow({
       where: { messageId },
-      select: { downloadStatus: true, fileKey: true, sizeBytes: true, sha256: true, mimeType: true },
+      select: {
+        downloadStatus: true,
+        fileKey: true,
+        sizeBytes: true,
+        sha256: true,
+        mimeType: true,
+      },
     });
     expect(stored.downloadStatus).toBe('stored');
     expect(stored.sizeBytes).toBe(PIXEL.byteLength);
@@ -672,9 +680,13 @@ describe('sending an attachment (`FR-WA-3`)', () => {
     expect(held.providerMediaId).toMatch(/^meta-media-/);
 
     sendFails = false;
-    const retried = await api('POST', `/conversations/${conversationId}/messages/${messageId}/retry`, {
-      token: orgA.token,
-    });
+    const retried = await api(
+      'POST',
+      `/conversations/${conversationId}/messages/${messageId}/retry`,
+      {
+        token: orgA.token,
+      },
+    );
     expect(retried.statusCode).toBe(202);
     await flushSends();
     // One upload for two attempts.

@@ -90,7 +90,9 @@ function captureEntry(
   if (!input.formId && answers.length === 0) return [];
   return [
     {
-      type: input.formId ? ACTIVITY_TYPES.LEAD_FORM_SUBMITTED : ACTIVITY_TYPES.LEAD_ENQUIRY_RECEIVED,
+      type: input.formId
+        ? ACTIVITY_TYPES.LEAD_FORM_SUBMITTED
+        : ACTIVITY_TYPES.LEAD_ENQUIRY_RECEIVED,
       leadId,
       occurredAt,
       payload: {

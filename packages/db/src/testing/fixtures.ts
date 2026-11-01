@@ -6,6 +6,7 @@ import {
   type UnscopedDbClient,
 } from '../client.js';
 import { withAuditPurge } from '../audit-purge.js';
+import { seedPlatformCatalogue } from '../seeding/platform-catalogue.js';
 
 /**
  * Test harness for the isolation suite. Builds two complete tenants so every test can
@@ -45,6 +46,15 @@ export async function createHarness(): Promise<TestHarness> {
   const connectionString = testConnectionString();
   const unscoped = createUnscopedDbClient({ connectionString, poolMax: 5 });
   const db = createDbClient({ connectionString, poolMax: 5 });
+
+  // Reference data, not fixtures — the same reason `apps/api/test/app-harness.ts` does this, and
+  // the same call. Without it this suite is only self-sufficient on a database somebody has
+  // already run `pnpm db:seed` against: the industry-template catalogue (`FR-ONB-2`) is platform
+  // data that no fixture creates, so on a freshly migrated database its two tests read an empty
+  // table. That is exactly "a test that finds its fixture instead of creating it", and it passed
+  // for four phases because the only databases it ever ran against were seeded ones. Idempotent
+  // upserts, so a repeat run changes nothing.
+  await seedPlatformCatalogue(unscoped);
 
   const orgA = await createTenant(unscoped, 'a');
   const orgB = await createTenant(unscoped, 'b');

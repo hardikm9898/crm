@@ -220,8 +220,8 @@ can retune cadence.
 | every minute       | `notifications.release`                                               | Deliver the notifications quiet hours held, dropping the ones now out of date (`FR-NOT-3`). Built                                         |
 | every 5 min        | `sla.sweep`                                                           | At-risk → warn, breached → escalate (`FR-TSK-8`). Built; breaches handled before warnings in a tick                                       |
 | every 5 min        | `rollup.*-daily` (today's partial)                                    | Near-real-time dashboards                                                                                                                 |
-| every 10 min       | `integration.health-check`                                            | Per-connection probes → `integration_health_checks`. Built — on `maintenance`, see the amendment below                                     |
-| every 5 min        | `maintenance.integration-retry`                                       | Re-queue the provider events that have not become leads (`provider_events`). Built — see the amendment below                               |
+| every 10 min       | `integration.health-check`                                            | Per-connection probes → `integration_health_checks`. Built — on `maintenance`, see the amendment below                                    |
+| every 5 min        | `maintenance.integration-retry`                                       | Re-queue the provider events that have not become leads (`provider_events`). Built — see the amendment below                              |
 | every 15 min       | `analytics.session-close`                                             | Close sessions idle > 30 min                                                                                                              |
 | hourly             | `ads.sync-metrics`                                                    | Spend/impressions/clicks                                                                                                                  |
 | hourly             | `webhook.reap-exhausted`                                              | Disable dead endpoints, alert admins                                                                                                      |
@@ -411,10 +411,10 @@ All schedules are working-hours/timezone aware where they touch humans — a fol
 > `maintenance`, both because a provider that waits for us is a provider that retries
 > ([ADR-0035](./decisions/ADR-0035-a-provider-event-is-deduplicated-on-the-providers-own-id.md)):
 >
-> | Schedule     | Job                              | Purpose                                                              |
-> | ------------ | -------------------------------- | -------------------------------------------------------------------- |
-> | on demand    | `integration.ingest-event`       | One `provider_events` row → fetch if needed → the capture pipeline    |
-> | every 5 min  | `maintenance.integration-retry`  | Re-queue the provider events that have not become leads (max 3 tries) |
+> | Schedule    | Job                             | Purpose                                                               |
+> | ----------- | ------------------------------- | --------------------------------------------------------------------- |
+> | on demand   | `integration.ingest-event`      | One `provider_events` row → fetch if needed → the capture pipeline    |
+> | every 5 min | `maintenance.integration-retry` | Re-queue the provider events that have not become leads (max 3 tries) |
 >
 > - **The webhook answers 200 before the work**, which is what §7 of `api-architecture.md` asks for
 >   and what keeps a two-second capture from becoming a second Meta delivery. The ledger row is the
@@ -431,10 +431,10 @@ All schedules are working-hours/timezone aware where they touch humans — a fol
 > **Amendment, 2026-10-19 (implementation, Phase 5 step 1 — WhatsApp inbound).** One more job, and
 > one more partition sweep:
 >
-> | Schedule     | Job                              | Purpose                                                            |
-> | ------------ | -------------------------------- | ------------------------------------------------------------------ |
-> | on demand    | `whatsapp.ingest-message`        | One `provider_events` row → a conversation, a message, a lead, a timeline entry |
-> | monthly      | `maintenance.activity-partitions`| now also creates `messages_*` months ahead and reports stranded rows |
+> | Schedule  | Job                               | Purpose                                                                         |
+> | --------- | --------------------------------- | ------------------------------------------------------------------------------- |
+> | on demand | `whatsapp.ingest-message`         | One `provider_events` row → a conversation, a message, a lead, a timeline entry |
+> | monthly   | `maintenance.activity-partitions` | now also creates `messages_*` months ahead and reports stranded rows            |
 >
 > - **Which job a delivery becomes is read from the provider's capabilities**, not from its name:
 >   a `messaging` provider's events go to `whatsapp.ingest-message` and a `lead_ingest` provider's to
@@ -451,18 +451,18 @@ All schedules are working-hours/timezone aware where they touch humans — a fol
 
 > **Amendment, 2026-10-19 (implementation, Phase 5 step 2 — sending).** Four more jobs:
 >
-> | Schedule      | Job                                | Purpose                                                           |
-> | ------------- | ---------------------------------- | ----------------------------------------------------------------- |
-> | on demand     | `whatsapp.send-message`            | One queued message → Meta → `accepted`, or a reason on the row     |
-> | on demand     | `whatsapp.ingest-status`           | One status receipt → the message's own status and history          |
-> | every 2 min   | `maintenance.whatsapp-send-retry`  | Re-queue a message a worker never handed to Meta                   |
-> | every 6 hours | `whatsapp.sync-templates`          | Reconcile every workspace's templates against Meta                 |
+> | Schedule      | Job                               | Purpose                                                        |
+> | ------------- | --------------------------------- | -------------------------------------------------------------- |
+> | on demand     | `whatsapp.send-message`           | One queued message → Meta → `accepted`, or a reason on the row |
+> | on demand     | `whatsapp.ingest-status`          | One status receipt → the message's own status and history      |
+> | every 2 min   | `maintenance.whatsapp-send-retry` | Re-queue a message a worker never handed to Meta               |
+> | every 6 hours | `whatsapp.sync-templates`         | Reconcile every workspace's templates against Meta             |
 >
 > - **The send is a queue hop because the row is written first.** A message somebody typed must not
 >   be lost to a provider timeout, and per-number rate limiting is only possible where the sends are
 >   serialised. The job id is the message's own id, so the same message cannot be queued twice.
 > - **Over the rate limit is not a failure.** The job re-queues itself with a delay to the next
->   second and the attempt is **not** counted against the message; a 429 from Meta *is* counted but
+>   second and the attempt is **not** counted against the message; a 429 from Meta _is_ counted but
 >   leaves the message `queued`, and five attempts or any other refusal marks it `failed`.
 > - **A status receipt is its own job**, because it is about a message we sent rather than one that
 >   arrived — and its ledger key is `<wamid>:<status>`, since one message produces four receipts and
@@ -477,16 +477,16 @@ All schedules are working-hours/timezone aware where they touch humans — a fol
 
 > **Amendment, 2026-10-20 (implementation, Phase 5 step 3 — media).** Two more jobs:
 >
-> | Schedule      | Job                                 | Purpose                                                        |
-> | ------------- | ----------------------------------- | -------------------------------------------------------------- |
-> | on demand     | `whatsapp.download-media`           | One inbound attachment → Meta's lookup → the object store      |
-> | every 5 min   | `maintenance.whatsapp-media-retry`  | Re-fetch the attachments a worker never got                    |
+> | Schedule    | Job                                | Purpose                                                   |
+> | ----------- | ---------------------------------- | --------------------------------------------------------- |
+> | on demand   | `whatsapp.download-media`          | One inbound attachment → Meta's lookup → the object store |
+> | every 5 min | `maintenance.whatsapp-media-retry` | Re-fetch the attachments a worker never got               |
 >
 > - **The download is a job because the delivery must be acknowledged first.** A delivery Meta
 >   waits on is a delivery Meta **retries**, and a four-second CDN fetch would turn one photo into
 >   two — undoing the ledger. The message and its `message_media` row land in the ingestion's own
 >   transaction; the bytes follow.
-> - **The job's subject is the *message's* id**, read from `payload.aggregateId`, because that is
+> - **The job's subject is the _message's_ id**, read from `payload.aggregateId`, because that is
 >   what the attachment belongs to and what the ingestion knows. Its job id is
 >   `whatsapp-media-<messageId>`, so a replayed ingestion queues nothing new.
 > - **A failure is recorded on the row and then rethrown.** The row carries the sentence the screen
@@ -503,9 +503,9 @@ All schedules are working-hours/timezone aware where they touch humans — a fol
 
 > **Amendment, 2026-10-20 (implementation, Phase 5 step 4 — the shared inbox).** One more job:
 >
-> | Schedule      | Job                               | Purpose                                                       |
-> | ------------- | --------------------------------- | ------------------------------------------------------------- |
-> | every minute  | `maintenance.conversation-sweep`  | Clear lapsed locks and wake snoozed conversations             |
+> | Schedule     | Job                              | Purpose                                           |
+> | ------------ | -------------------------------- | ------------------------------------------------- |
+> | every minute | `maintenance.conversation-sweep` | Clear lapsed locks and wake snoozed conversations |
 >
 > - **Every minute, like the notification release**, and for the same reason: a snooze somebody set
 >   has to be **delivered** rather than merely to expire. `snoozed_until <= now()` as a list
@@ -518,7 +518,7 @@ All schedules are working-hours/timezone aware where they touch humans — a fol
 >   `conversations_snoozed`) are only used if each is asked its own question — an `OR` cannot be a
 >   range scan, which `/my/today` paid for.
 > - **Both writes are conditional on the state the sweep read.** `UPDATE … WHERE status =
->   'snoozed' AND snoozed_until <= now()` cannot drag back a conversation somebody closed a second
+'snoozed' AND snoozed_until <= now()` cannot drag back a conversation somebody closed a second
 >   earlier, and the row count is what says whether anything happened — the same shape as the
 >   status receipts' conditional advance.
 > - **Cross-tenant, so the read is platform-scoped and each write enters its row's own workspace.**
@@ -619,8 +619,8 @@ banned — this is the highest-consequence subsystem in the product.
 > ([ADR-0041](./decisions/ADR-0041-a-workflow-is-its-definition-and-the-dispatch-index-is-the-only-projection.md)).
 >
 > **`ConditionEvaluator` does not reuse §4's filter DSL.** The automation condition vocabulary is
-> its own (`CONDITION_FIELDS` plus nine operators), because a saved view filters *rows a person is
-> browsing* and an automation condition asks about *one lead the engine already has*. Sharing the
+> its own (`CONDITION_FIELDS` plus nine operators), because a saved view filters _rows a person is
+> browsing_ and an automation condition asks about _one lead the engine already has_. Sharing the
 > expression language would mean sharing a compiler to SQL that an in-process evaluation does not
 > want.
 >
@@ -642,7 +642,7 @@ banned — this is the highest-consequence subsystem in the product.
 > `automation_runs_live` predicate the re-entry guard reads.
 >
 > **The retry reopens the run.** `POST /automation/runs/{id}/retry` sets it back to `running` and
-> enqueues one step job; `current_step_id` still points at the last step that *succeeded*, so the
+> enqueues one step job; `current_step_id` still points at the last step that _succeeded_, so the
 > graph itself says where to resume and "side effects already applied are not repeated" needs no
 > bookkeeping. The new attempt writes a **new** `automation_run_steps` row, which is both the record
 > of the first failure and what makes the handler's idempotency key different this time. The kill

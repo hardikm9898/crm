@@ -104,7 +104,9 @@ export function NewTemplateForm({ accountId }: { accountId: string }) {
           className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-sm text-[var(--color-text)]"
           data-template-body
         />
-        <span>{fieldError('components.body') ?? 'Use {{1}}, {{2}} for anything that changes.'}</span>
+        <span>
+          {fieldError('components.body') ?? 'Use {{1}}, {{2}} for anything that changes.'}
+        </span>
       </label>
 
       <label className="flex flex-col gap-1 text-xs text-[var(--color-text-muted)]">
@@ -172,7 +174,8 @@ export function TemplateRow({ template }: { template: WhatsAppTemplate }) {
           {/* The name as text, not only inside an input: a settings list whose values live in
               inputs is unreadable at a glance and unassertable by a browser check. */}
           <p className="text-sm font-medium" data-template-name={template.id}>
-            {template.name} <span className="text-[var(--color-text-muted)]">({template.language})</span>
+            {template.name}{' '}
+            <span className="text-[var(--color-text-muted)]">({template.language})</span>
           </p>
           <p className="text-xs text-[var(--color-text-muted)]" data-template-preview={template.id}>
             {template.preview || 'Its wording lives at WhatsApp.'}

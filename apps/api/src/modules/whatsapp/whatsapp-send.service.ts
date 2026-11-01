@@ -273,9 +273,10 @@ export class WhatsAppSendService {
 
   private async prepareText(body: string): Promise<PreparedMessage> {
     const text = body.trim();
-    if (text === '') throw AppError.validation('There is nothing to send', [
-      { field: 'body', code: 'EMPTY_MESSAGE', message: 'Write something first.' },
-    ]);
+    if (text === '')
+      throw AppError.validation('There is nothing to send', [
+        { field: 'body', code: 'EMPTY_MESSAGE', message: 'Write something first.' },
+      ]);
     return {
       type: 'text',
       body: text,

@@ -46,7 +46,12 @@ interface CreatedKey {
 async function api<T>(
   method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE',
   url: string,
-  options: { token?: string; payload?: unknown; headers?: Record<string, string>; ip?: string } = {},
+  options: {
+    token?: string;
+    payload?: unknown;
+    headers?: Record<string, string>;
+    ip?: string;
+  } = {},
 ) {
   return call<EnvelopeBody<T>>(ctx.app, {
     method,
@@ -422,7 +427,11 @@ describe('the request log (FR-SA-4)', () => {
       where: { id: orgA.organizationId },
       select: { publicKey: true },
     });
-    const body = JSON.stringify({ firstName: 'From', lastName: 'AWebsite', phone: '+919845012388' });
+    const body = JSON.stringify({
+      firstName: 'From',
+      lastName: 'AWebsite',
+      phone: '+919845012388',
+    });
     const { signRequest } = await import('@leados/shared');
 
     const posted = await call(ctx.app, {

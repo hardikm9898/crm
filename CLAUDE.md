@@ -784,7 +784,7 @@ prisma migrate deploy` after generating a migration.
   than `column_name`, because the name is the wording and changes when the form is edited.
 - **A provider's timestamp is not a column we can sort by.** Meta's `timestamp` is in **whole
   seconds**, and the first version of the WhatsApp ingestion wrote it into `messages.created_at` —
-  which is the partition key *and* the inbox's sort order. Two messages in one second then tie, and
+  which is the partition key _and_ the inbox's sort order. Two messages in one second then tie, and
   "the latest message" became whichever row the planner happened to return: the conversation list
   showed the previous message as its preview, found by a test that sent two messages in the same
   second. `created_at` is **ours** (when the delivery arrived), `sent_at` is **theirs**, and the
@@ -795,7 +795,7 @@ prisma migrate deploy` after generating a migration.
   be a near-synonym.** The branch between "ledger the events and queue them" and "the body is one
   lead, capture it in the request" was read off `deliveryIsAReference` — true for Meta Lead Ads and
   false for everything else, which happened to agree until WhatsApp, whose payload carries the
-  message in full *and* names its own events. A status receipt about a message we sent therefore
+  message in full _and_ names its own events. A status receipt about a message we sent therefore
   fell through to the single-lead path and answered **400**, which is how Meta learns to disable an
   endpoint and stop delivering the messages a business is paying for. `deliveryShape`
   (`events | single_lead | none`) is declared per provider and reconciled against the adapter at
@@ -833,7 +833,7 @@ prisma migrate deploy` after generating a migration.
   as a predicate.
 - **A status is a summary; a timestamp is a fact.** The same receipt ordering that must not move
   `messages.status` backwards must still write `delivered_at`: a `delivered` receipt that arrives
-  after `read` means the message *was* delivered at 11:02, and skipping the stamp because the
+  after `read` means the message _was_ delivered at 11:02, and skipping the stamp because the
   summary had been overtaken left the column null on a message everybody could see was delivered.
   Two writes, one unconditional and one conditional.
 - **A row with two presenters is a row whose two readings diverge.** The thread's message list and
@@ -893,11 +893,11 @@ prisma migrate deploy` after generating a migration.
   therefore has a nullable `enrollment_id` paired with `dry_run` by a `CASE` biconditional — and the
   partial index the guard reads (`automation_runs_live`) excludes previews, because an interrupted
   inline preview leaves a `running` row that would block the lead for ever.
-- **A schema-object spec that only checks a constraint's *name* misses half a meaning.** A later
+- **A schema-object spec that only checks a constraint's _name_ misses half a meaning.** A later
   migration can keep `automation_runs_real_run_is_enrolled` and lose one direction of it, and
   nothing in the application would notice because the service never writes either forbidden
   combination. `schema-objects.int-spec.ts` now reads `pg_get_constraintdef` and the index
-  `indexdef` for the objects whose *predicate* is the guarantee, not just their presence.
+  `indexdef` for the objects whose _predicate_ is the guarantee, not just their presence.
 - **A boolean condition field offers `equals`, not `is_true`.** The registry declares the operators
   per field and `validateWorkflowDefinition` refuses the rest, so a graph written with the wrong one
   is caught by `publish` — which is the registry working. Read `CONDITION_FIELDS[].operators` rather
@@ -1038,7 +1038,7 @@ report something as done that is not done.
   hard-coding the same literal.
 - **A thumbnail that fails to load looks exactly like a feature that works.** A `<img>` whose bytes
   answer 422 renders as a broken image with no explanation, and a check asserting the element is
-  *present* passes hardest when that is what happened. The API therefore answers `media.available`
+  _present_ passes hardest when that is what happened. The API therefore answers `media.available`
   as a field rather than leaving the screen to read a status word, the thread renders a **sentence**
   for anything not stored, and the browser check asserts `naturalWidth > 0` — "it is there" and "it
   loaded" are two different claims.
@@ -1153,7 +1153,7 @@ report something as done that is not done.
   sending more often than not, and substituting the stored text would put words in their mouth.
 - **A partial unique is what lets something be retired and its name reused.**
   `canned_replies_live_shortcut` is `(organization_id, owner_user_id, shortcut) WHERE deleted_at IS
-  NULL`. The owner is in the key because a private reply is somebody's own — two agents may each
+NULL`. The owner is in the key because a private reply is somebody's own — two agents may each
   keep their own `/thanks` — and the `WHERE` is what lets a workspace reuse a shortcut it retired. A
   plain unique reads identically in review and makes that impossible for ever, which
   `integration_connections_live_provider` already paid for once.
@@ -1168,15 +1168,15 @@ report something as done that is not done.
   write, publish and watch do nothing for ever. It is the `WEBHOOK_EVENT_TYPES` lesson in a third
   place, so the check is now the same one: `event-subscriptions.spec.ts` asserts every
   `WORKFLOW_TRIGGERS[].event` is a key of `EVENT_SUBSCRIPTIONS`, which is also the registry of
-  *known* events — and listing an event there with `[]` subscribers is the honest way to say "the
+  _known_ events — and listing an event there with `[]` subscribers is the honest way to say "the
   consumer arrives next step", because an unlisted name reads identically to a typo.
 - **A declaration a screen cannot act on is half a feature.** A parameter saying `reference:
-  'lead_status'` is right — rule 4 forbids naming a workspace's statuses — but a picker with no
+'lead_status'` is right — rule 4 forbids naming a workspace's statuses — but a picker with no
   list behind it renders empty, which looks exactly like a workspace with no statuses. So the kind
   and the **endpoint** behind it are declared together (`REFERENCE_SOURCES`), the same reasoning as
   "a screen's figures and the links behind them belong in one definition", and the e2e calls every
   path in that table. The one thing such a declaration cannot carry is which field of the answer is
-  the *name*, which is a fact about `/users` rather than about automation — so a new **kind** costs
+  the _name_, which is a fact about `/users` rather than about automation — so a new **kind** costs
   one label function while a new **action** costs nothing, and that is the honest boundary of "no
   frontend release".
 - **An empty value is "not chosen yet", not "unknown".** A new workflow starts with
@@ -1236,7 +1236,7 @@ report something as done that is not done.
   `canAct` returns false for a permission the principal lacks, and `filterFor` defaults an absent
   **scope** to `own`, which compares the row against `actorId` — and a workflow has none. Nothing in
   the engine looked wrong; the data scope was working exactly as designed against a caller who is
-  nobody. The answer was to say what a workflow *is*: permissions at **organization** scope, because
+  nobody. The answer was to say what a workflow _is_: permissions at **organization** scope, because
   it is the workspace's standing instruction, and the permissions **enumerated** in one file rather
   than granted wholesale, so adding an action is a moment where somebody decides what it may do.
 - **Threading a value through every service is one call site away from not being threaded.**
@@ -1247,7 +1247,7 @@ report something as done that is not done.
   from it, which is the same argument `actorType` already made for living there: a service that has
   never heard of automation produces a correctly attributed event. Assert the **emitted event**, not
   the engine's own bookkeeping.
-- **A test whose fixture is a *listener* leaks into every later test.** Each test in the engine
+- **A test whose fixture is a _listener_ leaks into every later test.** Each test in the engine
   suite published a workflow triggered by `lead.created`, and nothing unpublished them — so the
   fifth test's lead started eight runs, `dispatch` answered `started: 8` where the assertion said 1,
   and the daily-cap test's cap of one was eaten by somebody else's workflow before its own first
@@ -1259,7 +1259,7 @@ report something as done that is not done.
   and cleans up afterwards still starts with the whole file's actions already counted. Clear it
   first; a `finally` that tidies up protects the next test and not this one.
 - **A control shape and a handler are different kinds of thing, and the registry has to say which.**
-  `wait`, `branch`, `stop` and `enroll` change the *shape* of a run — a branch carries nested steps,
+  `wait`, `branch`, `stop` and `enroll` change the _shape_ of a run — a branch carries nested steps,
   a wait suspends it — so they are the executor's own vocabulary, and `control: true` is what keeps
   "adding an action needs no engine change" a claim about the other kind. The boot check reconciles
   both directions: a declared action with no handler is a workflow that publishes and does nothing,
@@ -1276,5 +1276,5 @@ report something as done that is not done.
   meant.** `page.locator('[data-shortcut-error], main [role="alert"]').first()` read the **summary**
   notice rather than the field error, and reported "a taken shortcut says whose it is" as failing
   while the product was rendering both correctly. Worse, the same locator written the other way
-  round would have *passed* on a screen that had lost the field error entirely. Assert on the
+  round would have _passed_ on a screen that had lost the field error entirely. Assert on the
   specific node, and assert the summary separately — the two carry different sentences on purpose.

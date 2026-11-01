@@ -91,7 +91,7 @@ Each part of it is varied for a reason:
   The list's two aggregates are counts over the whole filter, and a fixture where every row matches
   makes a partial index look pointless.
 - **Bodies drawn from a vocabulary of nine**, so `messages_body_search` has nine posting lists of
-  about eleven thousand rows each: a term that matches a *slice*, which is what a search measures.
+  about eleven thousand rows each: a term that matches a _slice_, which is what a search measures.
   One repeated string would make the search either free or useless.
 - **`last_message_at` computed from the messages**, in a third pass. The first version guessed it,
   and also dated messages **in the future** — a conversation created "now" plus 37-minute steps — so

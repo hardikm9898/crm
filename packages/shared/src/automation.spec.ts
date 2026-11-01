@@ -33,7 +33,8 @@ describe('the registry itself', () => {
         expect(PARAM_TYPES, `${spec.key}.${field.key}`).toContain(field.type);
         // A `select` with no options renders an empty box; a `reference` with no kind is a list
         // the screen cannot fetch. Either one looks like a workspace with nothing in it.
-        if (field.type === 'select') expect(field.options?.length, `${spec.key}.${field.key}`).toBeGreaterThan(0);
+        if (field.type === 'select')
+          expect(field.options?.length, `${spec.key}.${field.key}`).toBeGreaterThan(0);
         if (field.type === 'reference') {
           expect(REFERENCE_KINDS, `${spec.key}.${field.key}`).toContain(field.reference);
         }
@@ -68,7 +69,9 @@ describe('the registry itself', () => {
   });
 
   it('marks as control exactly the four shapes the engine owns', () => {
-    const control = WORKFLOW_ACTIONS.filter((spec) => spec.control).map((spec) => spec.key).sort();
+    const control = WORKFLOW_ACTIONS.filter((spec) => spec.control)
+      .map((spec) => spec.key)
+      .sort();
     expect(control).toEqual(['branch', 'enroll', 'stop', 'wait']);
   });
 
@@ -201,8 +204,9 @@ describe('validateWorkflowDefinition', () => {
 
   it('refuses a wait with no duration and a number out of range', () => {
     expect(
-      validateWorkflowDefinition(definition({ steps: [{ id: 'w', action: 'wait', params: {} }] }))[0]
-        ?.code,
+      validateWorkflowDefinition(
+        definition({ steps: [{ id: 'w', action: 'wait', params: {} }] }),
+      )[0]?.code,
     ).toBe('PARAM_REQUIRED');
     const tooLong = validateWorkflowDefinition(
       definition({ steps: [{ id: 'w', action: 'wait', params: { minutes: 10_000_000 } }] }),
@@ -234,9 +238,9 @@ describe('referencesIn', () => {
   });
 
   it('ignores a parameter nobody filled in, rather than reporting an empty id', () => {
-    expect(referencesIn(definition({ steps: [{ id: 'own', action: 'assign', params: {} }] }))).toEqual(
-      [],
-    );
+    expect(
+      referencesIn(definition({ steps: [{ id: 'own', action: 'assign', params: {} }] })),
+    ).toEqual([]);
   });
 });
 

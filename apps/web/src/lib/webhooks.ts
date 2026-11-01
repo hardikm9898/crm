@@ -246,7 +246,9 @@ export function describeWebhooks(counts: {
   ];
   if (counts.failing > 0) {
     clauses.push(
-      counts.failing === 1 ? '1 we have stopped sending to' : `${counts.failing} we have stopped sending to`,
+      counts.failing === 1
+        ? '1 we have stopped sending to'
+        : `${counts.failing} we have stopped sending to`,
     );
   }
   return `${clauses.join(' · ')}.`;
@@ -293,9 +295,7 @@ export function verificationSnippet(): string {
  * Throwing, both of them: on a screen whose job is to list endpoints and deliveries, an empty list
  * and a failed request look identical and must not — the product catalogue's permanent silent lie.
  */
-export async function loadWebhookEndpoints(
-  token: string | null,
-): Promise<WebhookEndpointRecord[]> {
+export async function loadWebhookEndpoints(token: string | null): Promise<WebhookEndpointRecord[]> {
   return (await request<WebhookEndpointRecord[]>('/webhooks', { token })).data;
 }
 

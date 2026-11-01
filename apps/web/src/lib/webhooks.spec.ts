@@ -96,11 +96,19 @@ describe('endpointStanding', () => {
     // The first is a broken integration and the second is a decision; one chip for both would hide
     // the only one that needs attention.
     const auto = endpointStanding(
-      endpoint({ isActive: false, disabledAt: 'x', disabledReason: '15 deliveries failed in a row' }),
+      endpoint({
+        isActive: false,
+        disabledAt: 'x',
+        disabledReason: '15 deliveries failed in a row',
+      }),
     );
     expect(auto).toEqual({ label: 'Stopped by us', tone: 'danger' });
     const manual = endpointStanding(
-      endpoint({ isActive: false, disabledAt: 'x', disabledReason: 'Switched off by the workspace' }),
+      endpoint({
+        isActive: false,
+        disabledAt: 'x',
+        disabledReason: 'Switched off by the workspace',
+      }),
     );
     expect(manual.tone).toBe('neutral');
   });
@@ -191,7 +199,12 @@ describe('describeDelivery', () => {
 
   it('prefers the error to a status code that does not exist', () => {
     const sentence = describeDelivery(
-      delivery({ status: 'exhausted', attemptCount: 8, lastStatusCode: null, lastError: 'No answer within 10 seconds.' }),
+      delivery({
+        status: 'exhausted',
+        attemptCount: 8,
+        lastStatusCode: null,
+        lastError: 'No answer within 10 seconds.',
+      }),
       now,
     );
     expect(sentence).toBe('8 attempts · No answer within 10 seconds.');
