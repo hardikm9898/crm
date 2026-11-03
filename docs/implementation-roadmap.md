@@ -3323,6 +3323,98 @@ captured, assigned by rule, with a follow-up task, and zero manual integration (
 ≥ 90 on performance/SEO/a11y for a published template; rollback restores the previous version exactly;
 custom domain issues TLS automatically.
 
+### Step plan — written 2026-11-03, nothing landed
+
+Phases 1–6 carry a record per step, written as each one landed. This is the opposite of that: a plan,
+and every line is a guess until something runs. It exists because Phase 7 was a scope paragraph and
+five exit criteria, and a phase with no steps is a phase whose first commit decides its shape by
+accident.
+
+Two things to settle first, both product decisions rather than engineering ones:
+
+- **"≥6 industry templates at launch quality" above contradicts the decision recorded for B1 in
+  [open-questions.md](./open-questions.md), which is three.** One of the two is wrong and no amount of
+  reading the code says which: six at launch quality is most of this phase's content budget, while
+  three is what B1 committed to, with "the rest are content added later against the same schema". The
+  plan below therefore builds the template **mechanism** and treats the count as content, so the
+  answer changes a number and not a design.
+- **The consent banner is Phase 7's; the tracker that honours it is Phase 8's** (D1). The banner ships
+  with the templates in step 7, and a site published before Phase 8 has nothing yet to consent to —
+  the right order, worth saying out loud so the banner is not later mistaken for a stub.
+
+**Step 1 — the website, its pages, and the version a publish pins.** `websites`, `website_pages` and
+`website_versions` per [database-design.md §10](./database-design.md); the platform subdomain; the
+theme; draft → publish → rollback. First because the publish boundary decides every later step, and
+because the phase's hardest exit criterion — "rollback restores the previous version exactly" — is a
+property of this step and of nothing else. A version holds a **snapshot**, a published version is never
+rewritten, and a rollback is a new version carrying an old snapshot: the shape `workflow_versions`
+already has, for the reason Phase 6 step 1 gives. _Exit:_ a published version is immutable, proven by
+test; a rollback reproduces the previous snapshot exactly; an edit to a draft never changes what is
+being served, which is the same assertion from the other side.
+
+**Step 2 — the renderer, and the second app that needs the design tokens.**
+`apps/web/src/app/s/[siteSlug]/[[...path]]`, as `frontend-architecture.md` §2 already lays out: ISR with
+tag revalidation on publish. This is the step that file predicted when it wrote that the tokens move to
+`packages/ui` "when a second app needs them (the tenant website renderer, Phase 7)" — so the token move
+belongs here rather than being discovered as a surprise. _Exit:_ publishing revalidates by tag and
+touches nothing else; a draft is never served from a public URL, proven by a test that asks for one; a
+published template scores ≥ 90 on performance and a11y, measured at 375 px as well as desktop, because
+every layout defect in this codebase so far has been found at phone width.
+
+**Step 3 — the block editor, and what a new block type costs.** Block editing over
+`website_pages.blocks`, plus the theme editor (logo, favicon, colours, fonts). Phase 6's registry
+argument applies and its **conclusion does not**, which is worth stating rather than discovering: an
+automation action costs no frontend release because the editor renders its parameters from a schema,
+while a block type costs a **renderer**, because a block is a layout and a schema cannot describe one.
+So the honest boundary is that a block type costs exactly one renderer and zero editor code, and the
+boot check reconciles both directions the way the automation registry does — a declared block with no
+renderer is a page that cannot draw itself, and a renderer nothing declares is dead code that looks
+like a feature. _Exit:_ adding a block type requires no editor change, proven by adding one; a page
+holding a block type this release does not know renders the rest of itself and says so, rather than
+failing, because a published site must not go blank on a rollback to an older schema.
+
+**Step 4 — the forms on a site, wired to nothing by hand (`FR-WEB-6`).** `website_forms`, and the
+wiring is the whole point. Phase 4 step 1 already built `forms`, the public renderer at `/f/[key]` and
+[ADR-0029](./decisions/ADR-0029-a-public-form-is-identified-by-its-own-key.md)'s key, so a form placed
+on a site is an existing form in a new place and **not** a second capture engine; two capture paths
+that drift is a shape this codebase has paid for more than once. What is genuinely new is the context a
+site can see and a bare form cannot: page, referrer, UTM, campaign, session and device. _Exit:_
+`FR-WEB-6` end to end — a submission creates a lead with `source=website` and all six context fields,
+assigned by rule, with a follow-up task, and no integration step that anybody performed.
+
+**Step 5 — SEO, and the files a crawler asks for by name.** Per-page title, description, slug and
+canonical; Open Graph and Twitter cards; `robots.txt`; `sitemap.xml`; LocalBusiness and Product
+structured data; redirects. _Exit:_ Lighthouse SEO ≥ 90 on a published template; the sitemap lists
+published pages and **only** published pages, which is step 2's draft-leak test one layer out; a
+redirect survives both a publish and a rollback.
+
+**Step 6 — the custom domain, its verification, and its certificate.** `website_domains`, the
+verification token, automated TLS, and the platform subdomain serving until verification passes
+(`FR-WEB-4`). **This is the step that cannot be finished from a container.** The verification flow is
+unit-testable and issuance can be driven against a staging ACME directory, but "custom domain issues
+TLS automatically" is a claim about DNS and a certificate authority: the only honest way to close it is
+to point a real domain at a real deployment. It is sixth so that everything not depending on DNS is
+done before the phase waits on it — the same reasoning that put Phase 1's compose boot at the end
+rather than in the middle.
+
+**Step 7 — templates at launch quality, the consent banner, and the phase gate.** Template content at
+whatever count B1 settles on; the configurable consent banner; and the criterion that is a usability
+test rather than a test suite — _a non-technical user builds and publishes a site in under 15 minutes_.
+That one cannot be asserted in CI and should not pretend to be: it is a scripted walkthrough, with a
+stopwatch, and somebody who has not seen the product, written the way Phase 10's "without a developer
+or a DB console" is written.
+
+**What this phase does not unblock on its own.** Phase 6's abandoned-checkout reference flow needs a
+checkout that was started and not paid for. A site built here can carry one, but the **event** saying a
+checkout began is Phase 8's tracker (`checkout_start` in `website_events`), so that flow closes in
+Phase 8 and not in this phase. The README's "Next step" claimed otherwise and is corrected in the same
+commit as this plan.
+
+**Two of the five exit criteria are environment-bound**, and naming them now is cheaper than
+discovering it at the gate: the Lighthouse scores need a published site on real hosting, and the custom
+domain needs real DNS. Neither is a reason to reorder the phase; both are reasons not to report the
+phase closed from a development container.
+
 ---
 
 ## Phase 8 — Website & product analytics

@@ -30,6 +30,12 @@ the answer changes it. Items are grouped by when the answer is actually needed.
 | B5  | **Can an executive delete a lead?**                                                                                                                      | No. Soft delete requires manager+; executives can mark lost with a reason.                                                                                                         | Low.                                                                                               |
 | B6  | **Quotation numbering and tax** — GST invoice compliance?                                                                                                | Quotations are commercial documents with configurable numbering, tax percentages and totals — **not** statutory GST invoices. Accounting-grade invoicing is out of scope (PRD §7). | Medium: if tenants expect compliant tax invoices, that is a separate module, not a field addition. |
 
+> **B1 is in open conflict with Phase 7's scope line**, which says "≥6 industry templates at launch
+> quality" where B1's working assumption says three. Noticed while decomposing Phase 7 into steps
+> (`implementation-roadmap.md`), and deliberately not resolved by guessing: the count is most of that
+> phase's content budget. The step plan builds the template mechanism and treats the count as content,
+> so answering this changes a number rather than a design.
+
 ---
 
 ## C. Needed before Phase 5–6 ships

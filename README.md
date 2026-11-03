@@ -107,7 +107,16 @@ query cache) the reasons are recorded in
 
 ## Next step
 
-**Phase 7, step 1 — the website and page model:** versioning with draft/publish/rollback, which is
-also what unblocks Phase 6's abandoned-checkout reference flow. Phase 7 is still only a scope
-paragraph and exit criteria in the roadmap and needs decomposing into steps first. The one remaining
-Phase 1 verification — booting the compose stack on a machine with Docker — is the other open item.
+**Phase 7, step 1 — the website, its pages, and the version a publish pins:** the model, the platform
+subdomain, and draft/publish/rollback, which is where the phase's hardest exit criterion lives. Phase
+7 now has a [step plan](./docs/implementation-roadmap.md): seven steps, with the two exit criteria
+that need real hosting and real DNS named up front rather than left to the gate, and with the `≥6
+templates` scope line flagged as contradicting the decision recorded for B1 in
+[open-questions.md](./docs/open-questions.md).
+
+Phase 6's abandoned-checkout reference flow does **not** close in Phase 7. A site built there can
+carry a checkout, but the event saying one began is Phase 8's tracker (`checkout_start`), so that flow
+closes in Phase 8. An earlier version of this section said otherwise.
+
+The one remaining Phase 1 verification — booting the compose stack on a machine with Docker — is the
+other open item.
