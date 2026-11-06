@@ -1463,6 +1463,35 @@ trigger_event_id IS NOT NULL` — the idempotency that makes a retried delivery 
 | `visitor_identities` | org, `visitor_id`, `lead_id`, `identified_at`, `method (form_submit                                                                                                                                                                                                                                                                                                                                     | whatsapp_click                                              | link_click | api)` — the stitch that puts web behaviour on the timeline (`FR-ANL-7`) |
 | `website_events`     | org, site_id, `event_id` (client-generated), `visitor_id`, `session_id`, `type`, `occurred_at`, `page_url`, `page_path`, `referrer`, `properties JSONB` (product_id, value_minor, currency, cart_id, scroll %, cta id), `utm JSONB`, `device`, `country`, `ip_hash`, `received_at`. `UNIQUE (organization_id, site_id, event_id)`. **Partitioned daily**, retention by plan (`FR-ANL-6`, `NFR-SCALE-3`) |
 
+#### As built — Phase 7 step 1 (websites, pages, versions)
+
+The three website tables exist as of `20261106094514_phase7_websites`. Two departures from the
+sketch above, both deliberate:
+
+- **`websites.tracking_site_id` was not created.** It is Phase 8's: nothing reads it until the
+  tracker exists, and a column written by one release and read by none is the defect this document
+  has already recorded twice (`messages.billable` and `conversation_category` were written from
+  Meta's receipts for three steps and read by nothing, which looked exactly like metering that
+  existed). It arrives with the collector that needs it. The sketch above is left as the plan; this
+  note is what is true today, because a column a doc says exists and does not is worse than one it
+  admits is missing.
+- **`website_versions` has no draft state.** The sketch's `website_versions` row implies a version
+  per publish, which is what was built: `published_at` is NOT NULL, so a row in that table always
+  means the public saw it. That differs from `workflow_versions`, where an unpublished version is
+  the editor's working copy — a website's working copy is simply its `website_pages` rows, so the
+  second concept would have been a duplicate of the draft.
+
+Added beyond the sketch: `website_versions.restored_from_version_id`, so a rollback is a new version
+naming the one whose snapshot it carries rather than a pointer moved backwards. Without it,
+"what was live on Tuesday" has two answers and a site rolled back twice looks untouched.
+
+Hand-written objects, all listed in `packages/db/src/schema-objects.int-spec.ts`:
+`websites_subdomain_is_an_address`, `websites_published_has_version` (one-way, not a biconditional —
+unpublishing keeps the pointer), `website_pages_path_is_a_path`, `website_pages_one_home` (partial
+unique), `website_versions_number_positive`, `website_versions_not_restored_from_self`, three partial
+indexes on the nullable foreign-key columns, and the `website_versions_are_immutable` trigger, which
+refuses every UPDATE on that table.
+
 ### Rollups (dashboards read these only)
 
 | Table                    | Grain               | Contents                                                                                                          |

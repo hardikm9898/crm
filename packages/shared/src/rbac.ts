@@ -28,6 +28,9 @@ export const PERMISSIONS = {
   PIPELINE_MANAGE: 'pipeline:manage',
   AUTOMATION_MANAGE: 'automation:manage',
   INTEGRATION_MANAGE: 'integration:manage',
+  // websites
+  WEBSITE_READ: 'website:read',
+  WEBSITE_MANAGE: 'website:manage',
   // CRM
   LEAD_READ: 'lead:read',
   LEAD_CREATE: 'lead:create',
@@ -354,6 +357,33 @@ export const PERMISSION_CATALOGUE: readonly PermissionDefinition[] = [
     description: 'Manage campaigns and segments',
     supportsScope: false,
   },
+  {
+    /**
+     * Two keys rather than one, which `integration:manage` deliberately did not do. The difference
+     * is that an integration has nothing a reader could want — a credential's health and a field
+     * mapping are both things you would only look at in order to change them — while a website has
+     * a great deal: what is live, what a draft says, which version is serving and what the last
+     * publish changed. A marketing manager reviewing copy before it goes out is reading, and
+     * `auditor` exists precisely to read everything and change nothing.
+     */
+    key: P.WEBSITE_READ,
+    module: 'websites',
+    description: 'View websites, their pages and their version history',
+    supportsScope: false,
+  },
+  {
+    /**
+     * Publishing is not a separate permission, and that is a decision rather than an omission.
+     * Splitting it would mean a role that may rewrite every word of a live page's draft but not
+     * press the button — which protects nothing, because the next publish by anyone ships their
+     * text. The meaningful boundary is "may change what the public sees at all", and that is this
+     * key. A reviewer who may read and not change holds `website:read` alone.
+     */
+    key: P.WEBSITE_MANAGE,
+    module: 'websites',
+    description: 'Create and edit websites, publish them and roll them back',
+    supportsScope: false,
+  },
   { key: P.EXPORT_DATA, module: 'data', description: 'Export data', supportsScope: true },
   {
     key: P.EXPORT_PII,
@@ -496,9 +526,13 @@ export const SYSTEM_ROLE_TEMPLATES: readonly RoleTemplate[] = [
       { permission: P.MARKETING_MANAGE, scope: ALL },
       { permission: P.TEMPLATE_MANAGE, scope: ALL },
       { permission: P.EXPORT_DATA, scope: ALL },
-      // The person who builds the campaign builds the form it points at.
+      // The person who builds the campaign builds the form it points at — and, by the same
+      // argument, the site that form sits on. `FR-WEB-6` makes them one thing anyway: a form
+      // placed on a generated page is the campaign's landing page and its capture at once.
       { permission: P.FORM_READ, scope: ALL },
       { permission: P.FORM_MANAGE, scope: ALL },
+      { permission: P.WEBSITE_READ, scope: ALL },
+      { permission: P.WEBSITE_MANAGE, scope: ALL },
     ],
   },
   {
@@ -522,6 +556,7 @@ export const SYSTEM_ROLE_TEMPLATES: readonly RoleTemplate[] = [
       { permission: P.AUDIT_READ, scope: ALL },
       { permission: P.BILLING_READ, scope: ALL },
       { permission: P.FORM_READ, scope: ALL },
+      { permission: P.WEBSITE_READ, scope: ALL },
     ],
   },
 ];

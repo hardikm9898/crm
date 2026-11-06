@@ -11,11 +11,11 @@ attribution — built so a small business can answer four questions without trai
 
 ## Status
 
-**Phases 0–6 landed.** Phase 6 (automation) is complete but for one of the brief's two reference
+**Phases 0–6 landed, and Phase 7 step 1.** Phase 6 (automation) is complete but for one of the brief's two reference
 flows — abandoned checkout — which is blocked on Phase 7's websites and payments rather than on
 anything in Phase 6; every Phase 6 exit criterion is measured in
-[implementation-roadmap.md](./docs/implementation-roadmap.md). **Phase 7 (websites & landing pages)
-has not started**, and nor have Phases 8–12.
+[implementation-roadmap.md](./docs/implementation-roadmap.md). **Phase 7 is in progress** — step 1 of
+seven landed on 2026-11-06; Phases 8–12 have not started.
 
 What works today:
 
@@ -39,6 +39,9 @@ What works today:
 - **Automation** — a registry-driven workflow engine with version pinning, durable steps, five
   guardrails, a preview that executes nothing, retry-from-failed-step, and starter workflows per
   industry.
+- **Websites (Phase 7 step 1)** — the website and page model, a platform subdomain, and
+  draft/publish/rollback, where a published version is immutable by trigger and a rollback writes a
+  new version carrying an older snapshot. Nothing is served publicly yet; the renderer is step 2.
 
 **2 977 tests** — 1 277 unit (728 shared, 366 web, 175 api, 8 db) and 1 700 integration (946 api
 e2e, 754 db) — run against real PostgreSQL and Redis, as reported by the Phase 6 step 3 run. The API
@@ -107,11 +110,12 @@ query cache) the reasons are recorded in
 
 ## Next step
 
-**Phase 7, step 1 — the website, its pages, and the version a publish pins:** the model, the platform
-subdomain, and draft/publish/rollback, which is where the phase's hardest exit criterion lives. Phase
-7 now has a [step plan](./docs/implementation-roadmap.md): seven steps, with the two exit criteria
-that need real hosting and real DNS named up front rather than left to the gate, and with the `≥6
-templates` scope line flagged as contradicting the decision recorded for B1 in
+**Phase 7, step 2 — the renderer:** `apps/web/src/app/s/[siteSlug]/[[...path]]` with ISR and tag
+revalidation on publish, and the design tokens moving to `packages/ui`, as
+`frontend-architecture.md` predicted they would when a second app needed them. The
+[step plan](./docs/implementation-roadmap.md) holds the remaining five steps, with the two exit
+criteria that need real hosting and real DNS named up front rather than left to the gate, and with
+the `≥6 templates` scope line flagged as contradicting the decision recorded for B1 in
 [open-questions.md](./docs/open-questions.md).
 
 Phase 6's abandoned-checkout reference flow does **not** close in Phase 7. A site built there can

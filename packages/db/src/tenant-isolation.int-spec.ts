@@ -5170,3 +5170,258 @@ describe('layer 7 — a run cannot be stitched to another tenant (FR-AUT-6, FR-A
     }
   });
 });
+
+describe('layer 3 — a website cannot be stitched to another tenant (FR-WEB-1, FR-WEB-5)', () => {
+  async function websiteIn(organizationId: string, userId: string) {
+    const id = newId();
+    await h.unscoped.website.create({
+      data: {
+        id,
+        organizationId,
+        name: `Isolation ${id.slice(-8)}`,
+        // The tail, not the prefix: UUIDv7 ids minted in the same millisecond share their prefix,
+        // and `subdomain` is globally unique, so a prefix would collide across the two tenants.
+        subdomain: `iso-${id.slice(-8)}`,
+        createdById: userId,
+      } as never,
+    });
+    return id;
+  }
+
+  async function versionIn(organizationId: string, websiteId: string, version = 1) {
+    const id = newId();
+    await h.unscoped.websiteVersion.create({
+      data: { id, organizationId, websiteId, version, snapshot: { pages: [] } } as never,
+    });
+    return id;
+  }
+
+  it('refuses a page whose website belongs to another workspace', async () => {
+    const theirs = await websiteIn(h.orgB.organizationId, h.orgB.userId);
+    await expect(
+      h.unscoped.websitePage.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          websiteId: theirs,
+          path: '/about',
+          title: 'About',
+        } as never,
+      }),
+    ).rejects.toThrow(/website_pages_website_same_org_fk|foreign key/i);
+  });
+
+  it('refuses a version whose website belongs to another workspace', async () => {
+    const theirs = await websiteIn(h.orgB.organizationId, h.orgB.userId);
+    await expect(
+      h.unscoped.websiteVersion.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          websiteId: theirs,
+          version: 1,
+          snapshot: {},
+        } as never,
+      }),
+    ).rejects.toThrow(/website_versions_website_same_org_fk|foreign key/i);
+  });
+
+  it("refuses a site serving another workspace's version", async () => {
+    const theirSite = await websiteIn(h.orgB.organizationId, h.orgB.userId);
+    const theirVersion = await versionIn(h.orgB.organizationId, theirSite);
+    const ours = await websiteIn(h.orgA.organizationId, h.orgA.userId);
+    // The composite FK, not an application check: "this workspace is serving somebody else's
+    // snapshot" has to be unrepresentable, because it would publish another tenant's content
+    // under our subdomain — the worst thing this table could do.
+    await expect(
+      h.unscoped.website.update({
+        where: { id: ours },
+        data: { publishedVersionId: theirVersion, status: 'published' } as never,
+      }),
+    ).rejects.toThrow(/websites_published_version_same_org_fk|foreign key/i);
+  });
+
+  it("refuses a rollback that names another workspace's version", async () => {
+    const theirSite = await websiteIn(h.orgB.organizationId, h.orgB.userId);
+    const theirVersion = await versionIn(h.orgB.organizationId, theirSite);
+    const ourSite = await websiteIn(h.orgA.organizationId, h.orgA.userId);
+    await expect(
+      h.unscoped.websiteVersion.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          websiteId: ourSite,
+          version: 1,
+          snapshot: {},
+          restoredFromVersionId: theirVersion,
+        } as never,
+      }),
+    ).rejects.toThrow(/website_versions_restored_from_same_org_fk|foreign key/i);
+  });
+
+  it('refuses a published site with nothing published', async () => {
+    const ours = await websiteIn(h.orgA.organizationId, h.orgA.userId);
+    await expect(
+      h.unscoped.website.update({ where: { id: ours }, data: { status: 'published' } as never }),
+    ).rejects.toThrow(/websites_published_has_version/i);
+  });
+
+  it('allows a draft that still points at the version it last served, so republishing is one write', async () => {
+    const ours = await websiteIn(h.orgA.organizationId, h.orgA.userId);
+    const version = await versionIn(h.orgA.organizationId, ours);
+    await h.unscoped.website.update({
+      where: { id: ours },
+      data: { publishedVersionId: version, status: 'published' } as never,
+    });
+    // Unpublishing. The one-way CHECK has to permit this: a biconditional would make taking a site
+    // offline either impossible or destructive, and this is the test that would fail if somebody
+    // later "tidied" the constraint into an equality.
+    await h.unscoped.website.update({ where: { id: ours }, data: { status: 'draft' } as never });
+    const row = await h.unscoped.website.findUniqueOrThrow({ where: { id: ours } });
+    expect(row.status).toBe('draft');
+    expect(row.publishedVersionId).toBe(version);
+  });
+
+  it('refuses two home pages on one site, and allows many that are not home', async () => {
+    const site = await websiteIn(h.orgA.organizationId, h.orgA.userId);
+    const home = {
+      organizationId: h.orgA.organizationId,
+      websiteId: site,
+      isHome: true,
+    };
+    await h.unscoped.websitePage.create({
+      data: { id: newId(), ...home, path: '/', title: 'Home' } as never,
+    });
+    await expect(
+      h.unscoped.websitePage.create({
+        data: { id: newId(), ...home, path: '/home-two', title: 'Home again' } as never,
+      }),
+    ).rejects.toThrow(/website_pages_one_home|unique/i);
+
+    // The other half of the partial unique, and the half a plain unique would have broken: a site
+    // may have any number of pages that are not the home page.
+    for (const path of ['/about', '/pricing']) {
+      await h.unscoped.websitePage.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgA.organizationId,
+          websiteId: site,
+          path,
+          title: path,
+        } as never,
+      });
+    }
+    const pages = await h.unscoped.websitePage.findMany({ where: { websiteId: site } });
+    expect(pages).toHaveLength(3);
+  });
+
+  it('refuses a subdomain another workspace already holds', async () => {
+    const id = newId();
+    const subdomain = `shared-${id.slice(-8)}`;
+    await h.unscoped.website.create({
+      data: {
+        id,
+        organizationId: h.orgA.organizationId,
+        name: 'Ours',
+        subdomain,
+        createdById: h.orgA.userId,
+      } as never,
+    });
+    // Deliberately global: the subdomain is the only thing an inbound request carries, so it has
+    // to resolve one workspace across all of them. This is the guarantee that makes the service's
+    // collision check run under `withPlatformScope` rather than the scoped client, which cannot
+    // see the row it would collide with.
+    await expect(
+      h.unscoped.website.create({
+        data: {
+          id: newId(),
+          organizationId: h.orgB.organizationId,
+          name: 'Theirs',
+          subdomain,
+          createdById: h.orgB.userId,
+        } as never,
+      }),
+    ).rejects.toThrow(/websites_subdomain_key|unique/i);
+  });
+
+  it('refuses a subdomain that is not an address', async () => {
+    for (const subdomain of ['ab', 'Has-Caps', '-leading', 'trailing-', 'under_score']) {
+      await expect(
+        h.unscoped.website.create({
+          data: {
+            id: newId(),
+            organizationId: h.orgA.organizationId,
+            name: 'Bad address',
+            subdomain,
+            createdById: h.orgA.userId,
+          } as never,
+        }),
+        `${subdomain} should be refused by websites_subdomain_is_an_address`,
+      ).rejects.toThrow(/websites_subdomain_is_an_address|check/i);
+    }
+  });
+
+  it('refuses a version restored from itself', async () => {
+    const site = await websiteIn(h.orgA.organizationId, h.orgA.userId);
+    const id = newId();
+    await expect(
+      h.unscoped.websiteVersion.create({
+        data: {
+          id,
+          organizationId: h.orgA.organizationId,
+          websiteId: site,
+          version: 1,
+          snapshot: {},
+          restoredFromVersionId: id,
+        } as never,
+      }),
+    ).rejects.toThrow(/website_versions_not_restored_from_self|check/i);
+  });
+
+  it('refuses a second version with the same number on one site', async () => {
+    const site = await websiteIn(h.orgA.organizationId, h.orgA.userId);
+    await versionIn(h.orgA.organizationId, site, 1);
+    await expect(versionIn(h.orgA.organizationId, site, 1)).rejects.toThrow(
+      /website_version_number_key|unique/i,
+    );
+    // …and the same number on a different site is fine, which is what the organization and website
+    // columns in that key are for.
+    const other = await websiteIn(h.orgA.organizationId, h.orgA.userId);
+    await expect(versionIn(h.orgA.organizationId, other, 1)).resolves.toBeTypeOf('string');
+  });
+
+  it('refuses every update to a published version, which is what makes a rollback exact', async () => {
+    const site = await websiteIn(h.orgA.organizationId, h.orgA.userId);
+    const version = await versionIn(h.orgA.organizationId, site);
+
+    // The snapshot is the thing a rollback restores, so this is the assertion the phase's hardest
+    // exit criterion rests on.
+    await expect(
+      h.unscoped.websiteVersion.update({
+        where: { id: version },
+        data: { snapshot: { pages: [{ path: '/', title: 'Rewritten' }] } } as never,
+      }),
+    ).rejects.toThrow(/website_versions_are_immutable/i);
+
+    // Any column, not just the snapshot: a trigger guarding a list of columns needs extending
+    // every time the table gains one, and the one somebody forgets is the one that matters.
+    await expect(
+      h.unscoped.websiteVersion.update({
+        where: { id: version },
+        data: { version: 99 } as never,
+      }),
+    ).rejects.toThrow(/website_versions_are_immutable/i);
+
+    const row = await h.unscoped.websiteVersion.findUniqueOrThrow({ where: { id: version } });
+    expect(row.version).toBe(1);
+    expect(row.snapshot).toEqual({ pages: [] });
+  });
+
+  it('cannot read another workspace’s website through the scoped client', async () => {
+    const theirs = await websiteIn(h.orgB.organizationId, h.orgB.userId);
+    const found = await tenantContext.run(h.orgA.principal, async () =>
+      h.db.website.findUnique({ where: { id: theirs } }),
+    );
+    expect(found).toBeNull();
+  });
+});

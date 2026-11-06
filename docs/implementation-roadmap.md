@@ -3323,6 +3323,121 @@ captured, assigned by rule, with a follow-up task, and zero manual integration (
 ≥ 90 on performance/SEO/a11y for a published template; rollback restores the previous version exactly;
 custom domain issues TLS automatically.
 
+### Step 1 — the website, its pages, and the version a publish pins ✅ _(landed 2026-11-06)_
+
+Three tables, twelve routes, two permissions and a trigger. The step the rest of Phase 7 rests on,
+because the publish boundary decides every later one: a renderer that read the draft would make
+"rollback restores the previous version exactly" unachievable, since the only record of what the
+public saw would be rows somebody has since edited.
+
+**What a website is, in three parts that must not be confused.** The **draft** is `websites` plus
+`website_pages`, and it is what the editor changes. A **version** is an immutable snapshot, written
+when somebody publishes. What is **served** is always a version. `GET :id/served` exists so this
+step is verifiable at all — it answers what a visitor _would_ be served once step 2 can serve it,
+behind `website:read` and not public.
+
+**A rollback writes a new version rather than moving a pointer back.** Fewer writes the other way,
+and a history that lies: "what was live on Tuesday" would have two answers and a site rolled back
+twice would look untouched. `restored_from_version_id` names the source, so the version list reads
+as what happened — `[3, 2, 1]` with 3 restored from 1.
+
+**Two departures from `database-design.md` §10**, both recorded there as an as-built note rather
+than left for somebody to trip over. `tracking_site_id` was **not** created: nothing reads it until
+Phase 8's tracker, and a column written by one release and read by none is the defect this codebase
+has recorded twice already. And `website_versions` has no draft state — `published_at` is NOT NULL,
+so a row always means the public saw it. That is deliberately unlike `workflow_versions`, whose
+unpublished rows are the editor's working copy; a website's working copy is its `website_pages`,
+and a second concept would have duplicated the draft.
+
+**`websites.subdomain` is globally unique with no `organization_id` beside it**, for the reason
+`whatsapp_numbers.phone_number_id` is: a request for `acme.leados.app` carries nothing else, so the
+column must resolve one workspace across all of them. The collision check therefore reads under
+`withPlatformScope` and answers 422 with a sentence. The scoped client cannot see the row it would
+collide with, so without that this is a raw unique violation — a 500 on a mistake somebody could
+have fixed.
+
+**Permissions.** `website:read` and `website:manage`. Two rather than one, unlike
+`automation:manage`, because a website has plenty worth reading without changing and `auditor`
+exists for exactly that. Publishing is deliberately not split out: a role that may rewrite every
+word of a live page's draft but not press the button protects nothing, because the next publish by
+anyone ships their text. Both keys are new, so a grant migration reaches workspaces that already
+exist — verified by seeding a workspace, deleting the grants, running it, and counting back 8
+`website:read` and 6 `website:manage` rows.
+
+**Database changes.** `20261106094514_phase7_websites` (three tables) and
+`20261106095500_phase7_website_permission_grants`. The first arrived with **15 spurious `DROP`s** at
+the top — two composite FKs including `leads_stage_in_pipeline_fk`, four GIN, four trigram, a
+partial index and a partial unique — deleted by hand, as every migration since Phase 2 step 2 has
+had to. The script that cut them refuses to run if anything other than a `Drop*` statement is in
+that region, because cutting "everything before the first CreateTable" once removed two
+`ADD COLUMN`s with the drops.
+
+**Files changed.** `packages/shared/src/websites.ts` (new) and its spec, `rbac.ts` (two keys, two
+catalogue entries, grants for `marketing_manager` and `auditor`), `index.ts`;
+`packages/db/prisma/schema.prisma` (three models), two migrations, `src/tenant-models.ts`,
+`src/schema-objects.int-spec.ts`, `src/tenant-isolation.int-spec.ts`;
+`apps/api/src/modules/websites/` (new: service, controller, dto, module, README),
+`apps/api/src/app.module.ts`, `apps/api/test/websites.e2e-spec.ts` (new),
+`apps/api/test/route-authorization.e2e-spec.ts` (website fixtures and route mappings);
+`docs/openapi.json`
+regenerated (364 operations across 265 paths, up from 351/256); `docs/database-design.md`.
+
+**API changes.** Nine paths, thirteen operations, all permission-gated. `GET`/`POST /websites`,
+`GET`/`PATCH /websites/:id`, `GET`/`POST /websites/:id/pages`,
+`PATCH`/`DELETE /websites/:id/pages/:pageId`, `GET /websites/:id/versions`,
+`GET /websites/:id/served`, and `POST` for `publish`, `unpublish` and `rollback`. The route
+authorization audit passes at 364 routes (22 public, 15 exempt, 327 permission-gated).
+
+**UI changes.** None. The editor is step 3's and the renderer step 2's.
+
+**Tests run.** `pnpm lint typecheck build` clean, `format:check` clean. Unit: **17 new** in
+`@leados/shared`. Integration, as `pnpm test:int` counts it — which is what CI
+runs: **786 in `@leados/db`** (up from 754: 13 isolation cases, the schema-object entries and three
+predicate assertions) and **962 in `@leados/api`** (up from 946: 16 new e2e). A bare `vitest run`
+in either package reports a larger number because it includes that package's unit specs; the first
+draft of this record quoted 794 for `@leados/db` from exactly that mistake. The baseline before this step was measured first, on the same machine with real
+PostgreSQL 16 and Redis, so every number here is a difference from a green run rather than a claim
+in isolation.
+
+**Three defects found by writing the tests, not by review.**
+
+1. **A trigger raised with `ERRCODE = 'restrict_violation'` loses its message.** Prisma classifies
+   that SQLSTATE as a foreign-key violation and reports "Foreign key constraint violated on the
+   (not available)" _instead of_ the sentence the trigger raised — the explanation replaced by
+   something unrelated and wrong, which is `recordFailure`'s defect in a new place. The default
+   SQLSTATE (P0001) keeps the message. Found because the test asserted the message rather than the
+   failure.
+2. **The module was never registered.** `app.module.ts` was edited by a command chained after a
+   `grep` that found nothing, so `&&` short-circuited and the edit never ran. Typecheck passed —
+   registration is not a type error — and every e2e answered `Cannot GET /api/v1/websites`. The
+   lesson is the general one: a verification that cannot fail for the thing you changed is not a
+   verification of it.
+3. **`{ items, pagination }` is lifted to `data` as the array.** Two assertions read `data.items`
+   and got `undefined`, exactly as a test against `GET /integrations` did one phase earlier. Noted
+   in the spec beside the fix, since reading this file did not stop it happening again.
+4. **Eleven new parameterised routes were invisible to the cross-tenant sweep.**
+   `route-authorization.e2e-spec.ts` enumerates the live routing table and fails any parameterised
+   route it has no org A identifier for, which is precisely what it did here — so adding routes
+   without extending that fixture would have left them present in the app and untested for tenant
+   isolation. The fixture site is created **published, with a published page and a version**,
+   because `publish` on a site with no published pages, `unpublish` on a draft and `rollback`
+   without a body answer 422, 422 and 400 — all of which the sweep accepts, so a fixture in the
+   wrong state would have passed while testing nothing. `bodyFor` names org A's version for
+   `rollback`, so that route is swept through its payload as well as its path: a rollback that
+   accepted another workspace's version id would publish their content under our subdomain.
+
+**Carried forward, named rather than assumed.** `blocks` is stored and snapshotted without being
+interpreted — the registry and validator are step 3's, so a page can hold a block type no release
+knows about, and the snapshot will carry it. There is no `deleted_at` on `website_pages`: every
+version that contained a page still contains it, and a recycle bin beside immutable history is a
+second answer to "what did this page say". Nothing serves a site publicly yet, which is step 2.
+
+**The next step.** Step 2 — the renderer at `apps/web/src/app/s/[siteSlug]/[[...path]]`, with ISR
+and tag revalidation on publish, and the design tokens moving to `packages/ui` as
+`frontend-architecture.md` predicted they would when a second app needed them.
+
+---
+
 ### Step plan — written 2026-11-03, nothing landed
 
 Phases 1–6 carry a record per step, written as each one landed. This is the opposite of that: a plan,
