@@ -145,6 +145,11 @@ export const TENANT_MODELS = [
   'AutomationRun',
   'AutomationRunStep',
   'AutomationCounter',
+
+  // Phase 7 — websites
+  'Website',
+  'WebsitePage',
+  'WebsiteVersion',
 ] as const;
 
 export type TenantModel = (typeof TENANT_MODELS)[number];

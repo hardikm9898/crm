@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { pagePathProblem } from '@leados/shared';
 import { createHarness, type TestHarness } from './testing/fixtures.js';
 
 /**
@@ -209,6 +210,13 @@ const REQUIRED_INDEXES = [
   'automation_runs_one_per_event',
   'automation_runs_resumable',
   'automation_runs_live',
+
+  // Phase 7, step 1 — websites. One partial unique that encodes a rule, and three partial indexes
+  // on nullable foreign-key columns, which Postgres does not create for the referencing side.
+  'website_pages_one_home',
+  'websites_published_version',
+  'website_versions_publisher',
+  'website_versions_restored_from',
 ];
 
 /**
@@ -723,6 +731,19 @@ const REQUIRED_CONSTRAINTS = [
   // Phase 6, step 3 — the dry run. A preview that enrolled somebody would spend the lead's one
   // allowed cycle, so the pairing is a CHECK rather than a convention.
   'automation_runs_real_run_is_enrolled',
+
+  // Phase 7, step 1 — websites.
+  'websites_subdomain_is_an_address',
+  'websites_published_has_version',
+  'website_pages_path_is_a_path',
+  'website_versions_number_positive',
+  'website_versions_not_restored_from_self',
+  'websites_creator_same_org_fk',
+  'websites_published_version_same_org_fk',
+  'website_pages_website_same_org_fk',
+  'website_versions_website_same_org_fk',
+  'website_versions_publisher_same_org_fk',
+  'website_versions_restored_from_same_org_fk',
 ];
 
 describe('hand-written indexes survive every generated migration', () => {
@@ -951,5 +972,91 @@ describe('the objects Prisma cannot describe at all', () => {
     // that stops it running — and an index whose predicate is wrong is worse than none, because
     // the planner uses it.
     expect(rows[0]?.definition ?? '').toMatch(/dry_run = false/);
+  });
+});
+
+describe('the website objects whose predicate is the guarantee', () => {
+  it('keeps the trigger that makes a published version immutable', async () => {
+    const rows = await h.unscoped.$queryRaw<{ count: bigint }[]>`
+      SELECT count(*) AS count FROM pg_trigger
+      WHERE tgname = 'website_versions_are_immutable' AND NOT tgisinternal
+    `;
+    // Neither indexExists nor constraintExists covers a trigger, so a generated migration could
+    // drop this one and every other assertion in this file would still pass.
+    expect(Number(rows[0]?.count ?? 0)).toBe(1);
+  });
+
+  async function constraintDefinition(name: string): Promise<string> {
+    const rows = await h.unscoped.$queryRaw<{ definition: string }[]>`
+      SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint WHERE conname = ${name}
+    `;
+    return rows[0]?.definition ?? '';
+  }
+
+  async function indexDefinition(name: string): Promise<string> {
+    const rows = await h.unscoped.$queryRaw<{ definition: string }[]>`
+      SELECT indexdef AS definition FROM pg_indexes WHERE indexname = ${name}
+    `;
+    return rows[0]?.definition ?? '';
+  }
+
+  it('keeps websites_published_has_version one-way, not a biconditional', async () => {
+    const definition = await constraintDefinition('websites_published_has_version');
+    // A published site is serving a version…
+    expect(definition).toMatch(/published_version_id IS NOT NULL/);
+    // …and that is the only direction. The mirror — a draft has no published version — reads just
+    // as sensibly and is false: unpublishing keeps the pointer so republishing is one write. A
+    // later migration that "tidied" this into an equality would pass an existence check and make
+    // unpublishing impossible, which is the shape of the two payments constraints that together
+    // made a refund impossible.
+    expect(definition).not.toMatch(/IS NULL\) = \(/);
+    expect(definition).not.toMatch(/CASE/);
+  });
+
+  it('keeps website_pages_one_home partial on is_home', async () => {
+    const definition = await indexDefinition('website_pages_one_home');
+    expect(definition).toMatch(/UNIQUE/);
+    // Without the WHERE this allows one home page AND one non-home page per site, which is the
+    // opposite of "at most one home page". The predicate is the whole rule.
+    expect(definition).toMatch(/WHERE is_home/);
+  });
+
+  it('keeps website_pages_path_is_a_path agreeing with normalizePagePath', async () => {
+    const definition = await constraintDefinition('website_pages_path_is_a_path');
+    // The regex is shared with packages/shared/src/websites.ts by being written twice, which is
+    // only safe while something compares them. This is that something: the suite below drives the
+    // same inputs through both.
+    expect(definition).toMatch(/a-z0-9/);
+    expect(definition).toMatch(/length/);
+
+    const paths = [
+      '/',
+      '/about',
+      '/services/interiors',
+      '/a',
+      '/a-b',
+      '/a--b',
+      '/-bad',
+      '/bad-',
+      '/ok/-bad',
+      '/o_k',
+      '/ok.html',
+      `/${'a'.repeat(600)}`,
+    ];
+    const rows = await h.unscoped.$queryRaw<{ path: string; accepted: boolean }[]>`
+      SELECT p AS path,
+             (p = '/' OR (p ~ '^/[a-z0-9]([a-z0-9-]*[a-z0-9])?(/[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$'
+                          AND length(p) <= 512)) AS accepted
+      FROM unnest(${paths}::text[]) AS p
+    `;
+    const bySql = new Map(rows.map((row) => [row.path, row.accepted]));
+    for (const path of paths) {
+      expect(bySql.get(path), `the database had no verdict on ${path}`).toBeTypeOf('boolean');
+      expect(
+        bySql.get(path),
+        `the CHECK and normalizePagePath disagree about ${path}, which is a 500 nobody sees until ` +
+          'that path runs',
+      ).toBe(pagePathProblem(path) === null);
+    }
   });
 });

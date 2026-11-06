@@ -112,6 +112,15 @@ interface Tenant {
   // dispatching an event: the sweep needs a row in the state the endpoint expects, and driving the
   // engine here would make this fixture depend on the engine's own behaviour.
   automationRunId: string;
+  // Phase 7, step 1 — websites. The site is created **published, with one published page and one
+  // version**, because three of its routes answer before the guard matters otherwise: `publish`
+  // on a site with no published pages is 422, `unpublish` on a draft is 422, and `rollback`
+  // without a version in the body is 400. Those statuses are all accepted by the sweep, so the
+  // fixture would pass while testing nothing — the `POST /calls/:id/outcome` lesson, where an id
+  // pointed at a row in the wrong state records a refusal it never earned.
+  websiteId: string;
+  websitePageId: string;
+  websiteVersionId: string;
 }
 
 let orgA: Tenant;
@@ -634,6 +643,45 @@ async function createTenant(label: string): Promise<Tenant> {
     } as never,
   });
 
+  const websiteId = newId();
+  const websitePageId = newId();
+  const websiteVersionId = newId();
+  await ctx.db.website.create({
+    data: {
+      id: websiteId,
+      organizationId,
+      name: `Swept ${label} ${SUFFIX}`,
+      // Globally unique, so the label and the run's suffix both have to be in it.
+      subdomain: `swept-${label}-${SUFFIX}`.toLowerCase().replace(/[^a-z0-9-]/g, ''),
+      createdById: userId,
+    } as never,
+  });
+  await ctx.db.websitePage.create({
+    data: {
+      id: websitePageId,
+      organizationId,
+      websiteId,
+      path: '/',
+      title: 'Swept home',
+      isHome: true,
+      status: 'published',
+    } as never,
+  });
+  await ctx.db.websiteVersion.create({
+    data: {
+      id: websiteVersionId,
+      organizationId,
+      websiteId,
+      version: 1,
+      snapshot: { theme: {}, seoDefaults: {}, pages: [] },
+      publishedById: userId,
+    } as never,
+  });
+  await ctx.db.website.update({
+    where: { id: websiteId },
+    data: { publishedVersionId: websiteVersionId, status: 'published' } as never,
+  });
+
   const slaClock = await ctx.db.slaClock.findFirstOrThrow({
     where: { organizationId, leadId: lead.body.data.id },
   });
@@ -716,6 +764,9 @@ async function createTenant(label: string): Promise<Tenant> {
     workflowId,
     workflowVersionId,
     automationRunId,
+    websiteId,
+    websitePageId,
+    websiteVersionId,
   };
 }
 
@@ -1056,6 +1107,15 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       // Phase 6, step 2 — the engine
       '/automation/workflows/:id/start': `/automation/workflows/${orgA.workflowId}/start`,
       '/automation/runs/:id': `/automation/runs/${orgA.automationRunId}`,
+      // Phase 7, step 1 — websites.
+      '/websites/:id': `/websites/${orgA.websiteId}`,
+      '/websites/:id/pages': `/websites/${orgA.websiteId}/pages`,
+      '/websites/:id/pages/:pageId': `/websites/${orgA.websiteId}/pages/${orgA.websitePageId}`,
+      '/websites/:id/versions': `/websites/${orgA.websiteId}/versions`,
+      '/websites/:id/served': `/websites/${orgA.websiteId}/served`,
+      '/websites/:id/publish': `/websites/${orgA.websiteId}/publish`,
+      '/websites/:id/unpublish': `/websites/${orgA.websiteId}/unpublish`,
+      '/websites/:id/rollback': `/websites/${orgA.websiteId}/rollback`,
       // Phase 6, step 3 — the preview and the retry
       '/automation/workflows/:id/test-run': `/automation/workflows/${orgA.workflowId}/test-run`,
       '/automation/runs/:id/retry': `/automation/runs/${orgA.automationRunId}/retry`,
@@ -1152,6 +1212,9 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       ['workflowId', orgA.workflowId],
       ['workflowVersionId', orgA.workflowVersionId],
       ['automationRunId', orgA.automationRunId],
+      ['websiteId', orgA.websiteId],
+      ['websitePageId', orgA.websitePageId],
+      ['websiteVersionId', orgA.websiteVersionId],
     ];
 
     const problems: string[] = [];
@@ -1248,6 +1311,11 @@ function bodyFor(
 ): Record<string, unknown> | undefined {
   if (!['POST', 'PUT', 'PATCH'].includes(httpMethod)) return undefined;
   switch (path) {
+    // Names org A's version in the body, so this route is swept through its payload as well as its
+    // path: a rollback that accepted another workspace's version id would publish their content
+    // under our subdomain, which is the worst thing these tables could do.
+    case '/websites/:id/rollback':
+      return { versionId: target.websiteVersionId };
     case '/users/invitations':
       return { email: `sweep.${EMAIL_MARKER}@test.local`, roleId: target.roleId };
     case '/organization':

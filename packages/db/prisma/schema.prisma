@@ -820,6 +820,9 @@ model Organization {
   automationRuns        AutomationRun[]
   automationRunSteps    AutomationRunStep[]
   automationCounters    AutomationCounter[]
+  websites              Website[]
+  websitePages          WebsitePage[]
+  websiteVersions       WebsiteVersion[]
 
   @@index([status])
   @@index([createdAt])
@@ -975,6 +978,8 @@ model Membership {
   workflowVersionsPublished WorkflowVersion[]       @relation("workflow_version_publisher")
   sentMessages              Message[]               @relation("message_sender")
   whatsappTemplatesWritten  WhatsAppTemplate[]      @relation("whatsapp_template_author")
+  websitesCreated           Website[]               @relation("website_creator")
+  websiteVersionsPublished  WebsiteVersion[]        @relation("website_version_publisher")
 
   @@unique([organizationId, id], name: "membership_tenant_key")
   @@unique([organizationId, userId])
@@ -5273,4 +5278,184 @@ model AutomationCounter {
   @@unique([organizationId, id], name: "automation_counter_tenant_key")
   @@unique([organizationId, scopeKey, windowStart], name: "automation_counter_window_key")
   @@map("automation_guardrail_counters")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 7 — websites (`FR-WEB-1`…`FR-WEB-6`)
+// ---------------------------------------------------------------------------
+
+/// A tenant's generated website: the **draft**, plus a pointer at the version being served.
+///
+/// `websites` and `website_pages` are what the editor changes; `website_versions` is what the
+/// public reads. Nothing serves this row's pages directly, which is what makes `FR-WEB-5`'s
+/// "rollback restores the previous version exactly" a property of the schema rather than a promise
+/// of the application: the only record of what a visitor saw is a snapshot nobody can edit.
+model Website {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  name String
+
+  /// Which industry template this site was created from (`FR-WEB-1`). A record of a choice, like
+  /// `organizations.industry_template_key`: nothing in the product branches on it, and renaming or
+  /// rewriting every block afterwards leaves it as it was, correctly — it says where the site
+  /// started, not what it is.
+  templateCode String? @map("template_code")
+
+  /// The platform address, e.g. `acme` in `acme.leados.app` (`FR-WEB-4`), serving until a custom
+  /// domain is verified in step 6.
+  ///
+  /// **Globally unique, with no `organization_id` beside it**, for the reason
+  /// `whatsapp_numbers.phone_number_id` is: a request for `acme.leados.app` carries nothing else,
+  /// so this column has to resolve a workspace across all of them. The collision check therefore
+  /// cannot use the tenant-scoped client — it cannot see the row that would collide — and lives
+  /// under `withPlatformScope` with a 422 and a sentence, rather than a unique violation and a 500.
+  subdomain String @unique(map: "websites_subdomain_key")
+
+  /// Logo, colours and fonts (`FR-WEB-2`). JSONB because a theme is content a tenant owns, not a
+  /// schema: a template adding a second accent colour must not be a migration.
+  theme Json @default("{}") @db.JsonB
+
+  /// Site-wide SEO fallbacks a page's own `seo` overrides (`FR-WEB-3`). The per-page values land in
+  /// step 5; this column exists now because a publish snapshots it, and a snapshot that gains a key
+  /// later cannot be compared against one taken before.
+  seoDefaults Json @default("{}") @map("seo_defaults") @db.JsonB
+
+  /// `WEBSITE_STATUSES`. A `draft` site answers 404 to the public even when it has versions — which
+  /// is what makes unpublishing possible without destroying history.
+  status String @default("draft")
+
+  /// The version being served. Null until the first publish, and **left alone by editing**: a draft
+  /// saved over a live site changes nothing a visitor sees until somebody publishes.
+  ///
+  /// A one-way CHECK (`websites_published_has_version`) says a published site has one. Its mirror —
+  /// "a draft has none" — reads just as sensibly and is false: unpublishing a site that was live
+  /// keeps the pointer so republishing is one write, and `webhook_deliveries_pending_is_untried`
+  /// already paid for writing the biconditional that merely sounds symmetrical.
+  publishedVersionId String? @map("published_version_id") @db.Uuid
+
+  createdById String @map("created_by_id") @db.Uuid
+
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization     Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  creator          Membership      @relation("website_creator", fields: [organizationId, createdById], references: [organizationId, userId], onDelete: Restrict, map: "websites_creator_same_org_fk")
+  publishedVersion WebsiteVersion? @relation("website_published_version", fields: [organizationId, publishedVersionId], references: [organizationId, id], onDelete: Restrict, map: "websites_published_version_same_org_fk")
+
+  pages    WebsitePage[]    @relation("website_pages")
+  versions WebsiteVersion[] @relation("website_versions")
+
+  @@unique([organizationId, id], name: "website_tenant_key")
+  /// The list screen's own read.
+  @@index([organizationId, status, updatedAt(sort: Desc)])
+  /// Postgres indexes the *referenced* side of a foreign key and never the referencing side, so
+  /// without this a membership deletion scans this table. The three nullable FK columns get partial
+  /// indexes in the migration instead, which skip the rows where they are null.
+  @@index([organizationId, createdById])
+  @@map("websites")
+}
+
+/// One editable page of the draft (`FR-WEB-2`).
+///
+/// There is no `deleted_at` here, and that is deliberate rather than an oversight: every other
+/// soft-deleted row in this product is the only copy of something somebody typed, whereas a page
+/// that was ever published is already preserved inside every version's snapshot. A recycle bin
+/// beside immutable history would be a second answer to "what did this page say", and the version
+/// list is the better one — it says what the page said *and* when the public saw it.
+model WebsitePage {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+  websiteId      String @map("website_id") @db.Uuid
+
+  /// Normalized by `normalizePagePath`: leading slash, no trailing slash, lowercase, no query.
+  /// `website_pages_path_is_a_path` refuses anything else, so "something other than that function
+  /// wrote this row" is unrepresentable rather than merely unlikely — the same guarantee
+  /// `api_logs_path_is_a_path` gives one module over.
+  path  String
+  title String
+
+  /// The page's content, as the editor saved it. Step 3 gives this a registry and a validator; step
+  /// 1 stores and snapshots it without interpreting it, which is why the column is here already.
+  blocks Json @default("[]") @db.JsonB
+
+  /// Per-page SEO overrides (`FR-WEB-3`), filled in by step 5.
+  seo Json @default("{}") @db.JsonB
+
+  /// Exactly one page per site may be the home page, enforced by the partial unique
+  /// `website_pages_one_home`, which Prisma cannot express. A plain unique on
+  /// `(organization_id, website_id, is_home)` would allow one home **and one non-home** page per
+  /// site, which is the opposite of the rule.
+  isHome    Boolean @default(false) @map("is_home")
+  sortOrder Int     @default(0) @map("sort_order")
+
+  /// `WEBSITE_PAGE_STATUSES`. A publish snapshots the `published` pages.
+  status String @default("draft")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  website      Website      @relation("website_pages", fields: [organizationId, websiteId], references: [organizationId, id], onDelete: Cascade, map: "website_pages_website_same_org_fk")
+
+  @@unique([organizationId, id], name: "website_page_tenant_key")
+  @@unique([organizationId, websiteId, path], name: "website_page_path_key")
+  @@index([organizationId, websiteId, sortOrder])
+  @@map("website_pages")
+}
+
+/// An immutable snapshot of a site as it was published (`FR-WEB-5`).
+///
+/// **Unlike `WorkflowVersion`, a version here is never a draft.** A workflow needed unpublished
+/// versions because its editor validated a graph before anything could run it; a website's
+/// unpublished state is simply its `website_pages` rows, so a row in this table always means "the
+/// public saw this". That is why `published_at` is NOT NULL, and it is worth stating because a
+/// reader who knows the workflow tables would otherwise expect the nullable column.
+///
+/// A rollback does not move a pointer backwards: it writes a **new** version carrying an older
+/// snapshot and names it in `restored_from_version_id`. History stays append-only, "what was live
+/// on Tuesday" keeps one answer, and a site rolled back twice does not look like a site nobody
+/// touched.
+model WebsiteVersion {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+  websiteId      String @map("website_id") @db.Uuid
+
+  /// 1, 2, 3… within the site. `UNIQUE (organization_id, website_id, version)`, and
+  /// `website_versions_number_positive` keeps it a counter rather than an id.
+  version Int
+
+  /// The whole site as published: theme, SEO defaults, and every `published` page.
+  ///
+  /// The rollback test compares two snapshots by **deep equality**, not byte-for-byte. JSONB does
+  /// not preserve key order or whitespace, so a byte comparison would be asserting something
+  /// Postgres never promised and would fail for a reason that has nothing to do with the feature.
+  /// Deep equality is what "restores the previous version exactly" can honestly mean here.
+  snapshot Json @db.JsonB
+
+  publishedAt DateTime @default(now()) @map("published_at") @db.Timestamptz(6)
+
+  /// Nullable for the same reason `workflow_versions.published_by_id` is: a version published by
+  /// the system — an industry template applied at provisioning — was published by nobody. The CHECK
+  /// runs one way only, as that column's does.
+  publishedById String? @map("published_by_id") @db.Uuid
+
+  /// Set when this version was created by a rollback, naming the version whose snapshot it carries.
+  restoredFromVersionId String? @map("restored_from_version_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  website      Website         @relation("website_versions", fields: [organizationId, websiteId], references: [organizationId, id], onDelete: Cascade, map: "website_versions_website_same_org_fk")
+  publisher    Membership?     @relation("website_version_publisher", fields: [organizationId, publishedById], references: [organizationId, userId], onDelete: Restrict, map: "website_versions_publisher_same_org_fk")
+  restoredFrom WebsiteVersion? @relation("website_version_restored_from", fields: [organizationId, restoredFromVersionId], references: [organizationId, id], onDelete: Restrict, map: "website_versions_restored_from_same_org_fk")
+
+  restoredInto WebsiteVersion[] @relation("website_version_restored_from")
+  servingFor   Website[]        @relation("website_published_version")
+
+  @@unique([organizationId, id], name: "website_version_tenant_key")
+  @@unique([organizationId, websiteId, version], name: "website_version_number_key")
+  @@index([organizationId, websiteId, version(sort: Desc)])
+  @@map("website_versions")
 }
