@@ -113,6 +113,13 @@ export const EVENT_SUBSCRIPTIONS: Readonly<Record<string, readonly EventSubscrip
   'deal.stage_changed': [WEBHOOK],
   'deal.won': [WEBHOOK],
   'deal.lost': [WEBHOOK],
+  // Phase 7, step 1/2 — websites. All three change what the public is served, so all three drop
+  // the cache tag. Listed here even though only one consumer exists, because an event emitted and
+  // not listed reads identically to a typo: `isKnownEvent` is how the dispatcher tells those
+  // apart, and `event-subscriptions.spec.ts` asserts the registry covers what producers emit.
+  'website.published': [{ queue: QUEUES.MAINTENANCE, jobName: JOBS.SITE_REVALIDATE }],
+  'website.unpublished': [{ queue: QUEUES.MAINTENANCE, jobName: JOBS.SITE_REVALIDATE }],
+  'website.rolled_back': [{ queue: QUEUES.MAINTENANCE, jobName: JOBS.SITE_REVALIDATE }],
   'quotation.created': [],
   'quotation.sent': [WEBHOOK],
   'quotation.accepted': [WEBHOOK],

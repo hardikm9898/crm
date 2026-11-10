@@ -63,3 +63,34 @@ can outlive the migration by that much.
 - **The home page is a partial unique**, so making a second page the home page clears the first in
   the same transaction. A plain unique would have allowed one home page _and_ one non-home page per
   site, which is the opposite of the rule.
+
+## Step 2 — the public read path and revalidation
+
+`GET /public/sites/:subdomain` is the one endpoint a visitor's browser reaches, through the renderer
+at `apps/web/src/app/s/[siteSlug]/[[...path]]`. It returns the **whole snapshot** of the published
+version, because a snapshot is what publishing produces: a page at a time would mean a site
+assembled from reads that can disagree about which publish they came from.
+
+**A draft is indistinguishable from a site that never existed** — same status, same code, same
+message, and the draft's name nowhere in the body. A distinct "not published yet" would make an
+unreleased site's existence, name and plans readable by anybody who guessed the address.
+
+The read is `withPlatformScope`, because a `@Public()` route has no principal and the tenant-scoped
+client throws without one. A route reaching for `db.client` here would answer 500 to **every**
+visitor, including those asking for a site that does not exist — the integration framework's inbound
+door paid for exactly that once.
+
+`publish`, `unpublish` and `rollback` each emit an outbox event, and
+`maintenance.site-revalidate` calls the web app's `POST /api/revalidate-site` to drop the site's
+cache tag. All three, because all three change what the public sees: revalidating only on publish
+would leave a withdrawn site served from cache, which is the failure nobody tests for because the
+screen says "offline".
+
+- The tag is keyed on the **subdomain**, which is why the event payload carries it: the site's id is
+  deliberately absent from the public response, so there is no id for a tag to use.
+- `WEB_REVALIDATE_SECRET` is optional in the config schema and **fatal in the job**. Required at boot
+  would refuse to start every deployment upgrading into this release without it; a throwing job
+  dead-letters and names the variable the first time somebody publishes.
+- The web route uses `revalidateTag(tag, { expire: 0 })`. `'max'` — which Next's own deprecation
+  message suggests — marks the tag stale instead, so the first request after a publish serves the
+  **previous** version. That is the most confusing moment this feature has.

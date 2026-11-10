@@ -52,6 +52,10 @@ jobs:
       JWT_ACCESS_SECRET: ci-only-access-secret-not-a-real-secret-0001
       JWT_REFRESH_SECRET: ci-only-refresh-secret-not-a-real-secret-0002
       ENCRYPTION_MASTER_KEY: Y2ktb25seS10ZXN0LWtleS1ub3QtYS1zZWNyZXQhISE=
+      # The web app refuses a revalidation call without this; same throwaway status as the three
+      # above. WEB_ORIGIN is declared so the job's value reaches the task rather than the default.
+      WEB_REVALIDATE_SECRET: ci-only-revalidate-secret-not-a-real-secret
+      WEB_ORIGIN: http://localhost:3000
 
     steps:
       - uses: actions/checkout@v4

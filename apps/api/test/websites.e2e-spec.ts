@@ -399,3 +399,86 @@ describe('another workspace', () => {
     expect(theirs.every((site) => !mineIds.has(site.id))).toBe(true);
   });
 });
+
+describe('the public read path (step 2)', () => {
+  /** No token. A visitor has no session, which is the whole point of the route. */
+  async function visit(subdomain: string) {
+    return call<EnvelopeBody<Served & { site: { name: string; subdomain: string } }>>(ctx.app, {
+      method: 'GET',
+      url: `/api/v1/public/sites/${subdomain}`,
+    });
+  }
+
+  it('serves a published site to a caller with no session', async () => {
+    const { site } = await siteReadyToPublish('public');
+    await setup('POST', `/websites/${site.id}/publish`, { token: orgA.token });
+
+    const response = await visit(site.subdomain);
+    expect(response.statusCode).toBe(200);
+    expect(response.body.data.version).toBe(1);
+    expect(response.body.data.snapshot.pages.map((page) => page.title)).toEqual(['Welcome']);
+  });
+
+  it('answers 404 for a draft, identically to a site that never existed', async () => {
+    const draft = await setup<Website>('POST', '/websites', {
+      token: orgA.token,
+      payload: { name: 'Not yet', subdomain: `${SUFFIX}-unpublished` },
+    });
+
+    const onDraft = await visit(draft.subdomain);
+    const onNothing = await visit(`${SUFFIX}-never-existed`);
+
+    // The criterion: a workspace's unreleased site is not public information. A distinct "not
+    // published yet" response would make its existence, its name and its owner's plans readable by
+    // anybody who guessed the address.
+    expect(onDraft.statusCode).toBe(404);
+    expect(onNothing.statusCode).toBe(404);
+    expect(onDraft.body.error?.code).toBe(onNothing.body.error?.code);
+    expect(onDraft.body.error?.message).toBe(onNothing.body.error?.message);
+    // …and the draft's own name is not in the body, which is what "indistinguishable" has to mean
+    // in practice rather than in the status code alone.
+    expect(JSON.stringify(onDraft.body)).not.toMatch(/Not yet/);
+  });
+
+  it('stops serving a site taken offline', async () => {
+    const { site } = await siteReadyToPublish('offlinepublic');
+    await setup('POST', `/websites/${site.id}/publish`, { token: orgA.token });
+    expect((await visit(site.subdomain)).statusCode).toBe(200);
+
+    await setup('POST', `/websites/${site.id}/unpublish`, { token: orgA.token });
+    expect((await visit(site.subdomain)).statusCode).toBe(404);
+  });
+
+  it('serves the snapshot, not the draft', async () => {
+    const { site, homeId } = await siteReadyToPublish('publicdraft');
+    await setup('POST', `/websites/${site.id}/publish`, { token: orgA.token });
+    const before = await visit(site.subdomain);
+
+    await setup('PATCH', `/websites/${site.id}/pages/${homeId}`, {
+      token: orgA.token,
+      payload: { title: 'Changed after publishing' },
+    });
+
+    const after = await visit(site.subdomain);
+    expect(after.body.data.snapshot).toEqual(before.body.data.snapshot);
+    expect(JSON.stringify(after.body)).not.toMatch(/Changed after publishing/);
+  });
+
+  it('leaks no identifier a visitor has no business holding', async () => {
+    const { site } = await siteReadyToPublish('publicleak');
+    await setup('POST', `/websites/${site.id}/publish`, { token: orgA.token });
+    const serialized = JSON.stringify((await visit(site.subdomain)).body);
+
+    // The renderer needs the content and the version it came from. It does not need the workspace's
+    // id, the site's id or the page ids, and a public response carrying them hands an integrator —
+    // or a competitor — the identifiers every authenticated route is keyed on.
+    expect(serialized).not.toContain(orgA.organizationId);
+    expect(serialized).not.toContain(site.id);
+  });
+
+  it('resolves the subdomain case-insensitively, because a browser will not', async () => {
+    const { site } = await siteReadyToPublish('publiccase');
+    await setup('POST', `/websites/${site.id}/publish`, { token: orgA.token });
+    expect((await visit(site.subdomain.toUpperCase())).statusCode).toBe(200);
+  });
+});

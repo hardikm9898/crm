@@ -1,0 +1,185 @@
+import { request } from '@/lib/api';
+
+/**
+ * The renderer's own copy of the website vocabulary (`FR-WEB-5`).
+ *
+ * Hand-written here rather than imported from `@leados/shared`, for the reason `lib/tasks.ts`,
+ * `lib/sla.ts` and `lib/whatsapp.ts` each record: that package's entry point re-exports the tenant
+ * context, which reaches `node:async_hooks`, and a client component that transitively imports it
+ * fails `next build` with "the chunking context does not support external modules" — on whichever
+ * page happens to render it, not on the file that imported it. `websites.spec.ts` reconciles the
+ * two, because a spec runs in Node and may import both.
+ */
+
+export const WEBSITE_HOME_PATH = '/';
+
+/** A page as the published snapshot carries it. */
+export interface SnapshotPage {
+  readonly path: string;
+  readonly title: string;
+  readonly blocks: readonly unknown[];
+  readonly seo: Record<string, unknown>;
+  readonly isHome: boolean;
+  readonly sortOrder: number;
+}
+
+export interface SiteSnapshot {
+  readonly theme: Record<string, unknown>;
+  readonly seoDefaults: Record<string, unknown>;
+  readonly pages: readonly SnapshotPage[];
+}
+
+export interface PublishedSite {
+  readonly site: { readonly name: string; readonly subdomain: string };
+  readonly version: number;
+  readonly versionId: string;
+  readonly publishedAt: string;
+  readonly snapshot: SiteSnapshot;
+}
+
+/**
+ * The cache tag a site's snapshot is stored under.
+ *
+ * Keyed on the **subdomain** rather than the site's id, because the id is deliberately not in the
+ * public response — a visitor has no business holding it — and because the subdomain is what the
+ * request arrives with. The publish path knows both, so it can name this tag.
+ */
+export function siteCacheTag(subdomain: string): string {
+  return `site:${subdomain.trim().toLowerCase()}`;
+}
+
+/**
+ * Turns the catch-all route's segments into the path a snapshot stores.
+ *
+ * Deliberately **not** a second implementation of `normalizePagePath`: that function cleans what
+ * somebody typed into an editor, which can contain capitals, spaces, a query string or a trailing
+ * slash. This one reads what Next has already split and decoded, so its whole job is to join the
+ * segments back and lowercase them. `websites.spec.ts` asserts the two agree on every shape a URL
+ * can actually produce, because if they ever disagree a published page becomes unreachable at its
+ * own address — and nothing else in the product would notice.
+ */
+export function pathFromSegments(segments: readonly string[] | undefined): string {
+  if (!segments || segments.length === 0) return WEBSITE_HOME_PATH;
+  const joined = segments
+    .map((segment) => segment.trim().toLowerCase())
+    .filter((segment) => segment.length > 0)
+    .join('/');
+  return joined.length === 0 ? WEBSITE_HOME_PATH : `/${joined}`;
+}
+
+/** The page at this path, or `undefined`. The home page answers for `/`. */
+export function pageAt(snapshot: SiteSnapshot, path: string): SnapshotPage | undefined {
+  const direct = snapshot.pages.find((page) => page.path === path);
+  if (direct) return direct;
+  // `/` falls back to whichever page is marked home, so a site whose home page lives at a real
+  // path (`/welcome`) still answers at its root.
+  if (path === WEBSITE_HOME_PATH) return snapshot.pages.find((page) => page.isHome);
+  return undefined;
+}
+
+/**
+ * Loads a published site, cached and tagged.
+ *
+ * `revalidate: false` with a tag, rather than a time window: a published site does not change until
+ * somebody publishes it, so a timer would either serve stale content for its length or re-fetch
+ * content that has not moved. The publish path invalidates the tag, which is the only event that
+ * can change this answer (`FR-WEB-5`).
+ *
+ * This is the one caller in the app that may cache a response, and `RequestOptions.cache` says why.
+ */
+export async function loadPublishedSite(subdomain: string): Promise<PublishedSite> {
+  return (
+    await request<PublishedSite>(`/public/sites/${encodeURIComponent(subdomain)}`, {
+      next: { tags: [siteCacheTag(subdomain)], revalidate: false },
+    })
+  ).data;
+}
+
+/**
+ * The CSS custom properties a tenant's theme sets, as a style object.
+ *
+ * A tenant site must **not** inherit this product's design tokens: a builder's site rendering in
+ * Lead OS blue with Lead OS's type scale is our brand on their page. So the renderer sets the
+ * tokens it uses on the site's own container, from the theme, and falls back to a neutral set that
+ * is deliberately not the app's primary colour.
+ *
+ * Only known keys are read. A theme is tenant-controlled JSON that reaches a `style` attribute, so
+ * spreading it would let a saved theme inject arbitrary CSS — including `background: url(...)`
+ * pointing anywhere. The allowlist is the whole defence, and it is why this returns a built object
+ * rather than a cast.
+ */
+export function themeStyle(theme: Record<string, unknown>): Record<string, string> {
+  const style: Record<string, string> = {
+    '--site-bg': '#ffffff',
+    '--site-text': '#1a1a1a',
+    '--site-muted': '#5a5a5a',
+    '--site-accent': '#1f6feb',
+    '--site-accent-contrast': '#ffffff',
+    '--site-font': 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif',
+  };
+  const allowed: Record<string, string> = {
+    background: '--site-bg',
+    text: '--site-text',
+    muted: '--site-muted',
+    accent: '--site-accent',
+    accentContrast: '--site-accent-contrast',
+    font: '--site-font',
+  };
+  for (const [key, token] of Object.entries(allowed)) {
+    const value = theme[key];
+    // A colour or a font stack and nothing else: no semicolons, no braces, no `url(`, and short
+    // enough that a stylesheet cannot be smuggled through a colour field.
+    if (
+      typeof value === 'string' &&
+      value.length > 0 &&
+      value.length <= 120 &&
+      isSafeCssValue(value)
+    ) {
+      style[token] = value;
+    }
+  }
+  return style;
+}
+
+const UNSAFE_CSS = /[;{}()<>\\]|url|expression|@import/i;
+
+function isSafeCssValue(value: string): boolean {
+  return !UNSAFE_CSS.test(value);
+}
+
+/**
+ * The block types this release can draw (`FR-WEB-2`).
+ *
+ * Here rather than beside the renderers, because the list and the URL guard are **pure** and three
+ * things need them: the renderer, the step-3 editor, and a unit spec. A spec cannot import the
+ * renderers at all — they are `.tsx`, and this app's unit tests run in a node environment with
+ * `jsx: preserve`, so importing one fails at parse time with a message about tsconfig rather than
+ * about the test. Keeping the pure half here is what makes the guard testable.
+ */
+export const BLOCK_TYPES = ['heading', 'text', 'hero', 'image', 'list', 'whatsapp_cta'] as const;
+export type BlockType = (typeof BLOCK_TYPES)[number];
+
+/** True when this release can draw the type. The step-3 editor reads the same answer. */
+export function isKnownBlockType(type: unknown): type is BlockType {
+  return typeof type === 'string' && (BLOCK_TYPES as readonly string[]).includes(type);
+}
+
+/**
+ * Only `http:`, `https:`, `mailto:` and `tel:`, plus a same-site relative path.
+ *
+ * React will put `javascript:` in an `href` without complaint, so every tenant-authored URL goes
+ * through here and anything else renders without a link rather than with a dangerous one. A
+ * tenant's own editor is not a trust boundary we get to skip: the person who pastes a link is not
+ * always the person who owns the workspace.
+ */
+export function safeUrl(value: string | null): string | null {
+  if (value === null) return null;
+  const trimmed = value.trim();
+  if (trimmed.startsWith('/') && !trimmed.startsWith('//')) return trimmed;
+  try {
+    const url = new URL(trimmed);
+    return ['http:', 'https:', 'mailto:', 'tel:'].includes(url.protocol) ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}

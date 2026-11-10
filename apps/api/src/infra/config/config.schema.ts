@@ -44,6 +44,18 @@ export const configSchema = z
     ENCRYPTION_MASTER_KEY: base64Key(32),
 
     /**
+     * Shared with the web app, which refuses a revalidation call without it (`FR-WEB-5`).
+     *
+     * Optional here rather than required, deliberately. Making it required would refuse to start
+     * every deployment that upgrades into this release without setting it first — a boot failure
+     * for a feature the deployment is not using yet. Instead the revalidation job throws when it
+     * is missing, which retries, dead-letters, and shows up in `job_failures` and
+     * `/health/deep`'s dead-letter count: the misconfiguration is reported the first time
+     * somebody publishes, by name, rather than at a boot nobody connected to websites.
+     */
+    WEB_REVALIDATE_SECRET: z.string().min(16, 'must be at least 16 characters').optional(),
+
+    /**
      * Where uploaded and generated files live. Only the local driver exists today (the S3 driver
      * arrives with the media-heavy phases); the variable exists so switching is configuration rather
      * than a code change, and so a deployment states its choice out loud.
