@@ -119,6 +119,9 @@
       "name": "Public Ingest"
     },
     {
+      "name": "Public Sites"
+    },
+    {
       "name": "Quotations"
     },
     {
@@ -21700,6 +21703,51 @@
           },
           "422": {
             "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/v1/public/sites/{subdomain}": {
+      "get": {
+        "operationId": "PublicSites_snapshot",
+        "tags": [
+          "Public Sites"
+        ],
+        "summary": "Snapshot",
+        "description": "**Public** — no credential needed.\n\n```bash\ncurl -X GET \"http://localhost:4000/api/v1/public/sites/{subdomain}\"\n```",
+        "parameters": [
+          {
+            "name": "subdomain",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The envelope, with this endpoint’s payload in `data`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
           },
           "429": {
             "$ref": "#/components/responses/Error429"

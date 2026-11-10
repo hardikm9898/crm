@@ -476,7 +476,7 @@ a plan that is contradicted by the code is worse than no plan.
 > | Mutations via `useMutation` | **server actions** | The access token is in an httpOnly cookie, so only the server can attach it. See §10.3. |
 > | Types from a generated OpenAPI client | **hand-written client (`lib/api.ts`) speaking the documented envelope** | The spec is published in Phase 4. A generated client for a spec that does not exist would be fiction; the hand-written one is deliberately thin so it can be deleted. |
 > | Shared Zod schemas from `packages/contracts` | **route-handler schemas local to the web app** | `packages/contracts` does not exist yet. The API validates authoritatively; the web app validates only what its own route handlers accept. |
-> | Tokens in `packages/ui` | **`apps/web/src/app/globals.css`** | They move to `packages/ui` when a second app needs them (the tenant website renderer, Phase 7). |
+> | Tokens in `packages/ui` | **`apps/web/src/app/globals.css`**, and they did not move | This predicted the move would happen in Phase 7. It did not, and the prediction was wrong twice over — see §11. |
 > | `(public)` and `(onboarding)` route groups | **`login/`, `accept-invitation/` at the root; onboarding is a card inside `/settings`** | There is no marketing site in this repo yet, and a four-step checklist did not justify a route group with its own layout. The wizard is resumable and server-stored as planned. |
 
 ### 10.2 Routes that exist
@@ -1206,3 +1206,68 @@ which is the point: a preview is a run, so it is read in the list that reads run
   shipping, telling a business owner that a published workflow "is a workflow that is ready, not one
   that is working" while it was working. A sentence about what the product cannot do yet has to be
   deleted by the step that makes it untrue.
+
+---
+
+## 11. As built — Phase 7, step 2 (the published website renderer)
+
+The route is `apps/web/src/app/s/[siteSlug]/[[...path]]`, at the app root beside `login/` and `f/`,
+which is where §10.1 already records the `(public)` group not existing. It builds as `●` — prerendered
+static HTML — which is what `FR-WEB-5` asks for.
+
+**§10.1's prediction about the design tokens was wrong, in both directions.** It said they move to
+`packages/ui` "when a second app needs them (the tenant website renderer, Phase 7)". The renderer is
+a **route in this app**, not a second app, so nothing needed sharing — and moving them with no second
+consumer would be churn with a migration's risk and none of its benefit. The deeper error is the
+assumption underneath: a tenant's website must not inherit this product's tokens **at all**. A
+builder's site rendering in Lead OS blue with Lead OS's type scale is our brand on their page. So the
+renderer sets its own `--site-*` properties on the site's container from the tenant's theme, and the
+app's tokens are simply not used there.
+
+`themeStyle` allowlists the keys it reads rather than spreading the theme, because a theme is
+tenant-controlled JSON on its way into a `style` attribute: spreading it would let a saved theme
+inject arbitrary CSS, including a `url(...)` pointing anywhere. Tenant-authored URLs go through
+`safeUrl` for the same class of reason — React will put `javascript:` in an `href` without
+complaint, and a tenant's own editor is not a trust boundary we get to skip, because the person who
+pastes a link is not always the person who owns the workspace.
+
+### 11.1 Caching, and the one call that may have it
+
+`request()` in `lib/api.ts` hard-coded `cache: 'no-store'`, which is right for every authenticated
+screen — one tenant's data, one person's token, and a cached response is the worst bug a
+multi-tenant product can have. The renderer is the one caller that must cache, so caching became the
+**caller's** decision with the default unchanged, and the reason is written at the option.
+
+Revalidation is by tag, with `revalidate: false` rather than a time window: a published site does not
+change until somebody publishes it, so a timer would either serve stale content for its length or
+re-fetch content that has not moved.
+
+**The second argument to `revalidateTag` is a measurable choice, not a style preference.** Next's own
+deprecation message suggests `'max'`, which marks the tag stale: the next request is served the
+**previous** version while a re-render happens behind it, and the one after that is fresh. Measured,
+that meant a business pressing Publish and reloading their own site saw the old page once — the most
+confusing moment this feature has, because it looks exactly like a publish that did not work.
+`{ expire: 0 }` purges instead, and the first request after a publish is already the new version.
+`updateTag`, the other immediate call, **throws** from a route handler by an explicit check on
+`page.endsWith('/route')`, so it is not an option here.
+
+### 11.2 What the renderer does not do
+
+Per-page SEO, `robots.txt`, `sitemap.xml`, structured data and redirects are step 5's; what exists
+is a per-page `<title>`, which is the minimum that stops every page of every tenant site being called
+"Lead OS". The block **editor** is step 3's: this step ships the render half of the registry and the
+six types a page can hold, and an unknown type renders nothing while the rest of the page renders —
+a published site must not go blank because somebody rolled back to a snapshot containing a block this
+release has never heard of.
+
+### 11.3 Measured
+
+Lighthouse against the built app, Chromium headless, one published page: **mobile 99 performance,
+100 accessibility, 100 best practices, 100 SEO**; **desktop 100 across all four**. Zero horizontal
+overflow at 375 px.
+
+That is the renderer's floor and **not** the phase's Lighthouse exit criterion, which is about "a
+published template at launch quality" — and templates arrive in step 7. It is also a local Node
+server with no CDN in front of it, so the performance number is optimistic about production by an
+unknown margin. What it does establish is that the renderer itself is not the bottleneck, and that
+the accessibility and SEO structure is sound before any template is written on top of it.

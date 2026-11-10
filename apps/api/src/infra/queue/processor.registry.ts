@@ -38,6 +38,7 @@ import {
 } from '../../modules/sla/sla.processor.js';
 import { CallOutcomeSweepProcessor } from '../../modules/calls/calls.processor.js';
 import { ApiLogPartitionProcessor } from '../../modules/api-keys/api-log.processor.js';
+import { SiteRevalidateProcessor } from '../../modules/websites/websites.processor.js';
 import { IdempotencyPruneProcessor } from '../../modules/ingestion/ingestion.processor.js';
 import { ImportProcessProcessor } from '../../modules/imports/imports.processor.js';
 import {
@@ -116,6 +117,7 @@ export const PROCESSOR_TYPES: readonly Type<JobProcessor>[] = [
   CallOutcomeSweepProcessor,
   IdempotencyPruneProcessor,
   ApiLogPartitionProcessor,
+  SiteRevalidateProcessor,
   // scoring
   LeadScoreProcessor,
   ScoreDecaySweepProcessor,

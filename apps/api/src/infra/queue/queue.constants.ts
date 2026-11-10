@@ -90,6 +90,17 @@ export const JOBS = {
    * one of them that deletes.
    */
   API_LOG_PARTITIONS: 'maintenance.api-log-partitions',
+
+  /**
+   * Tells the web app that a site's published snapshot has changed, so it can drop the cache tag
+   * it serves that site under (`FR-WEB-5`).
+   *
+   * On `maintenance` rather than a queue of its own, and rather than `webhooks`: the work is one
+   * short call to **our own** deployment, not to a customer's server that has been down since
+   * Tuesday, so it needs neither the webhook queue's day-long retries nor its own scaling. The
+   * other work on this queue is fast sweeps, so a publish does not wait behind an import.
+   */
+  SITE_REVALIDATE: 'maintenance.site-revalidate',
   /**
    * Every connected provider's credential, asked whether it still works
    * (`docs/queue-event-architecture.md` §5). On `maintenance` because it is a platform-wide sweep,

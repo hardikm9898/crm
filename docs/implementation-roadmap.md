@@ -3438,6 +3438,124 @@ and tag revalidation on publish, and the design tokens moving to `packages/ui` a
 
 ---
 
+### Step 2 — the renderer, and the publish that reaches it ✅ _(landed 2026-11-10)_
+
+A public read path, a static route, and the chain that connects pressing Publish to what a visitor
+sees. Measured end to end: **publish → outbox → worker → cache tag dropped → new version served, in
+856 ms**.
+
+**The guarantee that a draft is never served lives in the API, not the renderer.**
+`GET /public/sites/:subdomain` answers 404 for anything not published, so the renderer could not
+serve a draft even if it asked wrongly — the promise belongs at the layer that reads the database.
+And a draft is **indistinguishable** from a site that never existed: same status, same code, same
+message, and the draft's own name nowhere in the body. A distinct "not published yet" would make the
+existence of an unreleased site, its name and its owner's plans readable by anybody who guessed the
+address.
+
+One endpoint returning the **whole snapshot**, not a page at a time: a snapshot is what publishing
+produces, so splitting it would mean a page assembled from two reads that can disagree about which
+publish they came from. The read runs under `withPlatformScope` because a `@Public()` route has no
+principal — the integration framework's inbound door already paid for the version of this that
+answered 500 to every visitor.
+
+**Revalidation is by tag, and the profile is a measurable choice rather than a style preference.**
+`revalidate: false` plus one tag, because a published site does not change until somebody publishes
+it, so a timer would either serve stale content for its length or re-fetch content that has not
+moved. Next's deprecation message suggests `'max'` as the second argument to `revalidateTag`; that
+marks the tag stale, so the next request is served the **previous** version while a re-render happens
+behind it. Measured, that meant a business pressing Publish and reloading their own site saw the old
+page once — which looks exactly like a publish that did not work. `{ expire: 0 }` purges, and the
+first request after a publish is already the new version. `updateTag`, the other immediate call,
+throws from a route handler by an explicit check on `page.endsWith('/route')`.
+
+**Step 1 emitted no outbox events, and this step needed them.** Step 1 wrote audit rows, which record
+_who did it_; nothing could react. Rule 5 is that events leave through the outbox inside the
+transaction that wrote the row, so `website.published`, `website.unpublished` and
+`website.rolled_back` now do — all three, because all three change what the public sees. A
+revalidation only on publish would leave a withdrawn site being served from cache, which is the
+failure nobody tests for because the screen says "offline". The subdomain travels in the payload
+because the cache tag is keyed on it: the site's id is deliberately absent from the public response,
+so there is no id for a tag to use.
+
+The job is on `maintenance` rather than `webhooks` or a queue of its own: the work is one short call
+to **our own** deployment, not to a customer's server that has been down since Tuesday, so it needs
+neither the webhook queue's day-long retries nor its own scaling. It is a job rather than a call
+inside `publish()` because of rule 5, and that also buys the retry — a web app mid-deploy is the
+ordinary reason this call fails, and a publish must not fail because the thing it notifies was
+restarting.
+
+**`WEB_REVALIDATE_SECRET` is optional in the config schema and fatal in the job.** Required at boot
+would refuse to start every deployment that upgrades into this release without setting it first — a
+boot failure for a feature the deployment is not using yet. Instead the job throws, which retries,
+dead-letters, and shows up in `job_failures` and `/health/deep`: the misconfiguration is reported by
+name the first time somebody publishes, rather than at a boot nobody would connect to websites.
+
+**`frontend-architecture.md` §10.1 predicted the design tokens would move to `packages/ui` in this
+step. They did not, and the prediction was wrong twice over.** The renderer is a route in `apps/web`,
+not a second app, so nothing needed sharing. The deeper error is the assumption underneath: a
+tenant's website must not inherit this product's tokens **at all** — a builder's site in Lead OS blue
+is our brand on their page. The renderer sets its own `--site-*` properties from the tenant's theme,
+and `themeStyle` allowlists the keys it reads rather than spreading the theme, because a theme is
+tenant-controlled JSON on its way into a `style` attribute. Corrected in §10.1 and recorded in a new
+§11.
+
+**Files changed.** New: `apps/api/src/modules/websites/public-sites.{controller,service}.ts`,
+`websites.processor.ts`; `apps/web/src/lib/websites.ts` and its spec;
+`apps/web/src/app/s/[siteSlug]/[[...path]]/{page.tsx,blocks.tsx}`;
+`apps/web/src/app/api/revalidate-site/route.ts`. Changed: `websites.{module,service}.ts` (three
+events), `apps/web/src/lib/api.ts` (caching became the caller's decision, default unchanged),
+`infra/queue/queue.constants.ts`, `infra/queue/processor.registry.ts`,
+`infra/outbox/event-subscriptions.ts`, `infra/config/config.schema.ts`, `.env.example`, `turbo.json`,
+`.github/workflows/ci.yml`, `apps/api/test/websites.e2e-spec.ts`, `docs/frontend-architecture.md`.
+
+**API changes.** One public path, one operation: `GET /api/v1/public/sites/:subdomain`. One web route
+handler, `POST /api/revalidate-site`, which is the web app's and not the API's.
+
+**UI changes.** The published site renderer: six block types, a tenant theme, and a per-page title.
+No editor — that is step 3.
+
+**Tests run.** `lint typecheck build format:check` clean. Unit: **15 new** in `@leados/web`,
+reconciling its hand-written vocabulary against `@leados/shared` and covering the theme allowlist and
+the URL guard. Integration: **6 new** e2e on the public read path, including the
+indistinguishability of a draft from a site that never existed. Then **17 checks against the built
+app** with a real API, worker and Next server — publish, edit-without-publishing, republish,
+unpublish, republish, rollback, a path with no page, and the revalidation endpoint refusing both a
+missing and a wrong secret.
+
+Lighthouse on the built app: **mobile 99 / 100 / 100 / 100** and **desktop 100 across all four**
+(performance, accessibility, best practices, SEO), with zero horizontal overflow at 375 px. That is
+the renderer's floor and **not** the phase's Lighthouse criterion, which is about a published
+template at launch quality — templates arrive in step 7 — and it is a local Node server with no CDN,
+so the performance figure is optimistic about production by an unknown margin.
+
+**Two defects found by running it rather than by review.**
+
+1. **A 404 cached before publishing survived the publish.** The first request to a site that is not
+   yet live caches a 404; the revalidation then had to clear it, and with `'max'` the next request
+   still served the stale 404. The first version of the check script slept four seconds and fetched
+   once, reported nine failures, and every one of them was that single timing fact cascading. A cache
+   is eventually consistent by definition, so the check now **polls** — a single fetch after a
+   guessed sleep is a race that fails for timing and reads as a broken feature.
+2. **The pure half of the block registry could not be tested where it lived.** `safeUrl` and the type
+   list started in `blocks.tsx`, and this app's unit tests run in a node environment with
+   `jsx: preserve`, so importing a `.tsx` file fails at parse time with a message about tsconfig
+   rather than about the test. They moved to `lib/websites.ts`, which is also where the step-3 editor
+   will want them — the renderer, the editor and the spec all need the list, and only the renderers
+   need JSX.
+
+**Carried forward, named rather than assumed.** There is no custom domain yet, so a site is reachable
+only at `/s/<subdomain>` on the platform origin; the host-based routing that makes
+`acme.leados.app` and a verified custom domain resolve is step 6's, and `websites.subdomain` is
+already globally unique for it. The six block types are what a template needs and no more — rich
+text, galleries and forms-on-a-page arrive with steps 3 and 4. `seoDefaults` is snapshotted and read
+by nothing until step 5.
+
+**The next step.** Step 3 — the block editor, and the boot check that reconciles a declared block
+type against the renderer that draws it, so a declared type with no renderer is a failed startup
+rather than a blank section on somebody's live site.
+
+---
+
 ### Step plan — written 2026-11-03, nothing landed
 
 Phases 1–6 carry a record per step, written as each one landed. This is the opposite of that: a plan,

@@ -12,6 +12,7 @@ import {
 } from '@leados/shared';
 import { AuditService } from '../../infra/audit/audit.service.js';
 import { DbService } from '../../infra/db/db.service.js';
+import { OutboxService } from '../../infra/outbox/outbox.service.js';
 import type {
   CreatePageInput,
   CreateWebsiteInput,
@@ -47,6 +48,7 @@ export class WebsitesService {
   constructor(
     private readonly db: DbService,
     private readonly audit: AuditService,
+    private readonly outbox: OutboxService,
   ) {}
 
   private requireActor(actorId: string | null | undefined): string {
@@ -350,6 +352,18 @@ export class WebsitesService {
         resourceId: id,
         after: { version, versionId, pages: snapshot.pages.length },
       });
+      // Rule 5: the event leaves through the outbox inside the transaction that published the
+      // version, so a crash between the two is impossible. The subdomain travels in the payload
+      // because the renderer's cache tag is keyed on it — the site's id is deliberately not in the
+      // public response, so there is no id for a tag to use.
+      await this.outbox.emit(tx, [
+        {
+          name: 'website.published',
+          aggregateType: 'website',
+          aggregateId: id,
+          payload: { subdomain: existing.subdomain, version, versionId },
+        },
+      ]);
     });
 
     return this.findOne(id);
@@ -371,6 +385,17 @@ export class WebsitesService {
         resourceId: id,
         before: { status: 'published', versionId: existing.publishedVersionId },
       });
+      // Taking a site offline changes what the public sees as much as publishing does, so it drops
+      // the same tag. A revalidation only on publish would leave a withdrawn site being served
+      // from cache — the failure nobody tests for because the screen says "offline".
+      await this.outbox.emit(tx, [
+        {
+          name: 'website.unpublished',
+          aggregateType: 'website',
+          aggregateId: id,
+          payload: { subdomain: existing.subdomain },
+        },
+      ]);
     });
     return this.findOne(id);
   }
@@ -422,6 +447,14 @@ export class WebsitesService {
         resourceId: id,
         after: { version, restoredFrom: source.version, versionId: newVersionId },
       });
+      await this.outbox.emit(tx, [
+        {
+          name: 'website.rolled_back',
+          aggregateType: 'website',
+          aggregateId: id,
+          payload: { subdomain: existing.subdomain, version, versionId: newVersionId },
+        },
+      ]);
     });
 
     return this.findOne(id);

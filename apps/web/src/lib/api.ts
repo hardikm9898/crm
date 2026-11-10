@@ -91,6 +91,19 @@ export interface RequestOptions {
     readonly content: string | Uint8Array;
     readonly contentType: string;
   };
+  /**
+   * Caching, for the one kind of caller that may have it.
+   *
+   * The default below is `no-store`, and it stays the default: every authenticated screen reads one
+   * tenant's data with one person's token, and a cached response is the worst possible bug in a
+   * multi-tenant product — somebody else's leads, served from a cache, with no query to blame. The
+   * exception is a **published website snapshot**, which is identical for every caller by
+   * definition and which `FR-WEB-5` requires be served statically. So the decision belongs to the
+   * caller rather than to this function, and is spelled out at the one call site that takes it.
+   */
+  cache?: RequestCache;
+  /** Next's fetch extensions: `tags` for revalidation by tag, `revalidate` for the ISR window. */
+  next?: { tags?: string[]; revalidate?: number | false };
 }
 
 export async function request<T>(
@@ -108,7 +121,13 @@ export async function request<T>(
     ...(options.rawBody ? { body: options.rawBody.content as BodyInit } : {}),
     credentials: options.credentials ?? 'include',
     ...(options.signal ? { signal: options.signal } : {}),
-    cache: 'no-store',
+    // `cache` and `next.revalidate` are mutually exclusive in Next, so a caller that asks for
+    // either gets exactly what it asked for and nothing is defaulted underneath it.
+    ...(options.cache === undefined && options.next === undefined
+      ? { cache: 'no-store' as RequestCache }
+      : {}),
+    ...(options.cache === undefined ? {} : { cache: options.cache }),
+    ...(options.next === undefined ? {} : { next: options.next }),
   });
 
   const envelope = (await response.json().catch(() => null)) as Envelope<T> | null;

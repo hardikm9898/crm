@@ -1,5 +1,8 @@
 import { Module } from '@nestjs/common';
+import { PublicSitesController } from './public-sites.controller.js';
+import { PublicSitesService } from './public-sites.service.js';
 import { WebsitesController } from './websites.controller.js';
+import { SiteRevalidateProcessor } from './websites.processor.js';
 import { WebsitesService } from './websites.service.js';
 
 /**
@@ -9,8 +12,8 @@ import { WebsitesService } from './websites.service.js';
  * whatever it registered.
  */
 @Module({
-  controllers: [WebsitesController],
-  providers: [WebsitesService],
-  exports: [WebsitesService],
+  controllers: [WebsitesController, PublicSitesController],
+  providers: [WebsitesService, PublicSitesService, SiteRevalidateProcessor],
+  exports: [WebsitesService, PublicSitesService],
 })
 export class WebsitesModule {}
