@@ -31,6 +31,17 @@ export const PARAM_TYPES = [
   'duration',
   /** A row in this workspace, named by `reference`. */
   'reference',
+  /**
+   * A web address, an email or a phone link. Validated against a scheme allowlist rather than
+   * merely being text, because a tenant-authored URL reaches an `href`.
+   *
+   * Added for the website block registry (`website-blocks.ts`); no automation action uses it yet.
+   * An editor renders the types **its own** registry declares, not every type in this list, which
+   * is why adding one here is not a change to the automation editor.
+   */
+  'url',
+  /** A list of lines, e.g. the items of a list block. Added for the block registry. */
+  'string_list',
 ] as const;
 export type ParamType = (typeof PARAM_TYPES)[number];
 

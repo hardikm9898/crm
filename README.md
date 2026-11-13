@@ -11,10 +11,10 @@ attribution — built so a small business can answer four questions without trai
 
 ## Status
 
-**Phases 0–6 landed, and Phase 7 steps 1–2.** Phase 6 (automation) is complete but for one of the brief's two reference
+**Phases 0–6 landed, and Phase 7 steps 1–3.** Phase 6 (automation) is complete but for one of the brief's two reference
 flows — abandoned checkout — which is blocked on Phase 7's websites and payments rather than on
 anything in Phase 6; every Phase 6 exit criterion is measured in
-[implementation-roadmap.md](./docs/implementation-roadmap.md). **Phase 7 is in progress** — steps 1 and 2
+[implementation-roadmap.md](./docs/implementation-roadmap.md). **Phase 7 is in progress** — steps 1 to 3
 of seven have landed; Phases 8–12 have not started.
 
 What works today:
@@ -44,7 +44,9 @@ What works today:
   new version carrying an older snapshot; plus the renderer that serves a published site statically
   at `/s/<subdomain>`, with the cache tag dropped by the publish itself (measured at 856 ms from
   pressing Publish to the new version being served). A draft is never served, and is
-  indistinguishable from a site that never existed.
+  indistinguishable from a site that never existed. A block editor renders every control from the
+  registry it fetches, so adding a block type costs one declaration and one renderer and no editor
+  code.
 
 **2 977 tests** — 1 277 unit (728 shared, 366 web, 175 api, 8 db) and 1 700 integration (946 api
 e2e, 754 db) — run against real PostgreSQL and Redis, as reported by the Phase 6 step 3 run. The API
@@ -113,9 +115,10 @@ query cache) the reasons are recorded in
 
 ## Next step
 
-**Phase 7, step 3 — the block editor**, and the boot check that reconciles a declared block type
-against the renderer that draws it, so a declared type with no renderer is a failed startup rather
-than a blank section on somebody's live site. The
+**Phase 7, step 4 — the forms on a site (`FR-WEB-6`)**: `website_forms` over the existing forms
+module, so a form placed on a page is an existing form in a new place rather than a second capture
+engine, plus the context a site can see that a bare form cannot — page, referrer, UTM, campaign,
+session and device. The
 [step plan](./docs/implementation-roadmap.md) holds the remaining five steps, with the two exit
 criteria that need real hosting and real DNS named up front rather than left to the gate, and with
 the `≥6 templates` scope line flagged as contradicting the decision recorded for B1 in
