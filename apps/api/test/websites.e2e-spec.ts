@@ -306,7 +306,10 @@ describe('rollback (FR-WEB-5)', () => {
     // A second publish, with different content.
     await setup('PATCH', `/websites/${site.id}/pages/${homeId}`, {
       token: orgA.token,
-      payload: { title: 'Version two', blocks: [{ type: 'hero', text: 'two' }] },
+      // `params`, not a top-level key. This fixture was `{ type: 'hero', text: 'two' }` until step
+      // 3's validator refused it: a block shape that was never valid, which nothing noticed while
+      // blocks were stored uninterpreted. The registry found it on its first run.
+      payload: { title: 'Version two', blocks: [{ type: 'hero', params: { heading: 'two' } }] },
     });
     await setup('POST', `/websites/${site.id}/publish`, { token: orgA.token });
     const second = await setup<Served>('GET', `/websites/${site.id}/served`, { token: orgA.token });
@@ -480,5 +483,126 @@ describe('the public read path (step 2)', () => {
     const { site } = await siteReadyToPublish('publiccase');
     await setup('POST', `/websites/${site.id}/publish`, { token: orgA.token });
     expect((await visit(site.subdomain.toUpperCase())).statusCode).toBe(200);
+  });
+});
+
+describe('the block registry (step 3)', () => {
+  it('serves the catalogue the editor renders its controls from', async () => {
+    const catalogue = await setup<
+      { type: string; label: string; hint: string; group: string; params: unknown[] }[]
+    >('GET', '/websites/block-catalogue', { token: orgA.token });
+
+    // The editor fetches this and renders a control per field. If it were empty the add-block menu
+    // would render as a picker with nothing in it, which looks exactly like a workspace with
+    // nothing configured — the defect `REFERENCE_SOURCES` exists to prevent one registry over.
+    expect(catalogue.length).toBeGreaterThan(0);
+    for (const spec of catalogue) {
+      expect(spec.label.length, spec.type).toBeGreaterThan(0);
+      expect(spec.hint.length, spec.type).toBeGreaterThan(0);
+      expect(Array.isArray(spec.params), spec.type).toBe(true);
+    }
+    // `quote` is the type added by this step, and it is the proof of the step's exit criterion: it
+    // cost one declaration and one renderer, and no editor code.
+    expect(catalogue.map((spec) => spec.type)).toContain('quote');
+  });
+
+  it('is readable with website:read and refused without a session', async () => {
+    const anonymous = await api('GET', '/websites/block-catalogue');
+    expect(anonymous.statusCode).toBe(401);
+  });
+
+  it('accepts blocks the registry knows', async () => {
+    const { site, homeId } = await siteReadyToPublish('blocksok');
+    const response = await api('PATCH', `/websites/${site.id}/pages/${homeId}`, {
+      token: orgA.token,
+      payload: {
+        blocks: [
+          { type: 'hero', params: { heading: 'Welcome', ctaHref: 'https://example.com' } },
+          { type: 'quote', params: { text: 'They were quick.', attribution: 'Asha' } },
+          { type: 'list', params: { items: ['One', 'Two'] } },
+        ],
+      },
+    });
+    expect(response.statusCode).toBe(200);
+  });
+
+  it('refuses a block type it does not know, and names it', async () => {
+    const { site, homeId } = await siteReadyToPublish('blocksunknown');
+    const response = await api('PATCH', `/websites/${site.id}/pages/${homeId}`, {
+      token: orgA.token,
+      payload: { blocks: [{ type: 'pricing_table_v2', params: {} }] },
+    });
+    // Refused on write even though the renderer tolerates an unknown type on read: nothing should
+    // be able to save a block this release cannot draw, while a rollback to a newer release's
+    // snapshot must still render. That asymmetry is the registry's design, not an inconsistency.
+    expect(response.statusCode).toBe(400);
+    expect(JSON.stringify(response.body)).toMatch(/pricing_table_v2/);
+  });
+
+  it('addresses each problem at the block and field it belongs to', async () => {
+    const { site, homeId } = await siteReadyToPublish('blockfields');
+    const response = await api('PATCH', `/websites/${site.id}/pages/${homeId}`, {
+      token: orgA.token,
+      payload: {
+        blocks: [
+          { type: 'hero', params: { heading: 'Fine' } },
+          { type: 'hero', params: {} },
+          { type: 'image', params: { src: 'javascript:alert(1)' } },
+        ],
+      },
+    });
+    expect(response.statusCode).toBe(400);
+    const fields = (
+      (response.body.error?.details ?? []) as { field: string; message: string }[]
+    ).map((detail) => detail.field);
+    // The editor points at the input that is wrong rather than printing one sentence at the top,
+    // which it can only do because the addresses name the row.
+    expect(fields).toEqual(['blocks[1].params.heading', 'blocks[2].params.src']);
+  });
+
+  it('refuses a link that executes, and says what a link may start with', async () => {
+    const { site, homeId } = await siteReadyToPublish('blockurl');
+    const response = await api('PATCH', `/websites/${site.id}/pages/${homeId}`, {
+      token: orgA.token,
+      payload: {
+        blocks: [{ type: 'hero', params: { heading: 'H', ctaHref: 'javascript:void 0' } }],
+      },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(JSON.stringify(response.body)).toMatch(/mailto: or tel:/);
+  });
+
+  it('validates blocks on create as well as on update', async () => {
+    const { site } = await siteReadyToPublish('blockcreate');
+    const response = await api('POST', `/websites/${site.id}/pages`, {
+      token: orgA.token,
+      payload: { path: '/bad', title: 'Bad', blocks: [{ type: 'nope', params: {} }] },
+    });
+    // Both write paths, because a page created wrong is as broken as one edited wrong — and the
+    // first version of this wired the check into `updatePage` only.
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('still serves a stored block type it no longer knows, rather than blanking the page', async () => {
+    const { site, homeId } = await siteReadyToPublish('blocktolerant');
+    // Written past the validator, the way a snapshot from a newer release arrives after a rollback.
+    await ctx.db.websitePage.update({
+      where: { id: homeId },
+      data: {
+        blocks: [
+          { type: 'hero', params: { heading: 'STILL HERE' } },
+          { type: 'from_a_newer_release', params: {} },
+        ],
+      } as never,
+    });
+    await setup('POST', `/websites/${site.id}/publish`, { token: orgA.token });
+    const served = await call<EnvelopeBody<Served>>(ctx.app, {
+      method: 'GET',
+      url: `/api/v1/public/sites/${site.subdomain}`,
+    });
+    expect(served.statusCode).toBe(200);
+    const blocks = (served.body.data.snapshot.pages[0] as unknown as { blocks: { type: string }[] })
+      .blocks;
+    expect(blocks.map((block) => block.type)).toEqual(['hero', 'from_a_newer_release']);
   });
 });

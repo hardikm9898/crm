@@ -31329,6 +31329,52 @@
         ]
       }
     },
+    "/api/v1/websites/block-catalogue": {
+      "get": {
+        "operationId": "Websites_catalogue",
+        "tags": [
+          "Websites"
+        ],
+        "summary": "Catalogue",
+        "description": "Needs the `website:read` permission.\n\n```bash\ncurl -X GET \"http://localhost:4000/api/v1/websites/block-catalogue\" \\\n  -H \"Authorization: Bearer $LEADOS_KEY_ID.$LEADOS_SECRET\"\n```",
+        "responses": {
+          "200": {
+            "description": "The envelope, with this endpoint’s payload in `data`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          }
+        },
+        "x-leados-permission": "website:read",
+        "security": [
+          {
+            "sessionToken": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      }
+    },
     "/api/v1/wh/{provider}/{connectionId}": {
       "get": {
         "operationId": "IntegrationInbound_verify",

@@ -1271,3 +1271,63 @@ published template at launch quality" — and templates arrive in step 7. It is 
 server with no CDN in front of it, so the performance number is optimistic about production by an
 unknown margin. What it does establish is that the renderer itself is not the bottleneck, and that
 the accessibility and SEO structure is sound before any template is written on top of it.
+
+---
+
+## 12. As built — Phase 7, step 3 (the block editor)
+
+`/websites` and `/websites/[id]`, in the `(app)` group with the rest of the authenticated screens.
+Websites sit under **Grow** in the navigation rather than in Workspace settings, for the reason the
+forms row gives: a site is a marketing object, and the person who builds the campaign builds the
+page it points at. Automation is in settings because writing a workflow is something somebody does
+once and then leaves alone; editing a page is work somebody does the way they work a lead.
+
+The `phase: 7` placeholder row is gone. A disabled "coming in phase 7" item beside a screen that
+exists is the navigation lying — the rule that deleted the automation list's "nothing runs yet"
+card.
+
+### 12.1 Every control comes from the catalogue
+
+`block-editor.tsx` fetches `GET /websites/block-catalogue` and renders one control per declared
+field. **Its source names no block type**, which is the step's exit criterion made checkable rather
+than asserted: adding a type is one declaration in `packages/shared/src/website-blocks.ts` and one
+renderer in the published-site route.
+
+A block type still costs that renderer, because a block is a layout and a schema cannot describe
+one — the half of Phase 6's registry argument that does not carry over.
+
+Three guards, in increasing order of how much they catch:
+
+| Guard                                      | Catches                                                                                  |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| `Record<BlockType, …>` on the renderer map | A declared type with no renderer, and a renderer nothing declares — both **type errors** |
+| `websites.spec.ts`                         | This app's hand-written type list drifting from the registry's                           |
+| `validateBlocks` in the API                | A page saved with a type or a field value the registry refuses                           |
+
+The first is why there is no boot check here, which departs from the plan: automation needs one
+because it resolves handlers dynamically, while these renderers are one static object the compiler
+can check. Verified by deleting a renderer and reading `error TS2741`.
+
+### 12.2 The things this screen inherited rather than re-paid
+
+- **The page's blocks travel as one hidden JSON field.** `submittedValues` keeps one value per name,
+  so a form whose fields repeat comes back from a refusal having dropped every row but the last.
+  The workflow editor is built this way; the mapping editor is why.
+- **Problems are printed against the rows they name.** `fieldErrors` is keyed by the API's own
+  `field`, and the block validator addresses problems as `blocks[2].params.heading`.
+- **A refused form echoes its submission**, including the whole block list, so a rejected save does
+  not lose the work.
+- **`key` + `defaultValue` on the status select**, not a controlled `value`: that shape is right for
+  a select whose value only has to survive a refusal, and wrong when choosing an option should
+  reveal another field. Nothing here does.
+- **The `data-block-row` marker is on a wrapper**, not on `Card`. That component spreads nothing, so
+  a `data-` attribute passed to it type-checks, renders, and is gone.
+
+### 12.3 A duplication left in place, deliberately
+
+`lib/automation.ts` has a near-identical switch over `ParamField` types for the workflow editor.
+The two are **not** merged: that one renders `reference` as a list fetched per kind, which no block
+uses, and merging would mean reworking a shipped editor to serve a new one. `lib/website-blocks.ts`
+says so at `coerceBlockParam`, which also records the specific reason the functions cannot simply be
+swapped — `coerceParam` predates `string_list` and would store a list as the string somebody typed,
+which the API then refuses as `NOT_A_LIST`: a refusal on a field the editor filled in correctly.

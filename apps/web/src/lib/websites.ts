@@ -156,7 +156,15 @@ function isSafeCssValue(value: string): boolean {
  * `jsx: preserve`, so importing one fails at parse time with a message about tsconfig rather than
  * about the test. Keeping the pure half here is what makes the guard testable.
  */
-export const BLOCK_TYPES = ['heading', 'text', 'hero', 'image', 'list', 'whatsapp_cta'] as const;
+export const BLOCK_TYPES = [
+  'heading',
+  'text',
+  'hero',
+  'image',
+  'list',
+  'whatsapp_cta',
+  'quote',
+] as const;
 export type BlockType = (typeof BLOCK_TYPES)[number];
 
 /** True when this release can draw the type. The step-3 editor reads the same answer. */
@@ -182,4 +190,62 @@ export function safeUrl(value: string | null): string | null {
   } catch {
     return null;
   }
+}
+
+/** A site as the list screen reads it. */
+export interface WebsiteSummary {
+  readonly id: string;
+  readonly name: string;
+  readonly subdomain: string;
+  readonly status: 'draft' | 'published';
+  readonly publishedVersionId: string | null;
+  readonly updatedAt: string;
+  readonly templateCode: string | null;
+}
+
+export interface WebsitePageRow {
+  readonly id: string;
+  readonly path: string;
+  readonly title: string;
+  readonly blocks: readonly unknown[];
+  readonly isHome: boolean;
+  readonly sortOrder: number;
+  readonly status: 'draft' | 'published';
+}
+
+export interface WebsiteDetail extends WebsiteSummary {
+  readonly theme: Record<string, unknown>;
+  readonly seoDefaults: Record<string, unknown>;
+  readonly pages: readonly WebsitePageRow[];
+}
+
+export interface WebsiteVersionRow {
+  readonly id: string;
+  readonly version: number;
+  readonly publishedAt: string;
+  readonly restoredFromVersionId: string | null;
+}
+
+/**
+ * Every authenticated loader takes the token, because the access token lives in an httpOnly cookie
+ * and only the server can attach it. The first draft of these three omitted it and every screen
+ * answered 500 — a 401 the loader turned into a thrown error, which is the right direction for it
+ * to fail in and the wrong thing to ship.
+ */
+export async function loadWebsites(token: string | null): Promise<WebsiteSummary[]> {
+  // `data` is the array: the envelope lifts `items` and puts `pagination` under `meta`.
+  return (await request<WebsiteSummary[]>('/websites', { token })).data;
+}
+
+export async function loadWebsite(token: string | null, id: string): Promise<WebsiteDetail> {
+  return (await request<WebsiteDetail>(`/websites/${id}`, { token })).data;
+}
+
+export async function loadVersions(token: string | null, id: string): Promise<WebsiteVersionRow[]> {
+  return (await request<WebsiteVersionRow[]>(`/websites/${id}/versions`, { token })).data;
+}
+
+/** The address a published site is served at today. Host-based routing is step 6's. */
+export function siteUrl(subdomain: string): string {
+  return `/s/${subdomain}`;
 }

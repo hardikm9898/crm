@@ -94,3 +94,29 @@ screen says "offline".
 - The web route uses `revalidateTag(tag, { expire: 0 })`. `'max'` — which Next's own deprecation
   message suggests — marks the tag stale instead, so the first request after a publish serves the
   **previous** version. That is the most confusing moment this feature has.
+
+## Step 3 — the block registry
+
+`GET /websites/block-catalogue` serves `WEBSITE_BLOCKS`, and the editor renders one control per
+declared field. Served rather than bundled for the reason the automation catalogue is: adding a
+block type reaches a running editor without a frontend release.
+
+A block type costs **one declaration and one renderer**, and no editor code. That is Phase 6's
+registry argument with its conclusion corrected — a block is a layout, and a schema cannot describe
+one, so the renderer is unavoidable. The renderer map in `apps/web` is typed
+`Record<BlockType, …>`, which makes a declared type with no renderer and a renderer nothing declares
+both type errors; there is no boot check here because the compiler already does it.
+
+Both page write paths call `validateBlocks`. The important property is the asymmetry:
+
+- **Write refuses** an unknown block type. Nothing should be able to save a block this release
+  cannot draw.
+- **Read tolerates** one. A rollback to a snapshot from a newer release must not blank a live site,
+  so the renderer skips what it does not know and draws the rest.
+
+Problems are addressed as `blocks[2].params.heading`, so a screen prints each against the field it
+names. `fieldErrors` in the web app is keyed by that `field`, which is why the addressing matters:
+a summary-only refusal is the `ERROR_COPY` defect, and the mapping editor paid for it.
+
+`url` and `string_list` were added to `PARAM_TYPES` for this registry. No automation action uses
+either; an editor renders the types **its own** registry declares, not every type in the list.

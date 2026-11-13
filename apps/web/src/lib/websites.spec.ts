@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { normalizePagePath, WEBSITE_HOME_PATH as SHARED_HOME_PATH } from '@leados/shared';
 import {
+  normalizePagePath,
+  WEBSITE_BLOCK_TYPES,
+  WEBSITE_HOME_PATH as SHARED_HOME_PATH,
+} from '@leados/shared';
+import {
+  BLOCK_TYPES,
   WEBSITE_HOME_PATH,
   pageAt,
   pathFromSegments,
@@ -21,6 +26,19 @@ import {
  */
 
 describe('the renderer agrees with the shared vocabulary', () => {
+  /**
+   * The reconciliation the block registry's guarantee rests on.
+   *
+   * `blocks.tsx` types its renderer map as `Record<BlockType, …>`, so the **compiler** refuses a
+   * declared type with no renderer and a renderer nothing declares. That only guards what this
+   * list says, which is why this list has to equal the registry's: a type added to
+   * `website-blocks.ts` and forgotten here would be a block the editor offers, the API accepts and
+   * the renderer silently skips — a section missing from somebody's live page with nothing failing.
+   */
+  it('renders exactly the block types the registry declares', () => {
+    expect([...BLOCK_TYPES].sort()).toEqual([...WEBSITE_BLOCK_TYPES].sort());
+  });
+
   it('uses the same home path', () => {
     expect(WEBSITE_HOME_PATH).toBe(SHARED_HOME_PATH);
   });

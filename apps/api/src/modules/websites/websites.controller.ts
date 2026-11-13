@@ -51,6 +51,20 @@ export class WebsitesController {
     );
   }
 
+  /**
+   * The block registry (`FR-WEB-2`).
+   *
+   * Declared before `:id` because `block-catalogue` is its own segment and could not clash, but it
+   * is placed here because it is what a reader of this file should see before the CRUD below: the
+   * editor renders every control from this response, which is what makes "adding a block type
+   * needs no editor change" a claim about a running deployment rather than about a rebuild.
+   */
+  @Get('block-catalogue')
+  @RequirePermission(PERMISSIONS.WEBSITE_READ)
+  async catalogue() {
+    return this.websites.catalogue();
+  }
+
   @Get(':id')
   @RequirePermission(PERMISSIONS.WEBSITE_READ)
   async findOne(@Param('id') id: string) {

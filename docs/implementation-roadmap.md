@@ -3556,6 +3556,111 @@ rather than a blank section on somebody's live site.
 
 ---
 
+### Step 3 — the block editor, and what a new block type costs ✅ _(landed 2026-11-13)_
+
+A registry, an endpoint that serves it, validation on the write path, and an editor that renders
+every control from the response. The step's exit criterion, measured: **the editor's source names
+zero block types**, and its add-block menu offered 7 types against a catalogue of 7.
+
+**Phase 6's registry argument applies and its conclusion does not**, which is the whole design.
+An automation action costs no frontend release because the editor renders its parameters from a
+schema — true here too. But a block type also costs a **renderer**, because a block is a layout and
+a schema cannot describe one. So the honest claim is: one declaration in
+`packages/shared/src/website-blocks.ts`, one renderer in the published-site route, and **zero
+editor code**. `quote` is this step's proof: it cost exactly those two.
+
+**The compiler does what the plan said a boot check would, and this is a correction to that plan.**
+The step plan said "the boot check reconciles both directions the way the automation registry does".
+It does not, because it does not need to: the renderers are one static object typed
+`Record<BlockType, …>`, so a declared type with no renderer and a renderer nothing declares are both
+**type errors**. Verified by deleting `quote: Quote` and reading
+`error TS2741: Property 'quote' is missing`. Automation needs a runtime check because it resolves
+handlers dynamically inside the API; a boot check here would be a weaker version of something the
+build already guarantees. The third guard is `websites.spec.ts` in `apps/web`, which asserts that
+app's hand-written type list equals the registry's — without it, a type added to the registry and
+forgotten there would be a block the editor offers, the API accepts and the renderer silently skips.
+
+**Validation and rendering are deliberately asymmetric.** `validateBlocks` refuses an unknown type
+on **write**, because nothing should be able to save a block this release cannot draw. The renderer
+**tolerates** one on **read**, because a rollback to a snapshot from a newer release must not blank
+a live site. Refusing on write and tolerating on read is not an inconsistency; it is the only pair
+that survives a rollback, and both halves have a test.
+
+Problems are addressed at the rows they belong to — `blocks[2].params.heading` — so the editor
+points at the input that is wrong instead of printing one sentence at the top. The mapping editor
+paid for the summary-only version of this, and `fieldErrors` is keyed by the API's own `field`,
+which is why the addressing is what it is.
+
+**Two parameter types were added to the shared vocabulary:** `url`, validated against a scheme
+allowlist rather than merely being text because a tenant-authored URL reaches an `href`, and
+`string_list`. No automation action uses either, and nothing broke, because **an editor renders the
+types its own registry declares** rather than every type in the list — stated at `PARAM_TYPES` so
+the next person adding one knows the blast radius.
+
+**The navigation's `phase: 7` placeholder is gone.** `{ label: 'Website', href: '/website',
+permissions: ['settings:manage'], phase: 7 }` became
+`{ label: 'Websites', href: '/websites', permissions: ['website:read'] }`. A disabled "coming in
+phase 7" row beside a screen that exists is the navigation lying, which is the rule that deleted the
+automation list's "nothing runs yet" card — the step that makes a sentence untrue owns deleting it.
+`settings:manage` was standing in for a permission that did not exist when that row was written; it
+does now.
+
+**Files changed.** New: `packages/shared/src/website-blocks.ts` and its spec;
+`apps/web/src/lib/website-blocks.ts`; `apps/web/src/app/(app)/websites/{page.tsx,actions.ts}`,
+`[id]/page.tsx`, `_components/{block-editor.tsx,site-forms.tsx}`. Changed:
+`packages/shared/src/automation.ts` (two parameter types), `index.ts`,
+`apps/api/src/modules/websites/websites.{service,controller}.ts` (validation and the catalogue),
+`apps/web/src/app/s/[siteSlug]/[[...path]]/blocks.tsx` (the `quote` renderer),
+`apps/web/src/lib/{websites.ts,nav.ts}`, `apps/web/src/lib/websites.spec.ts`,
+`apps/api/test/websites.e2e-spec.ts`, `docs/openapi.json`.
+
+**API changes.** One route: `GET /websites/block-catalogue`, behind `website:read`. Both page write
+paths now validate blocks. 365 → 366 operations across 267 paths.
+
+**UI changes.** `/websites` lists a workspace's sites and creates one. `/websites/[id]` is the site:
+publishing and rollback, the theme, the pages, and a block editor per page — add, remove, reorder
+and edit, with every control rendered from the catalogue.
+
+**Tests run.** `lint typecheck build format:check` clean. Unit: `@leados/shared` 745 → **767** (22
+registry cases), `@leados/web` 381 → **382** (the reconciliation). Integration: **8 new** e2e on the
+catalogue and the validator, including the stored-unknown-type case that must still be served.
+Then **8 browser checks** against the built app: sign in, the site listed, the catalogue driving the
+menu, adding a block, saving, publishing, and the published page rendering what the editor added.
+
+**Four defects found by running it rather than by review.**
+
+1. **A step-2 test fixture had a block shape that was never valid.** `{ type: 'hero', text: 'two' }`
+   put the text at the top level instead of in `params`. Nothing noticed while blocks were stored
+   uninterpreted; the validator refused it on its first run. The fixture was wrong, not the
+   validator — which is the useful direction for a new check to fail in.
+2. **Every website screen answered 500, because the loaders omitted the token.** The access token
+   is in an httpOnly cookie, so only the server can attach it, and `RequestOptions.token` is
+   optional — so a loader that forgets it typechecks, builds, and 401s at runtime. Found by the
+   browser check; nothing earlier in the chain could have.
+3. **`data-block-row` on `Card` would have silently vanished.** That component takes `title`,
+   `description`, `action` and `children` and spreads nothing, so the attribute type-checks,
+   renders, and is simply gone — a browser check asserting it would have failed on a screen that was
+   correct. Caught by reading the component before shipping, which this file's note about `Badge`
+   is the reason for.
+4. **`next start` serves the manifest it booted with.** A rebuild while it was running left it
+   answering 404 for a route that existed in `.next`, and the first diagnosis went looking for a
+   permission problem. Restart the server after a rebuild, or the thing being verified is not the
+   thing that was built.
+
+**Carried forward, named rather than assumed.** `lib/automation.ts` has a near-identical control
+switch for the workflow editor, and the two are **not** merged: that one renders `reference` as a
+list fetched per kind, which no block uses, and merging would mean reworking a shipped editor to
+serve a new one. The duplication is recorded in both files so it is known work rather than a
+discovery. There is no image upload — `image` takes a URL, and the storage port's S3 driver is
+Phase 12's. No per-page SEO controls: step 5 owns those fields, and the editor will grow them from
+the same declaration mechanism.
+
+**The next step.** Step 4 — `website_forms`, and `FR-WEB-6`'s automatic wiring: a form placed on a
+site is an existing form in a new place, not a second capture engine, and the context a site can see
+that a bare form cannot (page, referrer, UTM, campaign, session, device).
+
+---
+
 ### Step plan — written 2026-11-03, nothing landed
 
 Phases 1–6 carry a record per step, written as each one landed. This is the opposite of that: a plan,

@@ -60,7 +60,11 @@ export const NAV_SECTIONS: readonly NavSection[] = [
       // builds the form it points at.
       { label: 'Forms', href: '/forms', permissions: ['form:read'] },
       { label: 'Campaigns', href: '/campaigns', permissions: ['marketing:read'], phase: 9 },
-      { label: 'Website', href: '/website', permissions: ['settings:manage'], phase: 7 },
+      // No `phase` marker and no `settings:manage`: the screen is real as of Phase 7 step 3, and a
+      // disabled "coming in phase 7" row beside a screen that exists is the navigation lying — the
+      // same rule that deleted the automation list's "nothing runs yet" card. It is `website:read`
+      // now, because that permission exists and `settings:manage` was standing in for it.
+      { label: 'Websites', href: '/websites', permissions: ['website:read'] },
       { label: 'Reports', href: '/reports', permissions: ['report:read'], phase: 2 },
     ],
   },

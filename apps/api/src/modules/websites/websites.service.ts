@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
   AppError,
+  WEBSITE_BLOCKS,
   WEBSITE_HOME_PATH,
   newId,
   normalizePagePath,
@@ -8,6 +9,7 @@ import {
   pagePathProblem,
   subdomainProblem,
   tenantContext,
+  validateBlocks,
   withPlatformScope,
 } from '@leados/shared';
 import { AuditService } from '../../infra/audit/audit.service.js';
@@ -194,6 +196,38 @@ export class WebsitesService {
     return this.findOne(id);
   }
 
+  /** The registry an editor renders its controls from (`FR-WEB-2`). */
+  catalogue() {
+    // Served rather than bundled, for the reason the automation catalogue is: the editor renders
+    // from this response, so adding a block type reaches a running editor without a frontend
+    // release. The renderer is the half that does need one.
+    return { items: WEBSITE_BLOCKS, pagination: { limit: WEBSITE_BLOCKS.length, hasMore: false } };
+  }
+
+  /**
+   * Refuses blocks the registry does not accept, with the problems addressed at the rows they
+   * belong to.
+   *
+   * Step 1 stored `blocks` uninterpreted, which was right then — there was no registry to check
+   * against. Now there is, and the asymmetry matters: this refuses an unknown type on **write**
+   * while the renderer tolerates one on **read**, because a rollback to an older release's snapshot
+   * must not blank a live site.
+   */
+  private assertBlocks(blocks: unknown): void {
+    const problems = validateBlocks(blocks);
+    if (problems.length === 0) return;
+    throw AppError.validation(
+      problems.length === 1
+        ? problems[0]!.message
+        : `${problems.length} things on this page need correcting.`,
+      problems.map((problem) => ({
+        field: problem.field,
+        code: problem.code,
+        message: problem.message,
+      })),
+    );
+  }
+
   private resolvePagePath(raw: string): string {
     const path = normalizePagePath(raw);
     const problem = pagePathProblem(path);
@@ -206,6 +240,7 @@ export class WebsitesService {
   async createPage(websiteId: string, input: CreatePageInput) {
     const website = await this.requireWebsite(websiteId);
     const path = this.resolvePagePath(input.path);
+    if (input.blocks !== undefined) this.assertBlocks(input.blocks);
     const id = newId();
 
     await this.db.client.$transaction(async (tx) => {
@@ -249,6 +284,7 @@ export class WebsitesService {
     });
     if (!existing) throw AppError.notFound('Page not found');
     const path = input.path === undefined ? undefined : this.resolvePagePath(input.path);
+    if (input.blocks !== undefined) this.assertBlocks(input.blocks);
 
     await this.db.client.$transaction(async (tx) => {
       if (input.isHome === true && !existing.isHome) await this.clearHome(tx, websiteId);

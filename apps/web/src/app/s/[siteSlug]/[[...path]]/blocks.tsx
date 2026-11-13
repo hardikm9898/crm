@@ -138,6 +138,26 @@ function WhatsAppCta({ p }: { p: Record<string, unknown> }): ReactNode {
   );
 }
 
+function Quote({ p }: { p: Record<string, unknown> }): ReactNode {
+  const text = str(p, 'text');
+  if (text === null) return null;
+  const attribution = str(p, 'attribution');
+  return (
+    <figure className="flex flex-col gap-2 border-l-2 border-[color:var(--site-accent)] pl-4">
+      <blockquote className="text-lg leading-relaxed">{text}</blockquote>
+      {attribution !== null && (
+        <figcaption className="text-sm text-[color:var(--site-muted)]">{attribution}</figcaption>
+      )}
+    </figure>
+  );
+}
+
+/**
+ * The map is `Record<BlockType, …>`, which is the other half of the registry's guarantee and the
+ * reason there is no boot check here. A declared type with no renderer and a renderer nothing
+ * declares are both **type errors**: `pnpm typecheck` catches them before anything runs, where the
+ * automation registry needs a runtime check because it resolves handlers dynamically.
+ */
 const RENDERERS: Record<BlockType, (args: { p: Record<string, unknown> }) => ReactNode> = {
   heading: Heading,
   text: Text,
@@ -145,6 +165,7 @@ const RENDERERS: Record<BlockType, (args: { p: Record<string, unknown> }) => Rea
   image: Image,
   list: List,
   whatsapp_cta: WhatsAppCta,
+  quote: Quote,
 };
 
 export function Blocks({ blocks }: { blocks: readonly unknown[] }): ReactNode {
