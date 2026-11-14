@@ -87,7 +87,7 @@ export default async function PublishedSitePage({
       data-site-version={site.version}
     >
       <main className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-10">
-        <Blocks blocks={page.blocks} />
+        <Blocks blocks={page.blocks} forms={site.forms ?? {}} />
       </main>
     </div>
   );

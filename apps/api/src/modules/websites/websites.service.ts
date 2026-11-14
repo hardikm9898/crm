@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
   AppError,
+  REFERENCE_KINDS,
   WEBSITE_BLOCKS,
   WEBSITE_HOME_PATH,
   newId,
@@ -10,11 +11,13 @@ import {
   subdomainProblem,
   tenantContext,
   validateBlocks,
+  websiteBlock,
   withPlatformScope,
 } from '@leados/shared';
 import { AuditService } from '../../infra/audit/audit.service.js';
 import { DbService } from '../../infra/db/db.service.js';
 import { OutboxService } from '../../infra/outbox/outbox.service.js';
+import { REFERENCE_SOURCES } from '../automation/automation.catalogue.js';
 import type {
   CreatePageInput,
   CreateWebsiteInput,
@@ -201,7 +204,18 @@ export class WebsitesService {
     // Served rather than bundled, for the reason the automation catalogue is: the editor renders
     // from this response, so adding a block type reaches a running editor without a frontend
     // release. The renderer is the half that does need one.
-    return { items: WEBSITE_BLOCKS, pagination: { limit: WEBSITE_BLOCKS.length, hasMore: false } };
+    //
+    // The reference sources travel with it, in `meta`: a `reference` parameter names a kind, and a
+    // picker with no endpoint behind it renders empty — which looks exactly like a workspace with
+    // no forms. The envelope merges `meta` and would discard any other sibling key, which is why
+    // this is not a third top-level field.
+    return {
+      items: WEBSITE_BLOCKS,
+      pagination: { limit: WEBSITE_BLOCKS.length, hasMore: false },
+      meta: {
+        references: REFERENCE_KINDS.map((kind) => ({ kind, source: REFERENCE_SOURCES[kind] })),
+      },
+    };
   }
 
   /**
@@ -213,8 +227,43 @@ export class WebsitesService {
    * while the renderer tolerates one on **read**, because a rollback to an older release's snapshot
    * must not blank a live site.
    */
-  private assertBlocks(blocks: unknown): void {
-    const problems = validateBlocks(blocks);
+  private async assertBlocks(blocks: unknown): Promise<void> {
+    const problems = [...validateBlocks(blocks)];
+
+    // Shape is all the shared validator can check. Whether a referenced row **exists in this
+    // workspace** is a question only a query answers, and skipping it would let a page name
+    // another tenant's form — the scoped client makes that row invisible, so "somebody else's
+    // form" and "no such form" are the same refusal, which is the right pair.
+    if (problems.length === 0 && Array.isArray(blocks)) {
+      for (const [index, raw] of blocks.entries()) {
+        const block = (typeof raw === 'object' && raw !== null ? raw : {}) as {
+          type?: unknown;
+          params?: unknown;
+        };
+        const spec = typeof block.type === 'string' ? websiteBlock(block.type) : undefined;
+        if (spec === undefined) continue;
+        const params = (
+          typeof block.params === 'object' && block.params !== null ? block.params : {}
+        ) as Record<string, unknown>;
+        for (const field of spec.params) {
+          if (field.reference !== 'form') continue;
+          const id = params[field.key];
+          if (typeof id !== 'string') continue;
+          const form = await this.db.client.form.findFirst({
+            where: { id, deletedAt: null },
+            select: { id: true },
+          });
+          if (form === null) {
+            problems.push({
+              field: `blocks[${index}].params.${field.key}`,
+              code: 'INVALID',
+              message: 'That form no longer exists. Choose another one.',
+            });
+          }
+        }
+      }
+    }
+
     if (problems.length === 0) return;
     throw AppError.validation(
       problems.length === 1
@@ -240,7 +289,7 @@ export class WebsitesService {
   async createPage(websiteId: string, input: CreatePageInput) {
     const website = await this.requireWebsite(websiteId);
     const path = this.resolvePagePath(input.path);
-    if (input.blocks !== undefined) this.assertBlocks(input.blocks);
+    if (input.blocks !== undefined) await this.assertBlocks(input.blocks);
     const id = newId();
 
     await this.db.client.$transaction(async (tx) => {
@@ -284,7 +333,7 @@ export class WebsitesService {
     });
     if (!existing) throw AppError.notFound('Page not found');
     const path = input.path === undefined ? undefined : this.resolvePagePath(input.path);
-    if (input.blocks !== undefined) this.assertBlocks(input.blocks);
+    if (input.blocks !== undefined) await this.assertBlocks(input.blocks);
 
     await this.db.client.$transaction(async (tx) => {
       if (input.isHome === true && !existing.isHome) await this.clearHome(tx, websiteId);

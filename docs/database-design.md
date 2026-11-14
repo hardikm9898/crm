@@ -1463,6 +1463,33 @@ trigger_event_id IS NOT NULL` — the idempotency that makes a retried delivery 
 | `visitor_identities` | org, `visitor_id`, `lead_id`, `identified_at`, `method (form_submit                                                                                                                                                                                                                                                                                                                                     | whatsapp_click                                              | link_click | api)` — the stitch that puts web behaviour on the timeline (`FR-ANL-7`) |
 | `website_events`     | org, site_id, `event_id` (client-generated), `visitor_id`, `session_id`, `type`, `occurred_at`, `page_url`, `page_path`, `referrer`, `properties JSONB` (product_id, value_minor, currency, cart_id, scroll %, cta id), `utm JSONB`, `device`, `country`, `ip_hash`, `received_at`. `UNIQUE (organization_id, site_id, event_id)`. **Partitioned daily**, retention by plan (`FR-ANL-6`, `NFR-SCALE-3`) |
 
+#### As built — Phase 7 step 4 (`website_forms` was not created)
+
+The sketch above lists `website_forms` as "a join of `websites`↔`forms` with placement metadata". It
+**does not exist**, deliberately, and this note is what is true rather than what was planned.
+
+A page places a form through a `form` **block**, whose `formId` parameter is a `reference` the
+editor renders a picker for. That makes the block the single declaration of "this form is on this
+page", and a join table would be a copy of it — which is the distinction step 1 drew for
+`workflow_triggers`: a projection may be an index; it may not be a copy. The two questions such a
+table would answer are already answered:
+
+| Question                            | Answered by                                                                                         |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Which forms are on this site?       | The published version's snapshot, and the draft's blocks                                            |
+| Which form is bringing these leads? | `lead_touchpoints.form_id`, which already has an index on `(organization_id, form_id, occurred_at)` |
+
+It will be worth creating if something needs to ask "which sites place this form" **without**
+reading JSONB — a delete-protection warning in step 7's editor is the likely first caller. Until
+then it would be a table with one writer and no reader, which this document has recorded as a defect
+twice.
+
+Also added in this step, and not in the sketch: `lead_touchpoints.metadata` now carries `referrer`,
+`device` and `visitorId` for a web capture. They are in `metadata` rather than three columns because
+they are facts a channel happens to know rather than facts every touchpoint has — a manual lead has
+no referrer, a WhatsApp message has no device. `visitorId` is what Phase 8's identity stitching will
+join on.
+
 #### As built — Phase 7 step 1 (websites, pages, versions)
 
 The three website tables exist as of `20261106094514_phase7_websites`. Two departures from the

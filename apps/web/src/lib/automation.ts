@@ -304,6 +304,10 @@ export const REFERENCE_LABELS: Record<
     option(row['id'], `${String(row['name'])} · ${String(row['status'])}`),
   workflow: (row) => option(row['id'], row['name']),
   webhook_endpoint: (row) => option(row['id'], row['url']),
+  // Added for the website block registry's `form` block, and the one line a new kind costs. The
+  // spec that failed when this was missing is the reason the cost is exactly one: a kind with no
+  // label function is a picker that renders ids at somebody.
+  form: (row) => option(row['id'], row['name']),
 };
 
 function option(value: unknown, label: unknown): ParamOption | null {

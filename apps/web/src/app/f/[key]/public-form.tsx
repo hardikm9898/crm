@@ -25,6 +25,22 @@ import type { PublicFormDefinition } from '@/lib/forms';
  *  * **The honeypot is invisible but not `display: none`.** A field a bot can see in the markup and
  *    a person cannot see on the screen is the whole trick; `hidden` is a flag some bots read.
  */
+/**
+ * `mobile`, `tablet` or `desktop`, from what the browser can actually answer.
+ *
+ * Coarse on purpose. The question a report asks is "did this lead come from a phone", and three
+ * buckets answer it; anything finer would be a guess dressed as a fact. A browser that answers
+ * neither query returns `undefined`, and the field is simply absent — a visitor's browser is not a
+ * thing to validate.
+ */
+function deviceKind(): 'mobile' | 'tablet' | 'desktop' | undefined {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
+  // A coarse pointer and a narrow viewport is a phone; a coarse pointer and a wide one is a tablet.
+  const coarse = window.matchMedia('(pointer: coarse)').matches;
+  if (!coarse) return 'desktop';
+  return window.matchMedia('(max-width: 820px)').matches ? 'mobile' : 'tablet';
+}
+
 export function PublicForm({
   publicKey,
   definition,
@@ -86,6 +102,13 @@ export function PublicForm({
           utm: utmFromLocation(),
           pageUrl: typeof window === 'undefined' ? undefined : window.location.href,
           referrer: typeof document === 'undefined' ? undefined : document.referrer || undefined,
+          // `FR-WEB-6` names the device among the context a capture must keep. Answered by the
+          // browser rather than parsed from its user-agent string on the server: a viewport and a
+          // pointer type are facts it knows, while user-agent parsing is a guess that needs a
+          // library and ages badly. Added here rather than in the website renderer because this
+          // component is the one form both doors use — a form on a generated page is this same
+          // form in a new place, which is the whole of `FR-WEB-6`.
+          device: deviceKind(),
         }),
       });
       const payload = (await response.json().catch(() => null)) as {

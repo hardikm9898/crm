@@ -112,12 +112,22 @@ const DESCRIBERS: Readonly<Record<string, Describer>> = {
       text(payload, 'createdVia') ? ` via ${humanise(text(payload, 'createdVia')!)}` : ''
     }.`,
   }),
-  'lead.source_captured': (payload) => ({
-    label: 'Source',
-    description: `Came in through ${humanise(text(payload, 'channel') ?? 'an unknown channel')}${
-      text(payload, 'sourceName') ? ` — ${text(payload, 'sourceName')}` : ''
-    }.`,
-  }),
+  'lead.source_captured': (payload) => {
+    // The page, the referrer and the device, when the channel knew them (`FR-WEB-6`). Added
+    // because the payload gained them, and a payload nothing renders is the `deal.won` defect:
+    // the fact reaches the database, the screen draws a bare row, and nobody notices for a phase.
+    const extras = [
+      text(payload, 'landingPageUrl') ? `on ${text(payload, 'landingPageUrl')}` : null,
+      text(payload, 'referrer') ? `referred by ${text(payload, 'referrer')}` : null,
+      text(payload, 'device') ? `from a ${text(payload, 'device')}` : null,
+    ].filter((part): part is string => part !== null);
+    return {
+      label: 'Source',
+      description: `Came in through ${humanise(text(payload, 'channel') ?? 'an unknown channel')}${
+        text(payload, 'sourceName') ? ` — ${text(payload, 'sourceName')}` : ''
+      }${extras.length > 0 ? ` (${extras.join(', ')})` : ''}.`,
+    };
+  },
   'lead.form_submitted': (payload) => {
     // The answers, verbatim, because that is the whole value of the entry. An activity type with no
     // describer renders as a bare row and its payload never reaches the screen — the trap
