@@ -473,6 +473,17 @@ export class AutomationService {
         const row = await this.db.client.pipelineStage.findFirst({ where: { id: reference.id } });
         return row ? null : missing('stage');
       }
+      case 'form': {
+        // Through the tenant-scoped client, which is what makes "another workspace's form" answer
+        // the same as "a form that does not exist": the row is simply invisible. No automation
+        // action takes a form yet — the kind exists for the website block registry — but the switch
+        // is exhaustive over `ReferenceKind`, and that is the point: a kind with no check here
+        // would be a reference nothing verifies.
+        const row = await this.db.client.form.findFirst({
+          where: { id: reference.id, deletedAt: null },
+        });
+        return row ? null : missing('form');
+      }
       case 'task_type': {
         const row = await this.db.client.taskType.findFirst({ where: { id: reference.id } });
         return row ? null : missing('task type');

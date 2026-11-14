@@ -63,6 +63,12 @@ export const REFERENCE_KINDS = [
   'whatsapp_template',
   'workflow',
   'webhook_endpoint',
+  /**
+   * A capture form. Added for the website block registry: a page carries a form by naming one
+   * that already exists, which is what makes `FR-WEB-6`'s "zero manual integration" true — there
+   * is no second capture engine to wire up.
+   */
+  'form',
 ] as const;
 export type ReferenceKind = (typeof REFERENCE_KINDS)[number];
 

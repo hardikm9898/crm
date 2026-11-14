@@ -154,6 +154,15 @@ export const submitFormSchema = z
     referrer: z.string().trim().max(2000).optional(),
     sessionId: z.string().trim().max(120).optional(),
     visitorId: z.string().trim().max(120).optional(),
+    /**
+     * `mobile`, `tablet` or `desktop`, as the page saw it (`FR-WEB-6`).
+     *
+     * Sent by the page rather than derived from the user agent here, because the page knows what it
+     * is: a viewport and a pointer type are facts the browser can answer directly, while parsing a
+     * user-agent string is a guess that needs a library and ages badly. A missing or unexpected
+     * value is simply absent, never a refusal — a visitor's browser is not a thing to validate.
+     */
+    device: z.enum(['mobile', 'tablet', 'desktop']).optional(),
   })
   .strict();
 

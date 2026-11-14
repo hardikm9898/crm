@@ -120,3 +120,27 @@ a summary-only refusal is the `ERROR_COPY` defect, and the mapping editor paid f
 
 `url` and `string_list` were added to `PARAM_TYPES` for this registry. No automation action uses
 either; an editor renders the types **its own** registry declares, not every type in the list.
+
+## Step 4 — a form on a page (`FR-WEB-6`)
+
+A page places a form with a `form` block whose `formId` is a `reference`. The editor renders a
+picker from the endpoint the catalogue declares for that kind (`/forms`), and the published page
+mounts `PublicForm` — the same component `/f/:key` uses. One honeypot, one validation path, one
+submission contract: a second capture engine for websites would have drifted from the first within a
+phase, and "zero manual integration" means there is nothing to wire.
+
+**The form's key is resolved per read, not snapshotted.** A page is versioned because its content
+is what somebody publishes; a form is live. Snapshotting the key would keep a rotated key working —
+the one thing rotation exists to stop — and snapshotting the questions would leave published pages
+asking the old ones. It is returned beside the snapshot, never inside it, because the snapshot has
+to stay byte-stable across reads.
+
+A form deactivated or deleted between the publish and the visit is **absent** from the map, and the
+renderer draws nothing for that block.
+
+Shape is all `validateBlocks` can check, so the service queries for the row — through the
+**tenant-scoped** client, which makes "another workspace's form" and "no such form" the same
+refusal. A distinguishable answer would turn a form id into an oracle.
+
+`website_forms` was **not** created; see `database-design.md` §10's as-built note. The block is
+already the declaration, and both questions a join table would answer have answers.

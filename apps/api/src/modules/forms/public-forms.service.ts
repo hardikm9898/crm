@@ -423,6 +423,13 @@ export class PublicFormsService {
       formAnswers: recorded,
       ...(input.sessionId ? { sessionId: input.sessionId } : {}),
       ...(input.visitorId ? { visitorId: input.visitorId } : {}),
+      // Three facts `FR-WEB-6` names that this function stored on `form_submissions` and then
+      // dropped before the lead. `referrer` was read from the request and discarded; `visitorId`
+      // was passed to the capture and written nowhere; `device` did not exist. All three are
+      // attribution, and attribution that is only in the submission row is attribution no report
+      // can reach.
+      ...(input.referrer ? { referrer: input.referrer } : {}),
+      ...(input.device ? { device: input.device } : {}),
     } as never;
   }
 

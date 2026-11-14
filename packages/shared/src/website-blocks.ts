@@ -34,6 +34,7 @@ export const WEBSITE_BLOCK_TYPES = [
   'list',
   'whatsapp_cta',
   'quote',
+  'form',
 ] as const;
 export type WebsiteBlockType = (typeof WEBSITE_BLOCK_TYPES)[number];
 
@@ -135,6 +136,27 @@ export const WEBSITE_BLOCKS: readonly WebsiteBlockSpec[] = [
     ],
   },
   {
+    type: 'form',
+    label: 'Enquiry form',
+    hint: 'Puts one of your existing forms on this page. Submissions become leads.',
+    group: 'action',
+    params: [
+      {
+        key: 'formId',
+        label: 'Form',
+        hint: 'The form to show. Edit its questions under Forms.',
+        // A `reference`, not a text field: rule 4 forbids naming a workspace's rows, so the editor
+        // fetches the list from the endpoint the catalogue declares for this kind. A declaration a
+        // screen cannot act on is half a feature, which is why the kind and its endpoint travel
+        // together.
+        type: 'reference',
+        reference: 'form',
+        required: true,
+      },
+      { key: 'heading', label: 'Heading above the form', type: 'text', required: false, max: 120 },
+    ],
+  },
+  {
     type: 'whatsapp_cta',
     label: 'WhatsApp button',
     hint: 'Opens a WhatsApp chat with this number.',
@@ -169,6 +191,8 @@ export interface BlockProblem {
   readonly code: 'UNKNOWN_TYPE' | 'REQUIRED' | 'TOO_LONG' | 'NOT_A_LIST' | 'INVALID';
   readonly message: string;
 }
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const SAFE_URL_SCHEMES = ['http:', 'https:', 'mailto:', 'tel:'];
 
@@ -263,6 +287,20 @@ export function validateBlocks(blocks: unknown): BlockProblem[] {
             field: where,
             code: 'TOO_LONG',
             message: `${field.label} can have at most ${field.max} items.`,
+          });
+        }
+        continue;
+      }
+
+      if (field.type === 'reference') {
+        // The shape only. Whether the row exists, and whether it belongs to this workspace, is a
+        // question this file cannot answer and the service must: a validator that accepted any
+        // UUID and a service that never checked would let a page name another tenant's form.
+        if (typeof value !== 'string' || !UUID.test(value)) {
+          problems.push({
+            field: where,
+            code: 'INVALID',
+            message: `Choose a ${field.label.toLowerCase()}.`,
           });
         }
         continue;

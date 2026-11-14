@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { newToken } from '@leados/shared';
+import { newId, newToken } from '@leados/shared';
 import { bootTestApp, call, cleanupUsers, type EnvelopeBody, type TestApp } from './app-harness.js';
 
 /**
@@ -604,5 +604,153 @@ describe('the block registry (step 3)', () => {
     const blocks = (served.body.data.snapshot.pages[0] as unknown as { blocks: { type: string }[] })
       .blocks;
     expect(blocks.map((block) => block.type)).toEqual(['hero', 'from_a_newer_release']);
+  });
+});
+
+describe('a form on a page (step 4, FR-WEB-6)', () => {
+  /** The minimum usable form. A page places one that already exists; it does not define one. */
+  async function aForm(token = orgA.token, label = 'web') {
+    return setup<{ id: string; publicKey: string; name: string }>('POST', '/forms', {
+      token,
+      payload: {
+        name: `Enquiry ${label} ${SUFFIX}`,
+        settings: { thankYouMessage: 'Thanks.', submitLabel: 'Send' },
+        fields: [
+          { standardFieldKey: 'fullName', label: 'Your name', isRequired: true },
+          { standardFieldKey: 'phone', label: 'Mobile number', isRequired: true },
+        ],
+      },
+    });
+  }
+
+  it('declares the form picker’s endpoint beside the kind', async () => {
+    const response = await api<unknown>('GET', '/websites/block-catalogue', { token: orgA.token });
+    const references = (response.body.meta as { references?: { kind: string; source: string }[] })
+      ?.references;
+    // A `reference` parameter names a kind, and a picker with no endpoint behind it renders empty —
+    // which looks exactly like a workspace with no forms. The kind and its source travel together.
+    expect(references?.find((entry) => entry.kind === 'form')?.source).toBe('/forms');
+  });
+
+  it('accepts a form block naming a form in this workspace', async () => {
+    const form = await aForm();
+    const { site, homeId } = await siteReadyToPublish('formok');
+    const response = await api('PATCH', `/websites/${site.id}/pages/${homeId}`, {
+      token: orgA.token,
+      payload: {
+        blocks: [{ type: 'form', params: { formId: form.id, heading: 'Ask us anything' } }],
+      },
+    });
+    expect(response.statusCode).toBe(200);
+  });
+
+  it('refuses a form id that is not a form', async () => {
+    const { site, homeId } = await siteReadyToPublish('formmissing');
+    const response = await api('PATCH', `/websites/${site.id}/pages/${homeId}`, {
+      token: orgA.token,
+      payload: { blocks: [{ type: 'form', params: { formId: newId() } }] },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(JSON.stringify(response.body)).toMatch(/no longer exists/);
+  });
+
+  it("refuses another workspace's form, identically to one that does not exist", async () => {
+    const theirs = await aForm(orgB.token, 'theirs');
+    const { site, homeId } = await siteReadyToPublish('formcross');
+    const response = await api('PATCH', `/websites/${site.id}/pages/${homeId}`, {
+      token: orgA.token,
+      payload: { blocks: [{ type: 'form', params: { formId: theirs.id } }] },
+    });
+    // The scoped client cannot see their row, so "somebody else's form" and "no such form" are the
+    // same refusal — which is the right pair: a distinguishable answer would make a form id an
+    // oracle for which workspaces have which forms.
+    expect(response.statusCode).toBe(400);
+    expect(JSON.stringify(response.body)).toMatch(/no longer exists/);
+  });
+
+  it('hands the visitor the form’s key, resolved now rather than snapshotted', async () => {
+    const form = await aForm(orgA.token, 'served');
+    const { site, homeId } = await siteReadyToPublish('formserved');
+    await setup('PATCH', `/websites/${site.id}/pages/${homeId}`, {
+      token: orgA.token,
+      payload: { blocks: [{ type: 'form', params: { formId: form.id } }] },
+    });
+    await setup('POST', `/websites/${site.id}/publish`, { token: orgA.token });
+
+    const served = await call<EnvelopeBody<{ forms: Record<string, { key: string }> }>>(ctx.app, {
+      method: 'GET',
+      url: `/api/v1/public/sites/${site.subdomain}`,
+    });
+    expect(served.statusCode).toBe(200);
+    // The key, not the questions: the questions come from `/public/forms/:key` in the visitor's
+    // browser, so editing a form does not leave a published page asking the old ones.
+    expect(served.body.data.forms[form.id]?.key).toBe(form.publicKey);
+  });
+
+  it('stops handing out the key when the form is switched off', async () => {
+    const form = await aForm(orgA.token, 'off');
+    const { site, homeId } = await siteReadyToPublish('formoff');
+    await setup('PATCH', `/websites/${site.id}/pages/${homeId}`, {
+      token: orgA.token,
+      payload: { blocks: [{ type: 'form', params: { formId: form.id } }] },
+    });
+    await setup('POST', `/websites/${site.id}/publish`, { token: orgA.token });
+    await setup('PATCH', `/forms/${form.id}`, { token: orgA.token, payload: { isActive: false } });
+
+    const served = await call<EnvelopeBody<{ forms: Record<string, { key: string }> }>>(ctx.app, {
+      method: 'GET',
+      url: `/api/v1/public/sites/${site.subdomain}`,
+    });
+    // Absent rather than reported. A form switched off between the publish and the visit is the
+    // ordinary case, and the renderer draws nothing for that block — which is also why this is
+    // resolved per read and not frozen into the version.
+    expect(served.body.data.forms[form.id]).toBeUndefined();
+  });
+
+  it('keeps the page, referrer and device a site can see, which the capture used to drop', async () => {
+    const form = await aForm(orgA.token, 'context');
+    const submission = await call<EnvelopeBody<{ message?: string }>>(ctx.app, {
+      method: 'POST',
+      url: `/api/v1/public/forms/${form.publicKey}/submissions`,
+      payload: {
+        answers: { 'standard:fullName': 'Asha Rao', 'standard:phone': '+919845012345' },
+        utm: { utm_source: 'google', utm_campaign: 'spring' },
+        pageUrl: 'https://acme.example/pricing',
+        referrer: 'https://www.google.com/',
+        sessionId: `sess-${SUFFIX}`,
+        visitorId: `vis-${SUFFIX}`,
+        device: 'mobile',
+      },
+    });
+    expect(submission.statusCode).toBeLessThan(300);
+
+    const lead = await ctx.db.lead.findFirstOrThrow({
+      where: { organizationId: orgA.organizationId, phoneE164: '+919845012345' },
+      orderBy: { createdAt: 'desc' },
+    });
+    const touchpoint = await ctx.db.leadTouchpoint.findFirstOrThrow({
+      where: { leadId: lead.id, sequence: 1 },
+    });
+
+    // All three were stored on `form_submissions` and then dropped before the lead: `referrer` was
+    // read and discarded, `visitorId` was passed to the capture and written nowhere, `device` did
+    // not exist. Attribution only in the submission row is attribution no report can reach.
+    const metadata = touchpoint.metadata as Record<string, unknown>;
+    expect(metadata['referrer']).toBe('https://www.google.com/');
+    expect(metadata['device']).toBe('mobile');
+    expect(metadata['visitorId']).toBe(`vis-${SUFFIX}`);
+    expect(touchpoint.landingPageUrl).toBe('https://acme.example/pricing');
+    expect(touchpoint.sessionId).toBe(`sess-${SUFFIX}`);
+    expect((touchpoint.utm as Record<string, unknown>)['utm_campaign']).toBe('spring');
+
+    // …and on the timeline entry whose whole job is "where did this lead come from", because a
+    // fact a report holds and a person cannot read is half a fact.
+    const entry = await ctx.db.activity.findFirstOrThrow({
+      where: { leadId: lead.id, type: 'lead.source_captured' },
+    });
+    const payload = entry.payload as Record<string, unknown>;
+    expect(payload['referrer']).toBe('https://www.google.com/');
+    expect(payload['device']).toBe('mobile');
+    expect(payload['landingPageUrl']).toBe('https://acme.example/pricing');
   });
 });

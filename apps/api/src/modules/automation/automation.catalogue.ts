@@ -39,6 +39,12 @@ export const REFERENCE_SOURCES: Readonly<Record<ReferenceKind, string>> = {
   whatsapp_template: '/whatsapp/templates',
   workflow: '/automation/workflows',
   webhook_endpoint: '/webhooks',
+  /**
+   * Added for the website block registry's `form` block. The kind and its endpoint travel together
+   * because a declaration a screen cannot act on is half a feature: a picker with no list behind it
+   * renders empty, which looks exactly like a workspace with no forms.
+   */
+  form: '/forms',
 };
 
 /**

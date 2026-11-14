@@ -21487,6 +21487,14 @@
                   "visitorId": {
                     "type": "string",
                     "maxLength": 120
+                  },
+                  "device": {
+                    "type": "string",
+                    "enum": [
+                      "mobile",
+                      "tablet",
+                      "desktop"
+                    ]
                   }
                 },
                 "required": [

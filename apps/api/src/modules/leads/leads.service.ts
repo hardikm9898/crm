@@ -65,6 +65,16 @@ export interface CaptureContext {
   readonly formAnswers?: readonly { readonly label: string; readonly value: string }[];
   readonly sessionId?: string | null;
   readonly visitorId?: string | null;
+  /**
+   * Where the visitor came from, and what they were using (`FR-WEB-6`).
+   *
+   * Here rather than on the public `createLeadSchema` for the reason the rest of this interface is:
+   * a client that could set its own referrer could fabricate attribution, and attribution somebody
+   * can choose is attribution no report should trust. The capture paths read these from the request
+   * and the page; `POST /leads` cannot set them.
+   */
+  readonly referrer?: string | null;
+  readonly device?: string | null;
 }
 
 /**
@@ -510,6 +520,15 @@ export class LeadsService {
           utm: (input.utm ?? {}) as never,
           sessionId: input.sessionId ?? null,
           costAttributable: isPaidChannel(input.createdVia ?? 'manual'),
+          // `metadata` rather than three columns, because these are facts a channel happens to
+          // know rather than facts every touchpoint has: a manual lead has no referrer and a
+          // WhatsApp message has no device. `visitorId` lives here too and is what Phase 8's
+          // identity stitching will join on to put a visitor's earlier page views on this lead.
+          metadata: {
+            ...(input.referrer ? { referrer: input.referrer } : {}),
+            ...(input.device ? { device: input.device } : {}),
+            ...(input.visitorId ? { visitorId: input.visitorId } : {}),
+          } as never,
         },
       });
       await tx.lead.update({ where: { id }, data: { touchCount: 1 } });
@@ -641,6 +660,12 @@ export class LeadsService {
             leadSourceId: input.leadSourceId ?? null,
             channel: touchpointChannelFor(input.createdVia ?? 'manual'),
             utm: input.utm ?? {},
+            // On the entry whose whole job is "where did this lead come from". Stored on the
+            // touchpoint *and* here on purpose: the touchpoint is what a report reads, this is
+            // what a person reads, and a fact in neither place is a fact nobody has.
+            ...(input.landingPageUrl ? { landingPageUrl: input.landingPageUrl } : {}),
+            ...(input.referrer ? { referrer: input.referrer } : {}),
+            ...(input.device ? { device: input.device } : {}),
           },
         },
         // What they said, written in the capture's own transaction (`FR-CAP-2`, `FR-CAP-6`). Two
@@ -875,6 +900,15 @@ export class LeadsService {
           utm: (input.utm ?? {}) as never,
           sessionId: input.sessionId ?? null,
           costAttributable: isPaidChannel(input.createdVia ?? 'manual'),
+          // `metadata` rather than three columns, because these are facts a channel happens to
+          // know rather than facts every touchpoint has: a manual lead has no referrer and a
+          // WhatsApp message has no device. `visitorId` lives here too and is what Phase 8's
+          // identity stitching will join on to put a visitor's earlier page views on this lead.
+          metadata: {
+            ...(input.referrer ? { referrer: input.referrer } : {}),
+            ...(input.device ? { device: input.device } : {}),
+            ...(input.visitorId ? { visitorId: input.visitorId } : {}),
+          } as never,
         },
       });
 

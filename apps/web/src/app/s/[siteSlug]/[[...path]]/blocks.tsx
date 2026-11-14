@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { SiteForm } from './site-form';
 import { isKnownBlockType, safeUrl, type BlockType } from '@/lib/websites';
 
 /**
@@ -158,7 +159,29 @@ function Quote({ p }: { p: Record<string, unknown> }): ReactNode {
  * declares are both **type errors**: `pnpm typecheck` catches them before anything runs, where the
  * automation registry needs a runtime check because it resolves handlers dynamically.
  */
-const RENDERERS: Record<BlockType, (args: { p: Record<string, unknown> }) => ReactNode> = {
+/**
+ * The resolved forms a page places, keyed by form id — `forms` from the public site response.
+ *
+ * Passed down rather than fetched here because the ids are in the snapshot and the keys are not:
+ * the API resolves them at read time so a rotated key stops working and an edited form stays
+ * current, which is the whole reason they are not snapshotted.
+ */
+export type ResolvedForms = Readonly<Record<string, { key: string; name: string }>>;
+
+function FormBlock({ p, forms }: { p: Record<string, unknown>; forms: ResolvedForms }): ReactNode {
+  const id = str(p, 'formId');
+  if (id === null) return null;
+  const resolved = forms[id];
+  // Absent means deactivated or deleted since the publish. `SiteForm` is not rendered at all, so
+  // the visitor gets nothing rather than a form that cannot be submitted.
+  if (resolved === undefined) return null;
+  return <SiteForm publicKey={resolved.key} heading={str(p, 'heading')} />;
+}
+
+const RENDERERS: Record<
+  BlockType,
+  (args: { p: Record<string, unknown>; forms: ResolvedForms }) => ReactNode
+> = {
   heading: Heading,
   text: Text,
   hero: Hero,
@@ -166,9 +189,16 @@ const RENDERERS: Record<BlockType, (args: { p: Record<string, unknown> }) => Rea
   list: List,
   whatsapp_cta: WhatsAppCta,
   quote: Quote,
+  form: FormBlock,
 };
 
-export function Blocks({ blocks }: { blocks: readonly unknown[] }): ReactNode {
+export function Blocks({
+  blocks,
+  forms,
+}: {
+  blocks: readonly unknown[];
+  forms: ResolvedForms;
+}): ReactNode {
   return (
     <>
       {blocks.map((raw, index) => {
@@ -185,7 +215,7 @@ export function Blocks({ blocks }: { blocks: readonly unknown[] }): ReactNode {
           );
         }
         const Renderer = RENDERERS[block.type];
-        return <Renderer key={index} p={params(block)} />;
+        return <Renderer key={index} p={params(block)} forms={forms} />;
       })}
     </>
   );

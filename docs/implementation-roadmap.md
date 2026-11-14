@@ -3661,6 +3661,93 @@ that a bare form cannot (page, referrer, UTM, campaign, session, device).
 
 ---
 
+### Step 4 — the forms on a site, wired to nothing by hand ✅ _(landed 2026-11-14)_
+
+A `form` block, a reference picker behind it, the form's key resolved per read, and the three
+attribution facts the capture path had been dropping.
+
+**A form on a page is an existing form in a new place**, which is the whole of `FR-WEB-6`'s "zero
+manual integration". The block names a form by id; the renderer mounts `PublicForm` — the same
+component `/f/:key` uses, unchanged — so there is one honeypot, one validation path, one submission
+contract and one place the context is gathered. A second capture engine for websites would have
+drifted from the first within a phase.
+
+**The form's key is resolved at read time, not snapshotted**, which is the one deliberate exception
+to everything else on a published page being frozen. A page is versioned because its content is
+what somebody publishes; a form is a live object whose questions change and whose key can be
+rotated. Snapshotting the key would mean a rotated key kept working on the live site — the one
+thing rotation exists to stop — and snapshotting the questions would leave every published page
+asking the old ones. It is returned **beside** the snapshot rather than injected into it, because
+the snapshot has to stay byte-stable across reads or a version comparison would find differences the
+server invented. A form deactivated between the publish and the visit is simply absent from the map,
+and the renderer draws nothing for that block.
+
+**Three facts `FR-WEB-6` names were being dropped, and this step found them by going looking.**
+`referrer` was read from the request, written to `form_submissions`, and discarded before the lead.
+`visitorId` was accepted, stored, passed into the capture input — and written nowhere. `device` did
+not exist at all. All three are attribution, and attribution that lives only in the submission row
+is attribution no report can reach. They now reach `lead_touchpoints.metadata` on **both** touchpoint
+writes — a returning visitor's second submission is a different visit, and recording only the first
+would make attribution answer for the wrong one — and the `lead.source_captured` entry carries them
+too, because a fact a report holds and a person cannot read is half a fact.
+
+`device` is answered by the **browser**, from a pointer-type and viewport query, not parsed from a
+user-agent string on the server: a viewport is a fact the browser knows, while user-agent parsing is
+a guess that needs a library and ages badly. Three buckets, because the question a report asks is
+"did this lead come from a phone". It was added to `PublicForm`, so the standalone form page gained
+it at the same time — the same component, the same context, both doors.
+
+**`website_forms` was not created.** `database-design.md` §10 sketches it as a join of
+websites↔forms; the block is already that declaration, and a join table would be a copy of it. Both
+questions such a table would answer are answered — "which forms are on this site" by the snapshot,
+"which form brings these leads" by `lead_touchpoints.form_id`, which already has an index for it.
+Recorded in §10 as an as-built note rather than left for somebody to wonder about, and with the
+condition that would justify building it: a caller needing "which sites place this form" without
+reading JSONB, most likely step 7's delete-protection warning.
+
+**The compiler enforced the registry twice more.** Adding a `form` reference kind broke
+`REFERENCE_SOURCES` (a total `Record<ReferenceKind, string>`) and `checkReference`'s exhaustive
+switch — a kind with no endpoint is a picker that renders empty, and a kind with no existence check
+is a reference nothing verifies. Both were failures at typecheck, not at runtime. Shape is still all
+the shared validator can check, so the service queries for the row: through the **tenant-scoped**
+client, which makes "another workspace's form" and "no such form" the same refusal.
+
+**Files changed.** `packages/shared/src/{automation.ts,website-blocks.ts}` (the kind, the block, and
+reference validation); `apps/api/src/modules/automation/{automation.catalogue.ts,automation.service.ts}`;
+`apps/api/src/modules/websites/{websites.service.ts,public-sites.service.ts}`;
+`apps/api/src/modules/forms/{forms.dto.ts,public-forms.service.ts}`;
+`apps/api/src/modules/leads/leads.service.ts`; `apps/web/src/app/f/[key]/public-form.tsx`;
+`apps/web/src/app/s/[siteSlug]/[[...path]]/{blocks.tsx,site-form.tsx,page.tsx}`;
+`apps/web/src/lib/{websites.ts,timeline-registry.ts}`; `apps/api/test/websites.e2e-spec.ts`;
+`docs/{database-design.md,openapi.json}`.
+
+**Database changes.** None. `lead_touchpoints.metadata` already existed, which is why these three
+facts cost no migration.
+
+**API changes.** No new routes. `POST /public/forms/:key/submissions` accepts `device`; the block
+catalogue's `meta` carries the reference sources; the public site response carries `forms`.
+
+**UI changes.** A form block in the editor, with a picker of this workspace's forms. On a published
+page, the form itself.
+
+**Tests run.** `lint typecheck build format:check` clean. Unit: 767 in `@leados/shared`, 382 in
+`@leados/web`. Integration: **7 new** e2e — the picker's endpoint, a valid form block, a missing
+form id, another workspace's form id, the key resolved per read, the key withdrawn when the form is
+switched off, and the full context landing on the touchpoint and the timeline.
+
+**Carried forward.** The form renders client-side, so a page carrying one has a brief "Loading the
+form…" line; server-rendering it would mean caching the questions, which is the thing this step went
+out of its way not to do. Step 5's SEO work will want the form's heading in the page's content for
+crawlers, which is an argument for rendering the heading server-side and only the fields in the
+browser — noted rather than guessed at now. `campaign` in the criterion is `utm_campaign`, carried in
+`utm`; linking a touchpoint to a **campaign row** is Phase 9's registry.
+
+**The next step.** Step 5 — per-page SEO, `robots.txt`, `sitemap.xml`, structured data and
+redirects, where the sitemap listing published pages and **only** published pages is step 2's
+draft-leak test one layer out.
+
+---
+
 ### Step plan — written 2026-11-03, nothing landed
 
 Phases 1–6 carry a record per step, written as each one landed. This is the opposite of that: a plan,

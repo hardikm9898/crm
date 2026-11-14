@@ -35,6 +35,14 @@ export interface PublishedSite {
   readonly versionId: string;
   readonly publishedAt: string;
   readonly snapshot: SiteSnapshot;
+  /**
+   * The forms this site's pages place, keyed by form id (`FR-WEB-6`).
+   *
+   * Beside the snapshot rather than inside it: the API resolves these at read time so a rotated
+   * key stops working and an edited form stays current, and the snapshot has to stay byte-stable
+   * across reads or a version comparison would find differences the server invented.
+   */
+  readonly forms: Readonly<Record<string, { readonly key: string; readonly name: string }>>;
 }
 
 /**
@@ -164,6 +172,7 @@ export const BLOCK_TYPES = [
   'list',
   'whatsapp_cta',
   'quote',
+  'form',
 ] as const;
 export type BlockType = (typeof BLOCK_TYPES)[number];
 
