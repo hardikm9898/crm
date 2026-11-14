@@ -1,4 +1,5 @@
 import type { ParamField } from './automation.js';
+import type { ContentProblem } from './content-problem.js';
 
 /**
  * The block registry: what a page can be built from (`FR-WEB-2`).
@@ -185,12 +186,13 @@ export function isWebsiteBlockType(type: unknown): type is WebsiteBlockType {
   return typeof type === 'string' && BY_TYPE.has(type as WebsiteBlockType);
 }
 
-/** A problem, addressed at the row it belongs to so a screen can print it there. */
-export interface BlockProblem {
-  readonly field: string;
-  readonly code: 'UNKNOWN_TYPE' | 'REQUIRED' | 'TOO_LONG' | 'NOT_A_LIST' | 'INVALID';
-  readonly message: string;
-}
+/**
+ * A problem, addressed at the row it belongs to so a screen can print it there.
+ *
+ * `ContentProblem` rather than a type of this module's own: the SEO validators return the same
+ * shape, and two identical interfaces is the defect this codebase has a note about.
+ */
+export type BlockProblem = ContentProblem;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

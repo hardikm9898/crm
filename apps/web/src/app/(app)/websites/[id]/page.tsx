@@ -3,8 +3,16 @@ import { notFound } from 'next/navigation';
 import { Badge, Card, PageHeader } from '@/components/ui';
 import { readAccessToken } from '@/lib/session';
 import { loadBlockCatalogue } from '@/lib/website-blocks';
-import { loadVersions, loadWebsite, siteUrl } from '@/lib/websites';
+import {
+  loadRedirects,
+  loadSeoProductOptions,
+  loadVersions,
+  loadWebsite,
+  siteUrl,
+} from '@/lib/websites';
+import { BUSINESS_KINDS } from '@/lib/website-seo';
 import { BlockEditor } from '../_components/block-editor';
+import { PageSeoForm, RedirectsPanel, SeoBadges, SiteSeoForm } from '../_components/seo-forms';
 import { NewPageForm, PageActions, PublishControls, ThemeForm } from '../_components/site-forms';
 
 /**
@@ -29,9 +37,11 @@ export default async function WebsitePage({ params }: { params: Promise<{ id: st
     notFound();
   }
 
-  const [catalogue, versions] = await Promise.all([
+  const [catalogue, versions, redirects, products] = await Promise.all([
     loadBlockCatalogue(token),
     loadVersions(token, id),
+    loadRedirects(token, id),
+    loadSeoProductOptions(token),
   ]);
   const pages = [...site.pages].sort(
     (a, b) => a.sortOrder - b.sortOrder || a.path.localeCompare(b.path),
@@ -68,6 +78,20 @@ export default async function WebsitePage({ params }: { params: Promise<{ id: st
         <ThemeForm site={site} />
       </Card>
 
+      <Card
+        title="Search engines"
+        description="What this site tells Google and what it shows when somebody shares a page."
+      >
+        <SiteSeoForm site={site} businessKinds={BUSINESS_KINDS} />
+      </Card>
+
+      <Card
+        title="Redirects"
+        description="Old addresses that should keep working. These take effect at once and survive a publish or a rollback, because the links they serve were published by other people."
+      >
+        <RedirectsPanel websiteId={site.id} redirects={redirects} />
+      </Card>
+
       <Card title="Add a page">
         <NewPageForm websiteId={site.id} />
       </Card>
@@ -78,13 +102,24 @@ export default async function WebsitePage({ params }: { params: Promise<{ id: st
           title={`${page.title} · ${page.path}`}
           description={page.isHome ? 'The home page.' : undefined}
           action={
-            <Badge tone={page.status === 'published' ? 'success' : 'neutral'}>
-              {page.status === 'published' ? 'Published' : 'Draft'}
-            </Badge>
+            <span className="flex items-center gap-2">
+              <SeoBadges page={page} />
+              <Badge tone={page.status === 'published' ? 'success' : 'neutral'}>
+                {page.status === 'published' ? 'Published' : 'Draft'}
+              </Badge>
+            </span>
           }
         >
           <div className="flex flex-col gap-4">
             <BlockEditor websiteId={site.id} page={page} catalogue={catalogue} />
+            <details className="border-t border-[var(--color-border)] pt-3">
+              <summary className="cursor-pointer text-sm font-medium" data-seo-summary={page.path}>
+                Search settings for this page
+              </summary>
+              <div className="pt-3">
+                <PageSeoForm websiteId={site.id} page={page} products={products} />
+              </div>
+            </details>
             <PageActions websiteId={site.id} page={page} />
           </div>
         </Card>

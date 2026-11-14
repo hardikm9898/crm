@@ -40,3 +40,5 @@ export * from './conversation-inbox.js';
 export * from './whatsapp.js';
 export * from './websites.js';
 export * from './website-blocks.js';
+export * from './website-seo.js';
+export * from './content-problem.js';

@@ -121,6 +121,7 @@ interface Tenant {
   websiteId: string;
   websitePageId: string;
   websiteVersionId: string;
+  websiteRedirectId: string;
 }
 
 let orgA: Tenant;
@@ -681,6 +682,24 @@ async function createTenant(label: string): Promise<Tenant> {
     where: { id: websiteId },
     data: { publishedVersionId: websiteVersionId, status: 'published' } as never,
   });
+  // Phase 7, step 5. `from_path` is deliberately **not** `/`, which the page above occupies: the
+  // service refuses a redirect whose source is a page, because the page always wins and the
+  // redirect could never fire. A fixture aimed at a shadowed path would be refused before the
+  // authorization check it is here to exercise — the lesson the `POST /calls/:id/outcome` fixture
+  // paid for, where an id pointed at a row in a state the endpoint refuses recorded a refusal the
+  // sweep never earned.
+  const websiteRedirectId = newId();
+  await ctx.db.websiteRedirect.create({
+    data: {
+      id: websiteRedirectId,
+      organizationId,
+      websiteId,
+      fromPath: '/old-prices',
+      toPath: '/',
+      kind: 'permanent',
+      createdById: userId,
+    } as never,
+  });
 
   const slaClock = await ctx.db.slaClock.findFirstOrThrow({
     where: { organizationId, leadId: lead.body.data.id },
@@ -767,6 +786,7 @@ async function createTenant(label: string): Promise<Tenant> {
     websiteId,
     websitePageId,
     websiteVersionId,
+    websiteRedirectId,
   };
 }
 
@@ -1116,6 +1136,9 @@ describe('cross-tenant sweep: no route answers another organization’s caller',
       '/websites/:id/publish': `/websites/${orgA.websiteId}/publish`,
       '/websites/:id/unpublish': `/websites/${orgA.websiteId}/unpublish`,
       '/websites/:id/rollback': `/websites/${orgA.websiteId}/rollback`,
+      // Phase 7, step 5 — redirects.
+      '/websites/:id/redirects': `/websites/${orgA.websiteId}/redirects`,
+      '/websites/:id/redirects/:redirectId': `/websites/${orgA.websiteId}/redirects/${orgA.websiteRedirectId}`,
       // Phase 6, step 3 — the preview and the retry
       '/automation/workflows/:id/test-run': `/automation/workflows/${orgA.workflowId}/test-run`,
       '/automation/runs/:id/retry': `/automation/runs/${orgA.automationRunId}/retry`,

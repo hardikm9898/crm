@@ -754,3 +754,474 @@ describe('a form on a page (step 4, FR-WEB-6)', () => {
     expect(payload['landingPageUrl']).toBe('https://acme.example/pricing');
   });
 });
+
+describe('SEO (step 5, FR-WEB-3)', () => {
+  it('refuses a setting nobody declared, named at the key', async () => {
+    // A `desciption` that nothing refuses is a setting which silently does nothing for ever, on
+    // the one screen whose entire purpose is being read by a machine.
+    const { site, homeId } = await siteReadyToPublish('seounknown');
+    const response = await api('PATCH', `/websites/${site.id}/pages/${homeId}`, {
+      token: orgA.token,
+      payload: { seo: { desciption: 'oops' } },
+    });
+    expect(response.statusCode).toBe(400);
+    // `error.details` is the envelope's field-error list; `fieldErrors` is the *web app's* name
+    // for the same thing after `lib/api.ts` keys it by field. Asserting the web app's name against
+    // the API is a test that cannot pass.
+    const errors = (response.body as { error?: { details?: { field: string }[] } }).error?.details;
+    expect(errors?.map((entry) => entry.field)).toContain('seo.desciption');
+    expect(JSON.stringify(response.body)).toMatch(/desciption/);
+  });
+
+  it('accepts the body a cleared SEO form sends', async () => {
+    // Every box empty and one checkbox on, which is the commonest submission this form makes. The
+    // first version refused it: `productId: ''` is the picker's own "Not about one product" option
+    // and was read as an invalid id, so the screen answered "Choose a product." under a field
+    // somebody had deliberately left alone. Found by the browser check — every unit test until
+    // then had passed a real id or nothing at all.
+    const { site, homeId } = await siteReadyToPublish('seocleared');
+    const response = await api('PATCH', `/websites/${site.id}/pages/${homeId}`, {
+      token: orgA.token,
+      payload: {
+        seo: {
+          title: '',
+          description: '',
+          canonicalUrl: '',
+          ogImageUrl: '',
+          noindex: true,
+          productId: '',
+        },
+      },
+    });
+    expect(response.statusCode).toBe(200);
+    expect((response.body.data as { seo: unknown }).seo).toEqual({ noindex: true });
+  });
+
+  it('refuses a relative canonical and a relative sharing image', async () => {
+    // A relative `og:image` is the commonest Open Graph mistake there is, and it fails silently:
+    // every platform simply shows no image.
+    const { site, homeId } = await siteReadyToPublish('seorelative');
+    for (const payload of [{ canonicalUrl: '/pricing' }, { ogImageUrl: '/logo.png' }]) {
+      const response = await api('PATCH', `/websites/${site.id}/pages/${homeId}`, {
+        token: orgA.token,
+        payload: { seo: payload },
+      });
+      expect(response.statusCode, JSON.stringify(payload)).toBe(400);
+      expect(JSON.stringify(response.body)).toMatch(/https:\/\//);
+    }
+  });
+
+  it('stores an X handle normalised, whatever was typed', async () => {
+    // One place normalises. A screen that cleaned it too would be a second answer to one question.
+    const { site } = await siteReadyToPublish('seohandle');
+    const updated = await setup<{ seoDefaults: Record<string, unknown> }>(
+      'PATCH',
+      `/websites/${site.id}`,
+      { token: orgA.token, payload: { seoDefaults: { twitterSite: 'https://x.com/acmeworks' } } },
+    );
+    expect(updated.seoDefaults.twitterSite).toBe('@acmeworks');
+  });
+
+  it('refuses a kind of business that is not a schema.org type', async () => {
+    const { site } = await siteReadyToPublish('seokind');
+    const response = await api('PATCH', `/websites/${site.id}`, {
+      token: orgA.token,
+      payload: { seoDefaults: { business: { kind: 'Shop' } } },
+    });
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('serves the site’s own absolute address, which is where a canonical points', async () => {
+    const { site } = await siteReadyToPublish('seobase');
+    await setup('POST', `/websites/${site.id}/publish`, { token: orgA.token });
+    const served = await setup<{ site: { baseUrl: string } }>(
+      'GET',
+      `/public/sites/${site.subdomain}`,
+    );
+    // One answer to "where does this site live", so a canonical and a sitemap entry cannot
+    // disagree. With no WEBSITE_BASE_DOMAIN configured it is the renderer's own path-based
+    // address, which is a working address rather than a half-configured one.
+    expect(served.site.baseUrl).toBe(`http://localhost:3000/s/${site.subdomain}`);
+    expect(served.site.baseUrl).not.toMatch(/\/$/);
+  });
+
+  it('reads the business’s opening hours from the workspace, not from the website', async () => {
+    // Asking somebody to type their trading hours a second time into a website screen is the
+    // defect `notification_preferences.quiet_hours` was corrected for — and here the stale copy
+    // would be the one customers read.
+    const { site } = await siteReadyToPublish('seobusiness');
+    await setup('PATCH', `/websites/${site.id}`, {
+      token: orgA.token,
+      payload: {
+        seoDefaults: {
+          business: { kind: 'Store', streetAddress: '12 MG Road', locality: 'Bengaluru' },
+        },
+      },
+    });
+    await setup('POST', `/websites/${site.id}/publish`, { token: orgA.token });
+    const served = await setup<{
+      business: {
+        name: string;
+        kind: string;
+        streetAddress: string;
+        openingHours: { dayOfWeek: number; opens: string; closes: string }[];
+      };
+    }>('GET', `/public/sites/${site.subdomain}`);
+
+    expect(served.business.kind).toBe('Store');
+    expect(served.business.streetAddress).toBe('12 MG Road');
+    // The name is the organization's own, never retyped into the website's settings. Read back
+    // from the row rather than matched against a guess, which is the stronger claim and the one
+    // that fails if somebody later copies the name into `seoDefaults`.
+    const organization = await ctx.db.organization.findFirstOrThrow({
+      where: { id: orgA.organizationId },
+      select: { name: true },
+    });
+    expect(served.business.name).toBe(organization.name);
+    // `seedWorkingHours` writes the workspace-wide set at provisioning, so these exist without
+    // this suite creating them — which is the point: the website reads what the business already
+    // told the product.
+    expect(served.business.openingHours.length).toBeGreaterThan(0);
+    for (const window of served.business.openingHours) {
+      expect(window.opens).toMatch(/^\d{2}:\d{2}$/);
+      expect(window.closes).toMatch(/^\d{2}:\d{2}$/);
+      expect(window.dayOfWeek).toBeGreaterThanOrEqual(0);
+      expect(window.dayOfWeek).toBeLessThanOrEqual(6);
+    }
+  });
+
+  it('reads a product’s price live, so a published page can never quote a stale one', async () => {
+    const product = await setup<{ id: string }>('POST', '/products', {
+      token: orgA.token,
+      payload: { name: `Modular kitchen ${SUFFIX}`, priceMinor: 250_000, currency: 'INR' },
+    });
+    const { site, homeId } = await siteReadyToPublish('seoproduct');
+    await setup('PATCH', `/websites/${site.id}/pages/${homeId}`, {
+      token: orgA.token,
+      payload: { seo: { productId: product.id } },
+    });
+    await setup('POST', `/websites/${site.id}/publish`, { token: orgA.token });
+
+    const before = await setup<{ products: Record<string, { priceMinor: number }> }>(
+      'GET',
+      `/public/sites/${site.subdomain}`,
+    );
+    expect(before.products[product.id]?.priceMinor).toBe(250_000);
+
+    // No publish between the edit and the read. A price frozen into the snapshot would still read
+    // 250000 here, which is the failure this reference exists to prevent — in structured data,
+    // where a stale price is a penalty rather than a typo.
+    await setup('PATCH', `/products/${product.id}`, {
+      token: orgA.token,
+      payload: { priceMinor: 275_000 },
+    });
+    const after = await setup<{ products: Record<string, { priceMinor: number }> }>(
+      'GET',
+      `/public/sites/${site.subdomain}`,
+    );
+    expect(after.products[product.id]?.priceMinor).toBe(275_000);
+  });
+
+  it('drops a product that has been deactivated rather than advertising it', async () => {
+    const product = await setup<{ id: string }>('POST', '/products', {
+      token: orgA.token,
+      payload: { name: `Withdrawn ${SUFFIX}`, priceMinor: 1000, currency: 'INR' },
+    });
+    const { site, homeId } = await siteReadyToPublish('seogone');
+    await setup('PATCH', `/websites/${site.id}/pages/${homeId}`, {
+      token: orgA.token,
+      payload: { seo: { productId: product.id } },
+    });
+    await setup('POST', `/websites/${site.id}/publish`, { token: orgA.token });
+    await setup('PATCH', `/products/${product.id}`, {
+      token: orgA.token,
+      payload: { isActive: false },
+    });
+    const served = await setup<{ products: Record<string, unknown> }>(
+      'GET',
+      `/public/sites/${site.subdomain}`,
+    );
+    // Absent, not reported. Structured data claiming something is for sale when it has been
+    // withdrawn is worse than none.
+    expect(served.products[product.id]).toBeUndefined();
+  });
+
+  it("refuses another workspace's product, identically to one that does not exist", async () => {
+    const theirs = await setup<{ id: string }>('POST', '/products', {
+      token: orgB.token,
+      payload: { name: `Theirs ${SUFFIX}`, priceMinor: 100, currency: 'INR' },
+    });
+    const { site, homeId } = await siteReadyToPublish('seocross');
+    const [cross, missing] = await Promise.all([
+      api('PATCH', `/websites/${site.id}/pages/${homeId}`, {
+        token: orgA.token,
+        payload: { seo: { productId: theirs.id } },
+      }),
+      api('PATCH', `/websites/${site.id}/pages/${homeId}`, {
+        token: orgA.token,
+        payload: { seo: { productId: newId() } },
+      }),
+    ]);
+    // Indistinguishable on purpose: a different answer would turn a product id into an oracle.
+    // `requestId` is deliberately per-request, so it is dropped before the comparison rather than
+    // the whole body being compared, which would pass for the wrong reason only by accident.
+    const shape = (body: unknown) => {
+      const error = (body as { error?: Record<string, unknown> }).error ?? {};
+      const { requestId: _ignored, ...rest } = error;
+      return rest;
+    };
+    expect(cross.statusCode).toBe(400);
+    expect(missing.statusCode).toBe(400);
+    expect(shape(cross.body)).toEqual(shape(missing.body));
+  });
+});
+
+describe('redirects (step 5, FR-WEB-3)', () => {
+  it('redirects an old address, with no publish needed', async () => {
+    const { site } = await siteReadyToPublish('redir');
+    await setup('POST', `/websites/${site.id}/publish`, { token: orgA.token });
+    const created = await setup<{ fromPath: string; toPath: string; kind: string }>(
+      'POST',
+      `/websites/${site.id}/redirects`,
+      { token: orgA.token, payload: { fromPath: '/Old-Prices/', toPath: '/pricing' } },
+    );
+    // Normalised by the same function a page path goes through: lowercase, no trailing slash.
+    expect(created.fromPath).toBe('/old-prices');
+    expect(created.kind).toBe('permanent');
+
+    const served = await setup<{ redirects: { fromPath: string; toPath: string }[] }>(
+      'GET',
+      `/public/sites/${site.subdomain}`,
+    );
+    expect(served.redirects).toEqual([
+      { fromPath: '/old-prices', toPath: '/pricing', kind: 'permanent' },
+    ]);
+  });
+
+  it('collapses a chain rather than refusing the second rename', async () => {
+    // Renaming `/a` to `/b` and later `/b` to `/c` is an ordinary sequence. A product that refused
+    // the second would be unusable; one that allowed the chain would serve two hops to a crawler
+    // that counts them. So the first row is rewritten to point at the final address.
+    const { site } = await siteReadyToPublish('redirchain');
+    await setup('POST', `/websites/${site.id}/redirects`, {
+      token: orgA.token,
+      payload: { fromPath: '/a', toPath: '/b' },
+    });
+    await setup('POST', `/websites/${site.id}/redirects`, {
+      token: orgA.token,
+      payload: { fromPath: '/b', toPath: '/c' },
+    });
+    const rows = await setup<{ fromPath: string; toPath: string }[]>(
+      'GET',
+      `/websites/${site.id}/redirects`,
+      { token: orgA.token },
+    );
+    expect(rows.map((row) => [row.fromPath, row.toPath])).toEqual([
+      ['/a', '/c'],
+      ['/b', '/c'],
+    ]);
+    // The invariant that makes a request-time loop guard unnecessary: no destination is another
+    // row's source.
+    const sources = new Set(rows.map((row) => row.fromPath));
+    expect(rows.filter((row) => sources.has(row.toPath))).toEqual([]);
+  });
+
+  it('follows the destination when pointing at an address that has itself moved', async () => {
+    const { site } = await siteReadyToPublish('redirfollow');
+    await setup('POST', `/websites/${site.id}/redirects`, {
+      token: orgA.token,
+      payload: { fromPath: '/b', toPath: '/c' },
+    });
+    const created = await setup<{ toPath: string }>('POST', `/websites/${site.id}/redirects`, {
+      token: orgA.token,
+      payload: { fromPath: '/a', toPath: '/b' },
+    });
+    expect(created.toPath).toBe('/c');
+  });
+
+  it('refuses a loop, with the sentence naming both addresses', async () => {
+    const { site } = await siteReadyToPublish('redirloop');
+    await setup('POST', `/websites/${site.id}/redirects`, {
+      token: orgA.token,
+      payload: { fromPath: '/a', toPath: '/b' },
+    });
+    // `/b` → `/a` would make a circle of two. A browser answers ERR_TOO_MANY_REDIRECTS, which
+    // explains nothing, so this is refused with a sentence instead.
+    const response = await api('POST', `/websites/${site.id}/redirects`, {
+      token: orgA.token,
+      payload: { fromPath: '/b', toPath: '/a' },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(JSON.stringify(response.body)).toMatch(/\/a/);
+    expect(JSON.stringify(response.body)).toMatch(/loop|circle/i);
+  });
+
+  it('refuses a redirect to itself', async () => {
+    const { site } = await siteReadyToPublish('redirself');
+    const response = await api('POST', `/websites/${site.id}/redirects`, {
+      token: orgA.token,
+      payload: { fromPath: '/a', toPath: '/a' },
+    });
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('refuses a destination a browser cannot follow', async () => {
+    // The first draft reused `isSafeBlockUrl`, which accepts `mailto:` because a *button* may
+    // link to one — and the CHECK on the column refuses it, so that draft would have written a
+    // value the database rejects. The service and the constraint now state one rule.
+    const { site } = await siteReadyToPublish('redirscheme');
+    for (const toPath of ['mailto:hello@example.com', '//evil.example', 'javascript:alert(1)']) {
+      const response = await api('POST', `/websites/${site.id}/redirects`, {
+        token: orgA.token,
+        payload: { fromPath: '/a', toPath },
+      });
+      expect(response.statusCode, toPath).toBe(400);
+    }
+  });
+
+  it('refuses a redirect whose source is a page, because the page would always win', async () => {
+    const { site } = await siteReadyToPublish('redirshadow');
+    const response = await api('POST', `/websites/${site.id}/redirects`, {
+      token: orgA.token,
+      payload: { fromPath: '/', toPath: '/elsewhere' },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(JSON.stringify(response.body)).toMatch(/page/i);
+  });
+
+  it('marks a redirect a page has since shadowed', async () => {
+    // The other direction: the redirect was legal when it was made, and a page appeared at that
+    // address afterwards. The page wins, and the list says so rather than leaving somebody to
+    // wonder why nothing happens.
+    const { site } = await siteReadyToPublish('redirlater');
+    await setup('POST', `/websites/${site.id}/redirects`, {
+      token: orgA.token,
+      payload: { fromPath: '/offers', toPath: '/pricing' },
+    });
+    const beforeRows = await setup<{ shadowed: boolean }[]>(
+      'GET',
+      `/websites/${site.id}/redirects`,
+      { token: orgA.token },
+    );
+    expect(beforeRows[0]?.shadowed).toBe(false);
+
+    await setup('POST', `/websites/${site.id}/pages`, {
+      token: orgA.token,
+      payload: { path: '/offers', title: 'Offers' },
+    });
+    const afterRows = await setup<{ shadowed: boolean }[]>(
+      'GET',
+      `/websites/${site.id}/redirects`,
+      { token: orgA.token },
+    );
+    expect(afterRows[0]?.shadowed).toBe(true);
+  });
+
+  it('refuses a second redirect for one address', async () => {
+    const { site } = await siteReadyToPublish('redirdup');
+    await setup('POST', `/websites/${site.id}/redirects`, {
+      token: orgA.token,
+      payload: { fromPath: '/a', toPath: '/b' },
+    });
+    const response = await api('POST', `/websites/${site.id}/redirects`, {
+      token: orgA.token,
+      payload: { fromPath: '/a', toPath: '/c' },
+    });
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('survives a publish and a rollback, which is the step’s exit criterion', async () => {
+    // The whole reason redirects are not in the snapshot. A redirect exists because an address
+    // changed, and the links it serves were published by other people — so rolling the *content*
+    // back must not delete it and 404 them.
+    const { site, homeId } = await siteReadyToPublish('redirversion');
+    const first = await setup<{ publishedVersionId: string }>(
+      'POST',
+      `/websites/${site.id}/publish`,
+      { token: orgA.token },
+    );
+    await setup('POST', `/websites/${site.id}/redirects`, {
+      token: orgA.token,
+      payload: { fromPath: '/old-brochure', toPath: '/pricing', note: 'renamed in November' },
+    });
+
+    // A second publish: the redirect must not be snapshotted into it either.
+    await setup('PATCH', `/websites/${site.id}/pages/${homeId}`, {
+      token: orgA.token,
+      payload: { title: 'Welcome again' },
+    });
+    await setup('POST', `/websites/${site.id}/publish`, { token: orgA.token });
+    const afterPublish = await setup<{ redirects: { fromPath: string }[]; snapshot: unknown }>(
+      'GET',
+      `/public/sites/${site.subdomain}`,
+    );
+    expect(afterPublish.redirects.map((row) => row.fromPath)).toEqual(['/old-brochure']);
+    // And it is beside the snapshot, never inside it: a reader comparing two versions must not
+    // find a difference the server invented.
+    expect(JSON.stringify(afterPublish.snapshot)).not.toMatch(/old-brochure/);
+
+    await setup('POST', `/websites/${site.id}/rollback`, {
+      token: orgA.token,
+      payload: { versionId: first.publishedVersionId },
+    });
+    const afterRollback = await setup<{ redirects: { fromPath: string }[] }>(
+      'GET',
+      `/public/sites/${site.subdomain}`,
+    );
+    expect(afterRollback.redirects.map((row) => row.fromPath)).toEqual(['/old-brochure']);
+  });
+
+  it('is removable, and the removal is what stops it', async () => {
+    const { site } = await siteReadyToPublish('redirdelete');
+    const created = await setup<{ id: string }>('POST', `/websites/${site.id}/redirects`, {
+      token: orgA.token,
+      payload: { fromPath: '/gone', toPath: '/pricing' },
+    });
+    await setup('DELETE', `/websites/${site.id}/redirects/${created.id}`, { token: orgA.token });
+    const rows = await setup<unknown[]>('GET', `/websites/${site.id}/redirects`, {
+      token: orgA.token,
+    });
+    expect(rows).toEqual([]);
+  });
+
+  it("cannot see or change another workspace's redirect", async () => {
+    const { site } = await siteReadyToPublish('redirtheirs');
+    const created = await setup<{ id: string }>('POST', `/websites/${site.id}/redirects`, {
+      token: orgA.token,
+      payload: { fromPath: '/a', toPath: '/b' },
+    });
+    const response = await api('DELETE', `/websites/${site.id}/redirects/${created.id}`, {
+      token: orgB.token,
+    });
+    // 404 on the site, before the redirect is ever looked up: a malformed id and another tenant's
+    // id must be indistinguishable.
+    expect(response.statusCode).toBe(404);
+  });
+
+  it('enqueues a cache drop on every change, including a removal', async () => {
+    // The renderer reads redirects per request but caches the result on the site's tag, and it
+    // caches a 404 too — so the address somebody is rescuing is precisely the one most likely to
+    // be stale. A removal needs the drop as much as a creation: a redirect somebody deleted that
+    // went on redirecting from cache would be a page nobody could reach back.
+    const { site } = await siteReadyToPublish('redirevents');
+    const created = await setup<{ id: string }>('POST', `/websites/${site.id}/redirects`, {
+      token: orgA.token,
+      payload: { fromPath: '/a', toPath: '/b' },
+    });
+    await setup('PATCH', `/websites/${site.id}/redirects/${created.id}`, {
+      token: orgA.token,
+      payload: { toPath: '/c' },
+    });
+    await setup('DELETE', `/websites/${site.id}/redirects/${created.id}`, { token: orgA.token });
+
+    const events = await ctx.db.outboxEvent.findMany({
+      where: {
+        organizationId: orgA.organizationId,
+        aggregateId: site.id,
+        eventName: 'website.redirects_changed',
+      },
+      select: { eventName: true },
+    });
+    expect(events).toHaveLength(3);
+  });
+});

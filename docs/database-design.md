@@ -1463,6 +1463,53 @@ trigger_event_id IS NOT NULL` — the idempotency that makes a retried delivery 
 | `visitor_identities` | org, `visitor_id`, `lead_id`, `identified_at`, `method (form_submit                                                                                                                                                                                                                                                                                                                                     | whatsapp_click                                              | link_click | api)` — the stitch that puts web behaviour on the timeline (`FR-ANL-7`) |
 | `website_events`     | org, site_id, `event_id` (client-generated), `visitor_id`, `session_id`, `type`, `occurred_at`, `page_url`, `page_path`, `referrer`, `properties JSONB` (product_id, value_minor, currency, cart_id, scroll %, cta id), `utm JSONB`, `device`, `country`, `ip_hash`, `received_at`. `UNIQUE (organization_id, site_id, event_id)`. **Partitioned daily**, retention by plan (`FR-ANL-6`, `NFR-SCALE-3`) |
 
+#### As built — Phase 7 step 5 (`website_redirects`, and the line it draws)
+
+One table the sketch above does not mention, `website_redirects`
+(`20261114030729_phase7_website_redirects`): org, `website_id`, `from_path`, `to_path`,
+`kind (permanent | temporary)`, `note?`, `created_by_id`, with
+`UNIQUE (organization_id, website_id, from_path)`.
+
+**It is deliberately not in the snapshot, and that is the whole design.** A redirect exists because
+an address _changed_, and the inbound links it serves were published by other people — so it is a
+fact about the outside world's links rather than about this release of the content. Snapshotting it
+would make a rollback of the **content** delete every redirect added since the restored version, and
+the links those redirects were created for would 404: addresses broken by a rollback that was never
+about them. It would also mean somebody renaming a page could not make the old address work until
+they published.
+
+That generalises into the rule this step followed, which is worth having in one place because three
+different tables now depend on it:
+
+> **Versioned is what somebody wrote. Live is what the business is.**
+>
+> `website_pages.seo` and `websites.seo_defaults` are snapshotted — they are content. `products`
+> (a price), `working_hours` (trading hours), `forms` (a public key) and `website_redirects` are read
+> **per request, beside the snapshot**, because each is a live fact about the business and a frozen
+> copy would be a copy that goes stale. Step 4 drew this line once for a form's key; this is the
+> general case.
+
+Four hand-written CHECKs, all in `schema-objects.int-spec.ts`:
+
+| Constraint                              | What it holds                                                                                                                                                                                                                                                                                |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `website_redirects_from_is_a_path`      | Character for character the regex in `website_pages_path_is_a_path`. It has to be: the renderer looks a request's path up as a page, fails, then looks the **same string** up here, so a shape that can be a redirect and cannot be a page is an address nobody can reach through the editor |
+| `website_redirects_not_to_self`         | The single-row half of "a loop is unrepresentable". The multi-row half is the service's chain collapse                                                                                                                                                                                       |
+| `website_redirects_kind_is_known`       | Two values. A protocol fact (308 against 307), not a tenant catalogue — rule 4 is about a workspace's own vocabulary, and nobody adds a row to the set of HTTP redirect semantics                                                                                                            |
+| `website_redirects_to_is_a_destination` | A path on this site or a full `http(s)` address. Looser than `from_path` (a destination may carry a query string) and stricter than `isSafeBlockUrl` (no `mailto:`, no `tel:`, no protocol-relative `//evil.example`)                                                                        |
+
+The last one caught a real defect before it shipped: `redirectTargetProblem`'s first draft reused
+`isSafeBlockUrl`, which accepts `mailto:` and `tel:` because a _button_ may link to either — so the
+service would have written values the column refuses. `schema-objects.int-spec.ts` now reads
+`pg_get_constraintdef` for this table and evaluates the **installed** expression against the shared
+function, rather than comparing it to a second copy of the regex typed into a test.
+
+**No columns were added for the SEO settings.** `website_pages.seo` and `websites.seo_defaults` were
+created in step 1 precisely so that a publish would snapshot them before anything filled them in: a
+snapshot that gains a key later cannot be compared against one taken before it.
+
+`website_domains` remains unbuilt and is step 6's.
+
 #### As built — Phase 7 step 4 (`website_forms` was not created)
 
 The sketch above lists `website_forms` as "a join of `websites`↔`forms` with placement metadata". It

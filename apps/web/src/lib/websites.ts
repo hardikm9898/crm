@@ -1,4 +1,5 @@
-import { request } from '@/lib/api';
+import { ApiError, request } from '@/lib/api';
+import { loadProductsOrThrow } from '@/lib/deals';
 
 /**
  * The renderer's own copy of the website vocabulary (`FR-WEB-5`).
@@ -12,6 +13,37 @@ import { request } from '@/lib/api';
  */
 
 export const WEBSITE_HOME_PATH = '/';
+
+/** The business behind a site, assembled by the API from three places none of which copies
+ * another: the organization profile, the site's SEO defaults, and `working_hours`. */
+export interface SiteBusiness {
+  readonly name: string;
+  readonly legalName: string | null;
+  readonly country: string;
+  readonly logoUrl: string | null;
+  readonly timezone: string;
+  readonly kind: string;
+  readonly streetAddress: string | null;
+  readonly locality: string | null;
+  readonly region: string | null;
+  readonly postalCode: string | null;
+  readonly phone: string | null;
+  readonly priceRange: string | null;
+  readonly openingHours: readonly {
+    readonly dayOfWeek: number;
+    readonly opens: string;
+    readonly closes: string;
+  }[];
+}
+
+/** A product a page names, read live from the catalogue so a published price cannot go stale. */
+export interface SiteProduct {
+  readonly name: string;
+  readonly description: string | null;
+  readonly sku: string | null;
+  readonly priceMinor: number;
+  readonly currency: string | null;
+}
 
 /** A page as the published snapshot carries it. */
 export interface SnapshotPage {
@@ -30,7 +62,19 @@ export interface SiteSnapshot {
 }
 
 export interface PublishedSite {
-  readonly site: { readonly name: string; readonly subdomain: string };
+  readonly site: {
+    readonly name: string;
+    readonly subdomain: string;
+    /**
+     * Where this site lives, absolutely — the API's one answer to that question (`FR-WEB-3`).
+     *
+     * Not computed here, because step 6 adds a third possibility (a verified custom domain) that
+     * is a row in the database rather than a variable in this app's environment. A canonical URL
+     * and a sitemap entry that disagreed would tell a crawler the page it fetched is a duplicate
+     * of something it cannot find, and the usual outcome is neither being indexed.
+     */
+    readonly baseUrl: string;
+  };
   readonly version: number;
   readonly versionId: string;
   readonly publishedAt: string;
@@ -43,6 +87,22 @@ export interface PublishedSite {
    * across reads or a version comparison would find differences the server invented.
    */
   readonly forms: Readonly<Record<string, { readonly key: string; readonly name: string }>>;
+  /**
+   * The site's redirects, beside the snapshot for the reason the forms are — and one more.
+   *
+   * A redirect exists because an address *changed*, and the links it serves were published by
+   * other people. Snapshotting it would make a rollback of the **content** delete redirects added
+   * since the restored version, 404ing inbound links that were never part of what was rolled back.
+   */
+  readonly redirects: readonly {
+    readonly fromPath: string;
+    readonly toPath: string;
+    readonly kind: string;
+  }[];
+  /** The business behind the site, for `LocalBusiness` structured data. Null if it has gone. */
+  readonly business: SiteBusiness | null;
+  /** The products this site's pages name, keyed by id. A withdrawn product is simply absent. */
+  readonly products: Readonly<Record<string, SiteProduct>>;
 }
 
 /**
@@ -101,6 +161,29 @@ export async function loadPublishedSite(subdomain: string): Promise<PublishedSit
       next: { tags: [siteCacheTag(subdomain)], revalidate: false },
     })
   ).data;
+}
+
+/**
+ * The published site, `null` when there is no such site, and a **throw** when we could not ask.
+ *
+ * The three outcomes have to stay three, which the first draft of the crawler files got wrong.
+ * `robots.txt` answers `Disallow: /` for a site that is not published — a 404 on that file is read
+ * as "no restrictions", which is the opposite of what an unpublished address should say. But
+ * collapsing an API outage into the same answer would serve `Disallow: /` for a **healthy** site
+ * during a blip, and a crawler that caches it stops crawling a site that is live. So a transport
+ * failure or a 5xx propagates, and the route turns it into a 503, which crawlers treat as "ask
+ * again later" and explicitly do not read as a change of permission.
+ *
+ * This is the "a catch that renders an empty state hides a 400 forever" lesson with a worse blast
+ * radius: the empty state here is an instruction to the whole internet.
+ */
+export async function loadPublishedSiteOrNull(subdomain: string): Promise<PublishedSite | null> {
+  try {
+    return await loadPublishedSite(subdomain);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return null;
+    throw error;
+  }
 }
 
 /**
@@ -217,6 +300,9 @@ export interface WebsitePageRow {
   readonly path: string;
   readonly title: string;
   readonly blocks: readonly unknown[];
+  /** Per-page SEO overrides (`FR-WEB-3`). `{}` for a page nobody has filled any in for, which is
+   * the common case: a page inherits the site's defaults and needs nothing typed. */
+  readonly seo: Record<string, unknown>;
   readonly isHome: boolean;
   readonly sortOrder: number;
   readonly status: 'draft' | 'published';
@@ -257,4 +343,45 @@ export async function loadVersions(token: string | null, id: string): Promise<We
 /** The address a published site is served at today. Host-based routing is step 6's. */
 export function siteUrl(subdomain: string): string {
   return `/s/${subdomain}`;
+}
+
+/** A redirect as the editor lists it, with `shadowed` saying whether a page now outranks it. */
+export interface RedirectRow {
+  readonly id: string;
+  readonly fromPath: string;
+  readonly toPath: string;
+  readonly kind: 'permanent' | 'temporary';
+  readonly note: string | null;
+  /**
+   * True when a page now sits at `fromPath`, so this redirect never fires.
+   *
+   * Computed by the API rather than stored, and surfaced rather than hidden: a redirect doing
+   * nothing with no explanation is a support ticket, and the explanation ("a page always wins") is
+   * one sentence.
+   */
+  readonly shadowed: boolean;
+}
+
+export async function loadRedirects(token: string | null, id: string): Promise<RedirectRow[]> {
+  return (await request<RedirectRow[]>(`/websites/${id}/redirects`, { token })).data;
+}
+
+/**
+ * The products a page may link to, or a reason there are none to offer.
+ *
+ * `GET /products` is gated on `deal:read`, which somebody who edits websites need not hold — so
+ * "the list is empty" and "you may not see the list" are two different answers and this returns
+ * which. Collapsing them into `[]` would render an empty picker to a person whose workspace has a
+ * full catalogue, which is the defect `loadProducts` exists to document: a loader whose failure is
+ * indistinguishable from an empty result needs a twin on any screen where "none" is information.
+ */
+export async function loadSeoProductOptions(
+  token: string | null,
+): Promise<{ items: { id: string; name: string }[] } | { unavailable: true }> {
+  try {
+    const items = await loadProductsOrThrow(token, '?limit=200&active=true');
+    return { items: items.map((item) => ({ id: item.id, name: item.name })) };
+  } catch {
+    return { unavailable: true };
+  }
 }

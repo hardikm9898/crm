@@ -149,6 +149,7 @@ export const TENANT_MODELS = [
   // Phase 7 — websites
   'Website',
   'WebsitePage',
+  'WebsiteRedirect',
   'WebsiteVersion',
 ] as const;
 

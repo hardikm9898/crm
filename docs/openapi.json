@@ -31066,6 +31066,345 @@
         ]
       }
     },
+    "/api/v1/websites/{id}/redirects": {
+      "get": {
+        "operationId": "Websites_redirects",
+        "tags": [
+          "Websites"
+        ],
+        "summary": "Redirects",
+        "description": "Needs the `website:read` permission.\n\n```bash\ncurl -X GET \"http://localhost:4000/api/v1/websites/{id}/redirects\" \\\n  -H \"Authorization: Bearer $LEADOS_KEY_ID.$LEADOS_SECRET\"\n```",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The resource’s id. A malformed id answers 404, exactly as another workspace’s id does."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The envelope, with this endpoint’s payload in `data`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          }
+        },
+        "x-leados-permission": "website:read",
+        "security": [
+          {
+            "sessionToken": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      },
+      "post": {
+        "operationId": "Websites_createRedirect",
+        "tags": [
+          "Websites"
+        ],
+        "summary": "Create redirect",
+        "description": "Needs the `website:manage` permission.\n\n```bash\ncurl -X POST \"http://localhost:4000/api/v1/websites/{id}/redirects\" \\\n  -H \"Authorization: Bearer $LEADOS_KEY_ID.$LEADOS_SECRET\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"fromPath\":\"…\",\"toPath\":\"…\"}'\n```",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The resource’s id. A malformed id answers 404, exactly as another workspace’s id does."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "fromPath": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "toPath": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "permanent",
+                      "temporary"
+                    ]
+                  },
+                  "note": {
+                    "type": "string",
+                    "maxLength": 500
+                  }
+                },
+                "required": [
+                  "fromPath",
+                  "toPath"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The envelope, with this endpoint’s payload in `data`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          }
+        },
+        "x-leados-permission": "website:manage",
+        "security": [
+          {
+            "sessionToken": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      }
+    },
+    "/api/v1/websites/{id}/redirects/{redirectId}": {
+      "delete": {
+        "operationId": "Websites_deleteRedirect",
+        "tags": [
+          "Websites"
+        ],
+        "summary": "Delete redirect",
+        "description": "Needs the `website:manage` permission.\n\n```bash\ncurl -X DELETE \"http://localhost:4000/api/v1/websites/{id}/redirects/{redirectId}\" \\\n  -H \"Authorization: Bearer $LEADOS_KEY_ID.$LEADOS_SECRET\"\n```",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The resource’s id. A malformed id answers 404, exactly as another workspace’s id does."
+          },
+          {
+            "name": "redirectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The envelope, with this endpoint’s payload in `data`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          }
+        },
+        "x-leados-permission": "website:manage",
+        "security": [
+          {
+            "sessionToken": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      },
+      "patch": {
+        "operationId": "Websites_updateRedirect",
+        "tags": [
+          "Websites"
+        ],
+        "summary": "Update redirect",
+        "description": "Needs the `website:manage` permission.\n\n```bash\ncurl -X PATCH \"http://localhost:4000/api/v1/websites/{id}/redirects/{redirectId}\" \\\n  -H \"Authorization: Bearer $LEADOS_KEY_ID.$LEADOS_SECRET\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"fromPath\":\"…\"}'\n```",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "The resource’s id. A malformed id answers 404, exactly as another workspace’s id does."
+          },
+          {
+            "name": "redirectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "fromPath": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "toPath": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "permanent",
+                      "temporary"
+                    ]
+                  },
+                  "note": {
+                    "type": "string",
+                    "maxLength": 500
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The envelope, with this endpoint’s payload in `data`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          }
+        },
+        "x-leados-permission": "website:manage",
+        "security": [
+          {
+            "sessionToken": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      }
+    },
     "/api/v1/websites/{id}/rollback": {
       "post": {
         "operationId": "Websites_rollback",

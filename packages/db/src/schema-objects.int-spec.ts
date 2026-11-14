@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { pagePathProblem } from '@leados/shared';
+import { pagePathProblem, redirectTargetProblem } from '@leados/shared';
 import { createHarness, type TestHarness } from './testing/fixtures.js';
 
 /**
@@ -744,6 +744,16 @@ const REQUIRED_CONSTRAINTS = [
   'website_versions_website_same_org_fk',
   'website_versions_publisher_same_org_fk',
   'website_versions_restored_from_same_org_fk',
+
+  // Phase 7, step 5 — redirects. The from_path shape has to agree with the page one character for
+  // character, because the renderer looks a path up as a page and then looks the same string up
+  // here; the self-redirect check is the single-row half of "a loop is unrepresentable".
+  'website_redirects_from_is_a_path',
+  'website_redirects_not_to_self',
+  'website_redirects_kind_is_known',
+  'website_redirects_to_is_a_destination',
+  'website_redirects_website_same_org_fk',
+  'website_redirects_creator_same_org_fk',
 ];
 
 describe('hand-written indexes survive every generated migration', () => {
@@ -1058,5 +1068,56 @@ describe('the website objects whose predicate is the guarantee', () => {
           'that path runs',
       ).toBe(pagePathProblem(path) === null);
     }
+  });
+  it('keeps website_redirects_to_is_a_destination agreeing with redirectTargetProblem', async () => {
+    // This test evaluates the **installed** expression rather than a second copy of the regex: the
+    // definition is read back from the catalogue and the column reference is substituted, so a
+    // later migration that loosened the constraint fails here instead of agreeing with a literal
+    // somebody typed into a test. The path test above predates that technique and retypes its
+    // regex, which is weaker for the same cost.
+    const definition = await constraintDefinition('website_redirects_to_is_a_destination');
+    const expression = definition.replace(/^CHECK\s*/, '').replace(/to_path/g, 'p');
+
+    const targets = [
+      '/',
+      '/services',
+      '/services/interiors',
+      '/offers?from=old-page',
+      'https://example.com/moved',
+      'http://example.com',
+      '//evil.example',
+      'javascript:alert(1)',
+      'mailto:hello@example.com',
+      'tel:+919845012345',
+      'about',
+      '',
+      `/${'a'.repeat(1200)}`,
+    ];
+    const rows = await h.unscoped.$queryRawUnsafe<{ p: string; accepted: boolean }[]>(
+      `SELECT p, (${expression}) AS accepted FROM unnest($1::text[]) AS p`,
+      targets,
+    );
+    const bySql = new Map(rows.map((row) => [row.p, row.accepted]));
+    for (const target of targets) {
+      expect(bySql.get(target), `the database had no verdict on ${target}`).toBeTypeOf('boolean');
+      expect(
+        bySql.get(target),
+        `the CHECK and redirectTargetProblem disagree about ${target}. The first draft reused ` +
+          'isSafeBlockUrl, which accepts mailto: and tel: because a button may link to either, ' +
+          'and this is the test that would have caught it writing a value the column refuses.',
+      ).toBe(redirectTargetProblem(target) === null);
+    }
+  });
+
+  it('keeps website_redirects_from_is_a_path identical to the page one', async () => {
+    // Not "both look like a path" but "both are the same string". The renderer looks a request's
+    // path up as a page, fails, and looks the *same* string up as a redirect: a shape that can be
+    // a redirect and cannot be a page is an address nobody can ever reach through the editor,
+    // which looks exactly like a redirect that does not work.
+    const [page, redirect] = await Promise.all([
+      constraintDefinition('website_pages_path_is_a_path'),
+      constraintDefinition('website_redirects_from_is_a_path'),
+    ]);
+    expect(redirect.replace(/from_path/g, 'X')).toBe(page.replace(/\bpath\b/g, 'X'));
   });
 });

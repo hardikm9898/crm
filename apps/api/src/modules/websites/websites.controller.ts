@@ -8,13 +8,17 @@ import {
   createPageSchema,
   createWebsiteSchema,
   listWebsitesSchema,
+  createRedirectSchema,
   rollbackSchema,
+  updateRedirectSchema,
   updatePageSchema,
   updateWebsiteSchema,
   type CreatePageInput,
   type CreateWebsiteInput,
   type ListWebsitesQuery,
+  type CreateRedirectInput,
   type RollbackInput,
+  type UpdateRedirectInput,
   type UpdatePageInput,
   type UpdateWebsiteInput,
 } from './websites.dto.js';
@@ -147,5 +151,46 @@ export class WebsitesController {
       await this.websites.rollback(id, input.versionId),
       'Rolled back. That version is live again as a new version.',
     );
+  }
+
+  // -------------------------------------------------------------------------
+  // Redirects (`FR-WEB-3`)
+  // -------------------------------------------------------------------------
+  //
+  // Under the site rather than at the top level, because a redirect belongs to one site and the
+  // same `/old-prices` can legitimately move to different places on two of a workspace's sites.
+  // Reading them needs only `website:read`: a redirect list is part of understanding what a site
+  // does, and the sentence explaining why one is doing nothing is worth showing to anybody who can
+  // see the site at all.
+
+  @Get(':id/redirects')
+  @RequirePermission(PERMISSIONS.WEBSITE_READ)
+  async redirects(@Param('id') id: string) {
+    return this.websites.redirects(id);
+  }
+
+  @Post(':id/redirects')
+  @RequirePermission(PERMISSIONS.WEBSITE_MANAGE)
+  async createRedirect(
+    @Param('id') id: string,
+    @Body(zodBody(createRedirectSchema)) body: unknown,
+  ) {
+    return this.websites.createRedirect(id, body as CreateRedirectInput);
+  }
+
+  @Patch(':id/redirects/:redirectId')
+  @RequirePermission(PERMISSIONS.WEBSITE_MANAGE)
+  async updateRedirect(
+    @Param('id') id: string,
+    @Param('redirectId') redirectId: string,
+    @Body(zodBody(updateRedirectSchema)) body: unknown,
+  ) {
+    return this.websites.updateRedirect(id, redirectId, body as UpdateRedirectInput);
+  }
+
+  @Delete(':id/redirects/:redirectId')
+  @RequirePermission(PERMISSIONS.WEBSITE_MANAGE)
+  async deleteRedirect(@Param('id') id: string, @Param('redirectId') redirectId: string) {
+    return this.websites.deleteRedirect(id, redirectId);
   }
 }

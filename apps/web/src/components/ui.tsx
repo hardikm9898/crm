@@ -221,7 +221,13 @@ export function Field({
       <span className="font-medium">{label}</span>
       {children}
       {error ? (
-        <span className="text-xs text-[var(--color-danger)]">{error}</span>
+        // `data-field-error` so a check can wait for *the error* rather than for a selector the
+        // hint also matches. Without it `label span` resolves against the hint immediately, and a
+        // browser check that waits on it reads the old state and reports a correct screen as
+        // broken — which is the "wait for something this run produced" trap in a new place.
+        <span className="text-xs text-[var(--color-danger)]" data-field-error>
+          {error}
+        </span>
       ) : (
         hint && <span className="text-xs text-[var(--color-text-muted)]">{hint}</span>
       )}

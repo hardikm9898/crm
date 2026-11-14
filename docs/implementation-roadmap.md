@@ -3742,9 +3742,246 @@ crawlers, which is an argument for rendering the heading server-side and only th
 browser — noted rather than guessed at now. `campaign` in the criterion is `utm_campaign`, carried in
 `utm`; linking a touchpoint to a **campaign row** is Phase 9's registry.
 
-**The next step.** Step 5 — per-page SEO, `robots.txt`, `sitemap.xml`, structured data and
-redirects, where the sitemap listing published pages and **only** published pages is step 2's
-draft-leak test one layer out.
+---
+
+### Step 5 — SEO, and the files a crawler asks for by name ✅ _(landed 2026-11-14)_
+
+Per-page title, description and canonical; Open Graph and Twitter cards; `robots.txt`; `sitemap.xml`;
+`LocalBusiness` and `Product` structured data; and redirects.
+
+**One line decided the whole step: versioned is what somebody wrote, live is what the business is.**
+A page's title, description and social image are content — they go into the snapshot and take effect
+when somebody publishes, like every other word on the page. The business's own facts are read **per
+request, beside the snapshot**: its name and logo, its trading hours, the forms it owns, a product's
+price, and where a retired address now points.
+
+Getting that line wrong in either direction is a defect rather than a preference, which is why it is
+worth stating rather than discovering:
+
+| Fact                                             | Where it lives                        | What the other choice would cost                                                                                                                                                                         |
+| ------------------------------------------------ | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Page title, description, canonical, social image | Snapshot                              | Nothing — it is content                                                                                                                                                                                  |
+| A product's price                                | `products`, read per request          | A figure frozen into a published version goes stale the moment somebody edits the catalogue, **in structured data**, where a stale price is a penalty rather than a typo — and where nobody would notice |
+| Trading hours                                    | `working_hours`, read per request     | A business that changed its Saturday hours in Settings would have to remember to republish a website to stop telling customers the old ones                                                              |
+| A redirect                                       | `website_redirects`, read per request | A rollback of the **content** would delete redirects added since the restored version, 404ing inbound links that were never part of what was rolled back                                                 |
+
+Step 4 had already drawn that line once, for a form's public key. This step is the general case.
+
+#### The business's details are assembled, never retyped
+
+`LocalBusiness` needs a name, a logo, an address, a phone number and opening hours. Three of those
+already exist elsewhere in the product and **are not asked for again**: the name, the country and the
+logo come from the organization profile, and the hours come from the workspace-wide `working_hours`
+rows that `seedWorkingHours` writes at provisioning and `SlaCalendarService` already reads. What the
+site's SEO defaults carry is only what nothing else knows — the street address, the kind of business,
+and a price range.
+
+Asking somebody to type their own trading hours a second time, into a website screen, is the defect
+`notification_preferences.quiet_hours` was corrected for: one copy per reader, each able to disagree
+with the others. Here the copy that went stale would be the one customers read. The e2e asserts the
+name equals the organization's row rather than matching a guess, so the day somebody copies it into
+`seoDefaults` the test fails.
+
+#### Redirects: a chain is collapsed, so a loop is unrepresentable
+
+`website_redirects` keeps one invariant — **no destination is ever another row's source on the same
+site** — and keeps it by collapsing rather than by refusing. Renaming `/a` to `/b` and later `/b` to
+`/c` is an ordinary sequence of events; a product that refused the second rename because of the first
+would be unusable, and one that allowed the chain would serve two hops to a crawler that counts them.
+So every write does two things: it **follows** the destination (pointing at an address that has itself
+moved stores the final one), and it **rewrites** everything pointing at its own source. Both are
+audited, because they change rows nobody asked about in that request.
+
+What that buys is a renderer with one lookup and no loop guard — code written against a state the
+writer refuses to create. The two ways a write could still close a circle are refused with sentences
+that name both addresses, and `website_redirects_not_to_self` holds the single-row case in the
+database because it is expressible there.
+
+**A page always wins over a redirect.** Declared in the renderer and nowhere else: a real page at an
+address must serve, so creating a redirect whose source is a page is refused, and a page created at an
+existing redirect's source leaves that redirect listed as `shadowed` with a sentence saying why it is
+doing nothing. The alternative is a redirect that silently stopped working and a support ticket.
+
+#### The crawler files, and where a crawler actually looks
+
+`robots.txt` and `sitemap.xml` are literal route segments beside the `[[...path]]` catch-all, which is
+what makes them reachable — Next gives a static segment precedence. They also cannot be shadowed by a
+tenant page, and that is not luck: `PAGE_SEGMENT_SHAPE` allows only letters, digits and hyphens, so no
+page path can contain a dot. A reserved-path list would have been a second rule that could drift from
+the first.
+
+**The sitemap lists published pages and only published pages, structurally.** It is built from the
+published version's snapshot, which contains the pages that were `published` at the moment of the
+publish — a draft is not filtered out, it was never in the input. That is step 2's draft-leak
+guarantee one layer out. A `noindex` page **is** filtered, and that is a filter: a sitemap entry for a
+page the site asked search engines not to list is a contradiction Search Console reports as an error,
+and the two settings are filled in on different screens.
+
+**`robots.txt` allows crawling even when the site asks not to be listed**, which is the opposite of
+the instinct and the only thing that works. `Disallow: /` stops a crawler fetching the page, which
+stops it ever seeing the `noindex` tag, so a site already in the index stays there — permanently, with
+no way to ask again. Allowing the crawl and serving `noindex` is the only combination that deindexes
+anything. What `noindex` does change is the `Sitemap:` line, because advertising a list of pages a
+business asked you not to list is incoherent.
+
+`robots.txt` is also the one place this step is **honest about the deployment rather than the code**.
+The file is per-host by specification, at the host's root. With `WEBSITE_BASE_DOMAIN` set it is served
+at `acme.leados.app/robots.txt`, which is where a crawler asks. Without it — the path-based deployment
+that runs today — it lives at `/s/acme/robots.txt`: correct, reachable, and not where anybody will
+look. That is step 6's to make real, and it is written in the route's own comment rather than left to
+be discovered.
+
+#### Where a site lives is one function
+
+`siteBaseUrl` answers it, and the API computes it rather than the web app because step 6 adds a third
+answer — a verified custom domain — that is a row in this database, not a variable in another app's
+environment. A canonical URL and a sitemap entry that disagreed would tell a crawler the page it
+fetched is a duplicate of something it cannot find, and the usual outcome is neither being indexed.
+
+`WEBSITE_BASE_DOMAIN` is optional and **its absence produces working addresses rather than broken
+ones**, which is what makes it safe to add: unset, a site's address is `WEB_ORIGIN/s/<subdomain>`,
+exactly where the renderer serves it. It is a genuinely different fact from `WEB_ORIGIN` — that is
+where this product is, this is where tenants' sites are — rather than the second name for one question
+that `NEXT_PUBLIC_API_ORIGIN` nearly became. It is in `turbo.json`'s `globalEnv`, because a variable
+that is not would never reach a task.
+
+The function returns **no trailing slash, ever**: Next redirects `/s/acme/` to `/s/acme`, and a
+canonical that points at a redirect is one a crawler discards. The one place that could reasonably add
+a slash is the one place it must not.
+
+#### Defects found
+
+Five, three of them in code written during this step and two in step 2's:
+
+1. **`productId: ''` was refused as an invalid id.** The picker's own first option is "Not about one
+   product" and submits an empty value, so the commonest state of the field answered "Choose a
+   product." under a box somebody had deliberately left alone. Every other field reaches "blank means
+   absent" through `textProblems`; this one did not go through it. The same family as `Number('')`
+   being 0: a coercion used on form input has to refuse what a blank box means rather than reuse it.
+   **Found by the browser check** — every unit test until then had passed a real id or nothing at all.
+   `business.kind` had the same shape and was fixed with it.
+2. **`redirectTargetProblem` reused `isSafeBlockUrl`, which accepts `mailto:` and `tel:`.** A button
+   on a page may legitimately link to either; a 308 to a `mailto:` is not something a browser can
+   follow, and `website_redirects_to_is_a_destination` refuses it — so the first draft would have
+   written values the column rejects. A constraint that says what belongs in a table while the service
+   writes something else is a 500 nobody sees until that path runs. The service now states the CHECK's
+   rule, and `schema-objects.int-spec.ts` evaluates the **installed** expression against the function
+   rather than against a second copy of the regex.
+3. **A loop of two was reported as "back to itself".** The person typed two different addresses, so
+   that sentence reads as though they had not. The two situations are now two sentences; the service
+   already had the information to tell them apart.
+4. **Step 2's renderer collapsed "no such site" and "the API is unreachable" into one 404.** The
+   comment argued the renderer has no content either way, which is true and is not the point: the page
+   is cached with `revalidate: false` and a tag, so a 404 rendered during an API blip is cached
+   **indefinitely** — a live site answering "not found" to every visitor until somebody published it
+   again, with nothing saying why. A transport failure now propagates and Next answers 500, which is
+   not cached as a success. The crawler files turn it into **503** with `Retry-After`, which crawlers
+   read as "ask again later" and explicitly do not treat as a change of permission — `Disallow: /`
+   cached from a blip would stop crawling a healthy site.
+5. **`Field`'s hint and its error were both an unmarked `<span>`.** A browser check waiting for
+   `label span` resolved against the hint immediately and read the page before the refusal had
+   rendered, reporting a screen that was working perfectly as broken. The error span now carries
+   `data-field-error`, which every form in the product gets.
+
+#### Files changed
+
+**New:** `packages/shared/src/website-seo.ts` (+ spec), `packages/shared/src/content-problem.ts`,
+`apps/web/src/lib/website-seo.ts` (+ spec),
+`apps/web/src/app/s/[siteSlug]/robots.txt/route.ts`,
+`apps/web/src/app/s/[siteSlug]/sitemap.xml/route.ts`,
+`apps/web/src/app/(app)/websites/_components/seo-forms.tsx`,
+`packages/db/prisma/migrations/20261114030729_phase7_website_redirects/`.
+
+**Changed:** the websites service (SEO validation, four redirect methods), its controller (four
+routes) and DTOs; `public-sites.service.ts` (`baseUrl`, `redirects`, `business`, `products`);
+`event-subscriptions.ts`; `config.schema.ts`; `turbo.json`; `schema.prisma`; `tenant-models.ts`;
+`schema-objects.int-spec.ts`; the published-site renderer; `lib/websites.ts`; `components/ui.tsx`;
+the website detail screen and its actions; `websites.e2e-spec.ts`;
+`route-authorization.e2e-spec.ts`.
+
+#### Database changes
+
+One table, `website_redirects`, with four hand-written CHECKs — the `from_path` shape (character for
+character the page one, because the renderer looks a request's path up as a page and then looks the
+same string up here), the self-redirect refusal, the `kind` vocabulary, and the destination rule. Both
+predicate-bearing ones are in `schema-objects.int-spec.ts`, which for this table reads
+`pg_get_constraintdef` rather than only checking the name.
+
+Prisma's diff proposed **fifteen** spurious `DROP`s — two composite FKs, six GIN indexes, five trigram
+indexes, a partial index and a partial unique. Removed by a script that refuses to cut anything that
+is not a `Drop*` statement, because Prisma puts `ADD COLUMN` in the same region and cutting
+"everything before the first `CreateTable`" once took two of those with it.
+
+`prisma format` added nothing this time: the back-relations on `Organization` and `Membership` were
+written by hand first, with their `@relation` names. It has produced a schema it then refused to
+validate twice before.
+
+No migration was needed for the SEO settings themselves — `website_pages.seo` and
+`websites.seo_defaults` were created in step 1 precisely so a publish would snapshot them before
+anything filled them in.
+
+#### API changes
+
+Four routes: `GET`/`POST /websites/:id/redirects` and `PATCH`/`DELETE
+/websites/:id/redirects/:redirectId`. Reading needs `website:read`, writing `website:manage`; no new
+permission, and no backfill migration, because both have been in the catalogue since step 1.
+`GET /public/sites/:subdomain` gains `site.baseUrl`, `redirects`, `business` and `products`. One new
+event, `website.redirects_changed`, subscribed to the same revalidation job a publish uses.
+
+#### UI changes
+
+A "Search engines" card per site, a "Search settings" disclosure per page, and a redirects panel that
+prints each rule as text — not only in inputs — because a list whose values live only in form controls
+is unreadable and unassertable. The page's `<head>` is assembled by one function the spec tests
+without a browser; two `<script type="application/ld+json">` blocks are emitted through
+`jsonLdScript`, which escapes `<` so a tenant typing `</script>` into a description cannot end the
+element and have the rest parsed as markup.
+
+#### Tests run
+
+|                           | Before | After     |
+| ------------------------- | ------ | --------- |
+| `@leados/shared` unit     | 767    | **801**   |
+| `@leados/web` unit        | 382    | **412**   |
+| `@leados/api` integration | 983    | **1 006** |
+| `@leados/db` integration  | 786    | **788**   |
+
+`lint`, `typecheck`, `build` and `format:check` clean. Plus two things no suite covers:
+
+- **A browser check, 8/8**, which found defects 1 and 5.
+- **Lighthouse against a local production build**: SEO **100**, accessibility **100**, best
+  practices **100** on the published home page, and performance **98** on the product page, with no
+  failing audits in the three non-performance categories. The phase's criterion asks for ≥ 90 on a
+  published template; this is the same renderer and the same markup, measured on `next start` over
+  loopback rather than on real hosting, and the honest reading is that the **markup** clears the bar
+  while the **hosting** half is still step 6's and 7's.
+- **The redirect's cache drop, end to end**: a path was requested twice to cache its 404, a redirect
+  was added, and the path answered **308** two seconds later. That is the one thing the e2e can only
+  assert indirectly — it checks the event is emitted, not that the tag was dropped. The first attempt
+  failed with `503 NOT_CONFIGURED` because my own `next start` had no `WEB_REVALIDATE_SECRET`; the job
+  retried three times and went to the dead-letter, which is that processor's designed behaviour
+  working rather than a defect.
+
+#### Carried forward
+
+- **`productJsonLd` divides minor units by 100**, matching `formatMoney`, which the whole product
+  does. That is wrong for JPY (0 decimals) and KWD (3), and it is a **product-wide** convention rather
+  than something to fork in one file: a second answer here would be the defect this codebase keeps
+  paying for. Fixing it means one function reading the currency's exponent, everywhere, which is its
+  own change.
+- **A redirect has no hit counter.** "Is this still being used" is a real question and a write per
+  request from a statically-rendered page is not a way to answer it. It belongs with Phase 8's
+  `website_events`.
+- **Structured data covers `LocalBusiness` and `Product` only.** `BreadcrumbList` and `FAQPage` are
+  the obvious next two and both need a block type that does not exist yet.
+- `database-design.md` §10 and `frontend-architecture.md` §11 carry the as-built notes for this step.
+
+**The next step.** Step 6 — `website_domains`, the verification token, and automated TLS. **This is
+the step that cannot be finished from a container**: the verification flow is unit-testable and
+issuance can be driven against a staging ACME directory, but "a custom domain issues TLS
+automatically" is a claim about DNS and a certificate authority, and the only honest way to close it is
+to point a real domain at a real deployment. `WEBSITE_BASE_DOMAIN` and `siteBaseUrl` are the seam it
+extends, which is the one thing this step did to prepare for it.
 
 ---
 
