@@ -823,6 +823,7 @@ model Organization {
   websites              Website[]
   websitePages          WebsitePage[]
   websiteVersions       WebsiteVersion[]
+  websiteRedirects      WebsiteRedirect[]
 
   @@index([status])
   @@index([createdAt])
@@ -980,6 +981,7 @@ model Membership {
   whatsappTemplatesWritten  WhatsAppTemplate[]      @relation("whatsapp_template_author")
   websitesCreated           Website[]               @relation("website_creator")
   websiteVersionsPublished  WebsiteVersion[]        @relation("website_version_publisher")
+  websiteRedirectsCreated   WebsiteRedirect[]       @relation("website_redirect_creator")
 
   @@unique([organizationId, id], name: "membership_tenant_key")
   @@unique([organizationId, userId])
@@ -5316,9 +5318,18 @@ model Website {
   /// schema: a template adding a second accent colour must not be a migration.
   theme Json @default("{}") @db.JsonB
 
-  /// Site-wide SEO fallbacks a page's own `seo` overrides (`FR-WEB-3`). The per-page values land in
-  /// step 5; this column exists now because a publish snapshots it, and a snapshot that gains a key
-  /// later cannot be compared against one taken before.
+  /// Site-wide SEO fallbacks a page's own `seo` overrides (`FR-WEB-3`).
+  ///
+  /// Created in step 1 and filled in from step 5, deliberately in that order: a publish snapshots
+  /// this column, and a snapshot that gains a key later cannot be compared against one taken
+  /// before it. Its shape is `WebsiteSeoDefaults`, checked by `checkSeoDefaults` — which refuses an
+  /// unknown key on **write** while the renderer ignores one on **read**, so a snapshot from a
+  /// newer release still renders after a rollback.
+  ///
+  /// `business` here carries only what nothing else in the product knows — the street address, the
+  /// kind of business, a price range. The name, country and logo come from the organization profile
+  /// and the opening hours from the workspace-wide `working_hours` rows, because a second copy of a
+  /// business's trading hours is a copy that can disagree with the one customers read.
   seoDefaults Json @default("{}") @map("seo_defaults") @db.JsonB
 
   /// `WEBSITE_STATUSES`. A `draft` site answers 404 to the public even when it has versions — which
@@ -5344,8 +5355,9 @@ model Website {
   creator          Membership      @relation("website_creator", fields: [organizationId, createdById], references: [organizationId, userId], onDelete: Restrict, map: "websites_creator_same_org_fk")
   publishedVersion WebsiteVersion? @relation("website_published_version", fields: [organizationId, publishedVersionId], references: [organizationId, id], onDelete: Restrict, map: "websites_published_version_same_org_fk")
 
-  pages    WebsitePage[]    @relation("website_pages")
-  versions WebsiteVersion[] @relation("website_versions")
+  pages     WebsitePage[]     @relation("website_pages")
+  versions  WebsiteVersion[]  @relation("website_versions")
+  redirects WebsiteRedirect[] @relation("website_redirects")
 
   @@unique([organizationId, id], name: "website_tenant_key")
   /// The list screen's own read.
@@ -5380,7 +5392,10 @@ model WebsitePage {
   /// 1 stores and snapshots it without interpreting it, which is why the column is here already.
   blocks Json @default("[]") @db.JsonB
 
-  /// Per-page SEO overrides (`FR-WEB-3`), filled in by step 5.
+  /// Per-page SEO overrides (`FR-WEB-3`): title, description, canonical, social image, `noindex`
+  /// and a `productId` for `Product` structured data. Shape is `WebsitePageSeo`, checked by
+  /// `checkPageSeo`. Snapshotted, because it is content — unlike the product's price, which is read
+  /// live so a published page can never quote a stale one.
   seo Json @default("{}") @db.JsonB
 
   /// Exactly one page per site may be the home page, enforced by the partial unique
@@ -5417,6 +5432,64 @@ model WebsitePage {
 /// snapshot and names it in `restored_from_version_id`. History stays append-only, "what was live
 /// on Tuesday" keeps one answer, and a site rolled back twice does not look like a site nobody
 /// touched.
+/// A retired address and where it now goes (`FR-WEB-3`).
+///
+/// **Deliberately not in the snapshot, which is the whole design of this table.** A redirect
+/// exists because an address *changed*, and the inbound links it serves were published by other
+/// people — so it is a fact about the outside world's links, not about this release of the
+/// content. Snapshotting it would make a rollback delete the redirects added since the version
+/// being restored, and the links those redirects were created for would 404: a rollback of the
+/// *content* silently breaking addresses that were never part of what was rolled back. It would
+/// also mean somebody renaming a page could not make the old address work until they published.
+///
+/// The general rule this step follows: versioned is what somebody wrote, live is what the business
+/// is. `seo` and `seo_defaults` are snapshotted; this, `working_hours` and `products` are read per
+/// request beside the snapshot — the same line step 4 drew for a form's public key.
+///
+/// **A chain is unrepresentable rather than handled.** `to_path` is never another row's
+/// `from_path` on the same site, because the service collapses the chain on write: adding
+/// `/b` → `/c` when `/a` → `/b` exists rewrites the first to `/a` → `/c`. So resolving a redirect
+/// is one lookup, a loop cannot exist, and nothing has to guard against one at request time.
+model WebsiteRedirect {
+  id             String @id @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+  websiteId      String @map("website_id") @db.Uuid
+
+  /// Normalized by `normalizePagePath`, with `website_redirects_from_is_a_path` refusing anything
+  /// else — the same guarantee `website_pages_path_is_a_path` gives, and it has to be the same
+  /// shape, because the renderer compares this against a page path it failed to find.
+  fromPath String @map("from_path")
+
+  /// A path on this site, or a full address elsewhere: moving a page and moving a whole business to
+  /// a new domain are both things a redirect is for. Checked by `redirectTargetProblem`, which
+  /// reuses `isSafeBlockUrl` rather than restating where a link may point.
+  toPath String @map("to_path")
+
+  /// `REDIRECT_KINDS`. `permanent` is served as 308 and `temporary` as 307, stated at the renderer.
+  kind String @default("permanent")
+
+  /// Why this redirect exists, for whoever reads the list in a year. Free text, optional: a note
+  /// nobody is forced to write is a note that is true when it is there.
+  note String?
+
+  createdById String @map("created_by_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  website      Website      @relation("website_redirects", fields: [organizationId, websiteId], references: [organizationId, id], onDelete: Cascade, map: "website_redirects_website_same_org_fk")
+  creator      Membership   @relation("website_redirect_creator", fields: [organizationId, createdById], references: [organizationId, userId], onDelete: Restrict, map: "website_redirects_creator_same_org_fk")
+
+  @@unique([organizationId, id], name: "website_redirect_tenant_key")
+  /// One destination per retired address. A second row for one `from_path` would make "where does
+  /// this go" a question with two answers and no tiebreak.
+  @@unique([organizationId, websiteId, fromPath], name: "website_redirect_from_key")
+  /// Postgres indexes the referenced side of a foreign key and never the referencing side.
+  @@index([organizationId, createdById])
+  @@map("website_redirects")
+}
+
 model WebsiteVersion {
   id             String @id @db.Uuid
   organizationId String @map("organization_id") @db.Uuid

@@ -94,6 +94,31 @@ export const configSchema = z
     API_PUBLIC_URL: z.string().url().default('http://localhost:4000'),
 
     /**
+     * The domain tenant websites are served under, e.g. `leados.app` for `acme.leados.app`
+     * (`FR-WEB-4`).
+     *
+     * **Optional, and its absence produces working addresses rather than broken ones**, which is
+     * the whole reason it is safe to add. Unset, a site's public address is
+     * `WEB_ORIGIN/s/<subdomain>` — exactly where the renderer serves it today, with no wildcard DNS
+     * and no reverse proxy. Set, it becomes `https://<subdomain>.<domain>`. One function
+     * (`publicSiteOrigin`) answers both, which is what stops a canonical URL and a sitemap entry
+     * ever disagreeing about where a page lives.
+     *
+     * A second variable with a new name is how a deployment ends up with two answers to one
+     * question, one of them unset — the mistake `NEXT_PUBLIC_API_ORIGIN` nearly was. This is a
+     * genuinely different fact from `WEB_ORIGIN`: that is where *this product* is, and this is
+     * where *tenants' sites* are. They are the same host in development and must not be in
+     * production, because a tenant's page is theirs as far as a visitor is concerned.
+     */
+    WEBSITE_BASE_DOMAIN: z
+      .string()
+      .regex(
+        /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/,
+        'WEBSITE_BASE_DOMAIN must be a bare domain such as leados.app — no scheme, port or path.',
+      )
+      .optional(),
+
+    /**
      * Which email driver sends. `log` writes the message to the log and sends nothing; it refuses to
      * run in production, because a silently-not-sending mailer there means nobody receives a password
      * reset while every request returns 200 — the worst kind of failure, because it looks like

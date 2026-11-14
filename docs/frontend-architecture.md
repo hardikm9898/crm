@@ -1331,3 +1331,94 @@ uses, and merging would mean reworking a shipped editor to serve a new one. `lib
 says so at `coerceBlockParam`, which also records the specific reason the functions cannot simply be
 swapped — `coerceParam` predates `string_list` and would store a list as the string somebody typed,
 which the API then refuses as `NOT_A_LIST`: a refusal on a field the editor filled in correctly.
+
+---
+
+## 13. As built — Phase 7, step 5 (SEO, the crawler files, and redirects)
+
+### 13.1 The `<head>` is one function, and it is tested without a browser
+
+`pageMetadata(site, page)` in `apps/web/src/lib/website-seo.ts` returns the whole of Next's
+`Metadata` — title, description, canonical, Open Graph, Twitter and robots — and the published page's
+`generateMetadata` does nothing but call it. Assembling tags inline in the route would have made the
+`<head>` the part of the page nothing could assert; as a pure function, `website-seo.spec.ts` drives
+every branch in Node, and the HTTP check becomes a second independent confirmation rather than the
+only one.
+
+Three decisions inside it are worth recording because each has an obvious wrong alternative:
+
+- **A page's own `seo.title` is used verbatim, with no site name appended.** Somebody filling in a
+  title tag is controlling the sixty characters a search result shows, and a product that then added
+  ` · Acme Interiors` would be overriding the override. The _default_ branch — the page's
+  editor-facing title plus the site name — is the one that gets the suffix, because it is a default.
+- **The canonical defaults to the page's own absolute address.** That is the actual value of a
+  canonical: `?utm_source=whatsapp` on a shared link is the same page, and without one every tracked
+  link looks like a duplicate. The absolute base comes from the API (`site.baseUrl`), never computed
+  here, so a canonical and a sitemap entry cannot disagree.
+- **A description is derived from the page's own words when nobody wrote one.** `derivedDescription`
+  takes the first block text long enough to be a summary and cuts it at a word boundary. Lighthouse
+  fails a page with no meta description, which is one audit of about ten and enough on its own to miss
+  this step's threshold — but the real argument is the search result: without a description a search
+  engine invents one from whatever text it finds first, and "Skip to content" is a common answer.
+
+### 13.2 Structured data, and the one `dangerouslySetInnerHTML` in the product
+
+Two `<script type="application/ld+json">` blocks: `LocalBusiness` on every page, because any page of
+a site may be the one that surfaces in a local result, and `Product` on a page that names one.
+
+`dangerouslySetInnerHTML` is the only way to put a script body in React, and `jsonLdScript` is what
+makes it safe: it escapes `<` to `<`, so a tenant who types `</script>` into a page description
+cannot end the element and have the rest of the document parsed as markup. The browser's HTML parser
+ends a script element at those characters regardless of their being inside a JSON string, so this is
+a stored cross-site-scripting hole on every visitor's page rather than a theoretical one. U+2028 and
+U+2029 are escaped for the older reason: legal in JSON, illegal in JavaScript.
+
+`localBusinessJsonLd` returns **null** rather than a skeleton when it has nothing but a name. An
+incomplete `LocalBusiness` is reported as an error in Search Console — a warning a business owner
+would have to act on, about a feature they never asked for.
+
+### 13.3 The crawler files are route handlers, not Next's metadata convention
+
+`app/s/[siteSlug]/robots.txt/route.ts` and `.../sitemap.xml/route.ts` are literal segments beside the
+`[[...path]]` catch-all, which is what makes them reachable — Next gives a static segment precedence
+over a dynamic one and a dynamic one over a catch-all. Neither can be shadowed by a tenant page, and
+that is structural rather than lucky: `PAGE_SEGMENT_SHAPE` allows only letters, digits and hyphens, so
+no page path can contain a dot. A reserved-path list would have been a second rule able to drift from
+the first.
+
+Not `sitemap.ts`/`robots.ts`: those generate from a typed array, which fits a fixed set of routes and
+not a document whose content is a tenant's snapshot and whose correctness is the thing under test. A
+plain route handler is assertable byte for byte.
+
+**Three outcomes, not two.** `loadPublishedSiteOrNull` returns `null` for a site that is not
+published and **throws** when the API could not be asked, because the two need different answers:
+`robots.txt` answers `Disallow: /` for an unpublished address (a 404 on that file is read as "no
+restrictions", the opposite of what an unpublished address should say) and **503** with `Retry-After`
+when we could not ask. A crawler reads 503 as "ask again later" and explicitly does not treat it as a
+change of permission, so an API blip cannot be cached as an instruction to stop crawling a live site.
+This is "a catch that renders an empty state hides a 400 forever" with the blast radius of the whole
+internet.
+
+The same fix was applied to the **page** renderer, which step 2 had collapsing both into `notFound()`.
+With `revalidate: false` and a tag, a 404 rendered during a blip is cached indefinitely: a live site
+answering "not found" to every visitor until somebody published it again.
+
+### 13.4 Three new things the editor screens had to get right
+
+- **A redirect list prints each rule as text** (`data-redirect-from`, `data-redirect-to`) above and
+  beside its controls, not only inside inputs. A list whose values live only in form controls is
+  unreadable and unassertable, which seven identical "Name" labels on the payment-methods screen
+  demonstrated once.
+- **A page's SEO lives behind a `<details>`.** Which means the browser check clicks the summary before
+  reading or filling anything inside it: a closed disclosure renders nothing, so `innerText` is empty.
+- **`Field`'s error span now carries `data-field-error`.** The hint and the error were both an unmarked
+  `<span>` in the same label, so a check waiting for `label span` resolved against the hint
+  immediately and read the page before the refusal had rendered — reporting a screen that was working
+  perfectly as broken. Every form in the product gets the attribute, because every form has the trap.
+
+### 13.5 What this step did not build
+
+No client-side SEO preview ("here is how this will look in Google"), which is the obvious next thing
+and is a rendering of data the screen already has. No `BreadcrumbList` or `FAQPage` structured data:
+both need a block type that does not exist yet, and declaring either from a page's prose would be
+guessing at content.

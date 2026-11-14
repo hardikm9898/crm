@@ -4,10 +4,13 @@ import {
   REFERENCE_KINDS,
   WEBSITE_BLOCKS,
   WEBSITE_HOME_PATH,
+  checkPageSeo,
+  checkSeoDefaults,
   newId,
   normalizePagePath,
   normalizeSubdomain,
   pagePathProblem,
+  redirectTargetProblem,
   subdomainProblem,
   tenantContext,
   validateBlocks,
@@ -20,9 +23,11 @@ import { OutboxService } from '../../infra/outbox/outbox.service.js';
 import { REFERENCE_SOURCES } from '../automation/automation.catalogue.js';
 import type {
   CreatePageInput,
+  CreateRedirectInput,
   CreateWebsiteInput,
   ListWebsitesQuery,
   UpdatePageInput,
+  UpdateRedirectInput,
   UpdateWebsiteInput,
 } from './websites.dto.js';
 
@@ -173,6 +178,8 @@ export class WebsitesService {
     const existing = await this.requireWebsite(id);
     const subdomain =
       input.subdomain === undefined ? undefined : await this.resolveSubdomain(input.subdomain, id);
+    const seoDefaults =
+      input.seoDefaults === undefined ? undefined : this.assertSeoDefaults(input.seoDefaults);
 
     await this.db.client.$transaction(async (tx) => {
       await tx.website.update({
@@ -181,7 +188,7 @@ export class WebsitesService {
           ...(input.name === undefined ? {} : { name: input.name }),
           ...(subdomain === undefined ? {} : { subdomain }),
           ...(input.theme === undefined ? {} : { theme: input.theme as object }),
-          ...(input.seoDefaults === undefined ? {} : { seoDefaults: input.seoDefaults as object }),
+          ...(seoDefaults === undefined ? {} : { seoDefaults }),
         },
       });
       await this.audit.recordInTransaction(tx, {
@@ -216,6 +223,55 @@ export class WebsitesService {
         references: REFERENCE_KINDS.map((kind) => ({ kind, source: REFERENCE_SOURCES[kind] })),
       },
     };
+  }
+
+  /**
+   * Refuses SEO settings the registry does not accept, and returns the value to store.
+   *
+   * Returns the normalised value rather than only validating, so the caller never normalises a
+   * second time and a screen cannot end up storing what it typed while the API reports what it
+   * meant. The `@ `, the handle extracted from a pasted profile URL and the trimming all happen
+   * here, once — a screen that cleaned the value too would be a second answer to one question, and
+   * the two would eventually disagree.
+   */
+  private assertSeoDefaults(input: unknown): object {
+    const { problems, normalized } = checkSeoDefaults(input);
+    if (problems.length > 0) {
+      throw AppError.validation('Some of the SEO settings need correcting.', problems);
+    }
+    return normalized as object;
+  }
+
+  /**
+   * Refuses a page's SEO overrides, checks the product it names, and returns the value to store.
+   *
+   * The shape is all the shared validator can see; whether the product exists, and whether it
+   * belongs to this workspace, is a question only a query answers. It goes through the
+   * **tenant-scoped** client, which makes "another workspace's product" and "no such product" the
+   * same refusal — a distinguishable answer would turn a product id into an oracle, the same
+   * reasoning `UuidParamPipe` answers 404 for.
+   */
+  private async assertPageSeo(input: unknown, prefix = 'seo'): Promise<object> {
+    const { problems, normalized } = checkPageSeo(input, prefix);
+    if (problems.length > 0) {
+      throw AppError.validation('Some of the SEO settings need correcting.', problems);
+    }
+    if (normalized.productId !== undefined) {
+      const product = await this.db.client.product.findFirst({
+        where: { id: normalized.productId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!product) {
+        throw AppError.validation('Some of the SEO settings need correcting.', [
+          {
+            field: `${prefix}.productId`,
+            code: 'INVALID',
+            message: 'That product no longer exists. Choose another.',
+          },
+        ]);
+      }
+    }
+    return normalized as object;
   }
 
   /**
@@ -290,6 +346,7 @@ export class WebsitesService {
     const website = await this.requireWebsite(websiteId);
     const path = this.resolvePagePath(input.path);
     if (input.blocks !== undefined) await this.assertBlocks(input.blocks);
+    const seo = await this.assertPageSeo(input.seo ?? {});
     const id = newId();
 
     await this.db.client.$transaction(async (tx) => {
@@ -302,7 +359,7 @@ export class WebsitesService {
           path,
           title: input.title,
           blocks: (input.blocks ?? []) as object,
-          seo: (input.seo ?? {}) as object,
+          seo,
           isHome: input.isHome ?? false,
           sortOrder: input.sortOrder ?? 0,
           status: input.status ?? 'draft',
@@ -334,6 +391,7 @@ export class WebsitesService {
     if (!existing) throw AppError.notFound('Page not found');
     const path = input.path === undefined ? undefined : this.resolvePagePath(input.path);
     if (input.blocks !== undefined) await this.assertBlocks(input.blocks);
+    const seo = input.seo === undefined ? undefined : await this.assertPageSeo(input.seo);
 
     await this.db.client.$transaction(async (tx) => {
       if (input.isHome === true && !existing.isHome) await this.clearHome(tx, websiteId);
@@ -343,7 +401,7 @@ export class WebsitesService {
           ...(path === undefined ? {} : { path }),
           ...(input.title === undefined ? {} : { title: input.title }),
           ...(input.blocks === undefined ? {} : { blocks: input.blocks as object }),
-          ...(input.seo === undefined ? {} : { seo: input.seo as object }),
+          ...(seo === undefined ? {} : { seo }),
           ...(input.isHome === undefined ? {} : { isHome: input.isHome }),
           ...(input.sortOrder === undefined ? {} : { sortOrder: input.sortOrder }),
           ...(input.status === undefined ? {} : { status: input.status }),
@@ -584,6 +642,294 @@ export class WebsitesService {
       where: { id: website.publishedVersionId },
     });
     return { version: version.version, versionId: version.id, snapshot: version.snapshot };
+  }
+
+  // -------------------------------------------------------------------------
+  // Redirects (`FR-WEB-3`)
+  // -------------------------------------------------------------------------
+
+  /**
+   * A site's redirects, each marked with whether a page now shadows it.
+   *
+   * `shadowed` is computed rather than stored. The renderer looks for a page first — which is the
+   * right precedence, because a real page at an address must win over a rule saying that address
+   * has moved — so a page created at a `from_path` leaves the redirect in place and never firing.
+   * Storing a flag would be a second answer to "is there a page here"; computing it means the
+   * screen can say *why* a redirect is doing nothing, which is otherwise a mystery somebody opens
+   * a support ticket about.
+   */
+  async redirects(websiteId: string) {
+    await this.requireWebsite(websiteId);
+    const [items, pages] = await Promise.all([
+      this.db.client.websiteRedirect.findMany({
+        where: { websiteId },
+        orderBy: [{ fromPath: 'asc' }],
+      }),
+      this.db.client.websitePage.findMany({ where: { websiteId }, select: { path: true } }),
+    ]);
+    const pagePaths = new Set(pages.map((page) => page.path));
+    return {
+      items: items.map((row) => ({ ...row, shadowed: pagePaths.has(row.fromPath) })),
+      pagination: { limit: items.length, hasMore: false },
+    };
+  }
+
+  /** The `from_path` of a redirect, through the same normalisation a page path gets. */
+  private resolveRedirectFrom(raw: string): string {
+    const path = normalizePagePath(raw);
+    const problem = pagePathProblem(path);
+    if (problem !== null) {
+      throw AppError.validation(problem, [
+        { field: 'fromPath', code: 'INVALID', message: problem },
+      ]);
+    }
+    return path;
+  }
+
+  private resolveRedirectTo(raw: string): string {
+    const target = raw.trim();
+    const problem = redirectTargetProblem(target);
+    if (problem !== null) {
+      throw AppError.validation(problem, [{ field: 'toPath', code: 'INVALID', message: problem }]);
+    }
+    return target;
+  }
+
+  /**
+   * Works out what a new or edited redirect should actually store, and what else has to move.
+   *
+   * **The invariant it keeps: no `to_path` is ever another row's `from_path` on the same site.**
+   * That is what makes resolving a redirect at request time a single lookup with no loop guard,
+   * and it is kept by collapsing rather than by refusing. Renaming `/a` to `/b` and later `/b` to
+   * `/c` is an ordinary sequence of events; a product that refused the second rename because of
+   * the first would be unusable, and one that allowed the chain would serve two hops to a crawler
+   * that counts them.
+   *
+   * So two things happen on every write:
+   *
+   * - the destination is **followed** — pointing a new redirect at an address that has itself
+   *   moved stores the final address, not the intermediate one;
+   * - everything pointing **at** this redirect's source is rewritten to the new destination.
+   *
+   * Either can produce a row whose source and destination are the same, which is a loop a browser
+   * reports as `ERR_TOO_MANY_REDIRECTS`. That is refused with a sentence rather than written and
+   * caught by `website_redirects_not_to_self`, because a constraint name is not an explanation.
+   */
+  private async planRedirect(
+    websiteId: string,
+    fromPath: string,
+    toPath: string,
+    excludeId: string | null,
+  ): Promise<{ target: string; rewrites: { id: string; fromPath: string }[] }> {
+    const siblings = await this.db.client.websiteRedirect.findMany({
+      where: { websiteId, ...(excludeId === null ? {} : { id: { not: excludeId } }) },
+      select: { id: true, fromPath: true, toPath: true },
+    });
+
+    // Follow the destination one hop. One is enough *because* of the invariant: if `/c` had itself
+    // moved on, the row for `/c` would already be pointing at the final address.
+    const target = siblings.find((row) => row.fromPath === toPath)?.toPath ?? toPath;
+
+    if (target === fromPath) {
+      // Two sentences, because they are two situations. Somebody who typed one address twice has
+      // made an obvious slip; somebody who typed two different addresses has closed a circle they
+      // cannot see, and telling them it "goes back to itself" reads as though they had not.
+      const literal = toPath === fromPath;
+      throw AppError.validation(
+        literal
+          ? 'That would send this address back to itself.'
+          : 'That would close a circle of redirects.',
+        [
+          {
+            field: 'toPath',
+            code: 'INVALID',
+            message: literal
+              ? 'An address cannot redirect to itself.'
+              : `${toPath} already redirects to ${target}, so this would be a loop.`,
+          },
+        ],
+      );
+    }
+
+    const rewrites = siblings
+      .filter((row) => row.toPath === fromPath)
+      .map((row) => ({ id: row.id, fromPath: row.fromPath }));
+    const looping = rewrites.find((row) => row.fromPath === target);
+    if (looping !== undefined) {
+      throw AppError.validation('That would send two addresses in a circle.', [
+        {
+          field: 'toPath',
+          code: 'INVALID',
+          message: `${looping.fromPath} already redirects to ${fromPath}, so sending ${fromPath} to ${target} would be a loop.`,
+        },
+      ]);
+    }
+
+    return { target, rewrites };
+  }
+
+  /** Refuses a redirect whose source is a page: the page wins, so the redirect could never fire. */
+  private async assertNoPageAt(websiteId: string, fromPath: string): Promise<void> {
+    const page = await this.db.client.websitePage.findFirst({
+      where: { websiteId, path: fromPath },
+      select: { title: true },
+    });
+    if (page) {
+      throw AppError.validation('There is already a page at that address.', [
+        {
+          field: 'fromPath',
+          code: 'INVALID',
+          message: `“${page.title}” is at ${fromPath}, and a page always wins over a redirect — so this one would never do anything. Move or delete the page first.`,
+        },
+      ]);
+    }
+  }
+
+  async createRedirect(websiteId: string, input: CreateRedirectInput) {
+    const website = await this.requireWebsite(websiteId);
+    const actorId = this.requireActor(tenantContext.require('websites.createRedirect').actorId);
+    const fromPath = this.resolveRedirectFrom(input.fromPath);
+    const toPath = this.resolveRedirectTo(input.toPath);
+    await this.assertNoPageAt(websiteId, fromPath);
+
+    const existing = await this.db.client.websiteRedirect.findFirst({
+      where: { websiteId, fromPath },
+      select: { id: true },
+    });
+    if (existing) {
+      throw AppError.validation('That address already redirects somewhere.', [
+        {
+          field: 'fromPath',
+          code: 'INVALID',
+          message: `${fromPath} already has a redirect. Edit that one rather than adding a second, which would be two answers to one question.`,
+        },
+      ]);
+    }
+
+    const { target, rewrites } = await this.planRedirect(websiteId, fromPath, toPath, null);
+    const id = newId();
+
+    await this.db.client.$transaction(async (tx) => {
+      await tx.websiteRedirect.create({
+        data: {
+          id,
+          organizationId: website.organizationId,
+          websiteId,
+          fromPath,
+          toPath: target,
+          kind: input.kind ?? 'permanent',
+          ...(input.note === undefined ? {} : { note: input.note }),
+          createdById: actorId,
+        },
+      });
+      await this.applyRedirectRewrites(tx, rewrites, target);
+      await this.audit.recordInTransaction(tx, {
+        action: 'website.redirect_created',
+        resourceType: 'website',
+        resourceId: websiteId,
+        // The collapse is audited because it changed rows nobody asked about in this request.
+        after: {
+          fromPath,
+          toPath: target,
+          asked: toPath,
+          collapsed: rewrites.map((r) => r.fromPath),
+        },
+      });
+      await this.emitRedirectsChanged(tx, websiteId, website.subdomain);
+    });
+
+    return this.db.client.websiteRedirect.findFirstOrThrow({ where: { id } });
+  }
+
+  async updateRedirect(websiteId: string, redirectId: string, input: UpdateRedirectInput) {
+    const website = await this.requireWebsite(websiteId);
+    const existing = await this.db.client.websiteRedirect.findFirst({
+      where: { id: redirectId, websiteId },
+    });
+    if (!existing) throw AppError.notFound('Redirect not found');
+
+    const fromPath =
+      input.fromPath === undefined ? existing.fromPath : this.resolveRedirectFrom(input.fromPath);
+    const toPath =
+      input.toPath === undefined ? existing.toPath : this.resolveRedirectTo(input.toPath);
+    if (fromPath !== existing.fromPath) await this.assertNoPageAt(websiteId, fromPath);
+
+    const { target, rewrites } = await this.planRedirect(websiteId, fromPath, toPath, redirectId);
+
+    await this.db.client.$transaction(async (tx) => {
+      await tx.websiteRedirect.update({
+        where: { id: redirectId },
+        data: {
+          fromPath,
+          toPath: target,
+          ...(input.kind === undefined ? {} : { kind: input.kind }),
+          ...(input.note === undefined ? {} : { note: input.note }),
+        },
+      });
+      await this.applyRedirectRewrites(tx, rewrites, target);
+      await this.audit.recordInTransaction(tx, {
+        action: 'website.redirect_updated',
+        resourceType: 'website',
+        resourceId: websiteId,
+        before: { fromPath: existing.fromPath, toPath: existing.toPath, kind: existing.kind },
+        after: { fromPath, toPath: target, kind: input.kind ?? existing.kind },
+      });
+      await this.emitRedirectsChanged(tx, websiteId, website.subdomain);
+    });
+
+    return this.db.client.websiteRedirect.findFirstOrThrow({ where: { id: redirectId } });
+  }
+
+  async deleteRedirect(websiteId: string, redirectId: string) {
+    const website = await this.requireWebsite(websiteId);
+    const existing = await this.db.client.websiteRedirect.findFirst({
+      where: { id: redirectId, websiteId },
+    });
+    if (!existing) throw AppError.notFound('Redirect not found');
+
+    await this.db.client.$transaction(async (tx) => {
+      await tx.websiteRedirect.delete({ where: { id: redirectId } });
+      await this.audit.recordInTransaction(tx, {
+        action: 'website.redirect_deleted',
+        resourceType: 'website',
+        resourceId: websiteId,
+        before: { fromPath: existing.fromPath, toPath: existing.toPath },
+      });
+      await this.emitRedirectsChanged(tx, websiteId, website.subdomain);
+    });
+    return { deleted: true };
+  }
+
+  private async applyRedirectRewrites(
+    tx: DbTransaction,
+    rewrites: readonly { id: string }[],
+    target: string,
+  ): Promise<void> {
+    for (const rewrite of rewrites) {
+      await tx.websiteRedirect.update({ where: { id: rewrite.id }, data: { toPath: target } });
+    }
+  }
+
+  /**
+   * Rule 5: the event leaves through the outbox inside the transaction that changed the redirect.
+   *
+   * It carries the subdomain because the renderer's cache tag is keyed on it, and it has to be
+   * emitted on a *delete* as much as on a create: a redirect somebody removed that went on
+   * redirecting from cache would be a page nobody could reach back, with no screen admitting it.
+   */
+  private async emitRedirectsChanged(
+    tx: DbTransaction,
+    websiteId: string,
+    subdomain: string,
+  ): Promise<void> {
+    await this.outbox.emit(tx, [
+      {
+        name: 'website.redirects_changed',
+        aggregateType: 'website',
+        aggregateId: websiteId,
+        payload: { subdomain },
+      },
+    ]);
   }
 }
 

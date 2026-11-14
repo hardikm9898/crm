@@ -119,6 +119,11 @@ export const EVENT_SUBSCRIPTIONS: Readonly<Record<string, readonly EventSubscrip
   // apart, and `event-subscriptions.spec.ts` asserts the registry covers what producers emit.
   'website.published': [{ queue: QUEUES.MAINTENANCE, jobName: JOBS.SITE_REVALIDATE }],
   'website.unpublished': [{ queue: QUEUES.MAINTENANCE, jobName: JOBS.SITE_REVALIDATE }],
+  // A redirect is read per request beside the snapshot, so a new one has to drop the same cache
+  // tag a publish does: without this, adding a redirect would take effect at the next publish,
+  // which is exactly the wait the redirect was created to avoid. The renderer caches a 404 too,
+  // so the address somebody is trying to rescue is precisely the one most likely to be cached.
+  'website.redirects_changed': [{ queue: QUEUES.MAINTENANCE, jobName: JOBS.SITE_REVALIDATE }],
   'website.rolled_back': [{ queue: QUEUES.MAINTENANCE, jobName: JOBS.SITE_REVALIDATE }],
   'quotation.created': [],
   'quotation.sent': [WEBHOOK],

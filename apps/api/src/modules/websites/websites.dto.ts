@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { WEBSITE_PAGE_STATUSES } from '@leados/shared';
+import { REDIRECT_KINDS, WEBSITE_PAGE_STATUSES } from '@leados/shared';
 
 /**
  * Validators for the website endpoints (`FR-WEB-1`, `FR-WEB-2`, `FR-WEB-5`).
@@ -70,3 +70,33 @@ export const rollbackSchema = z.object({
   versionId: z.string().uuid(),
 });
 export type RollbackInput = z.infer<typeof rollbackSchema>;
+
+/**
+ * A redirect (`FR-WEB-3`).
+ *
+ * `fromPath` and `toPath` arrive raw, as the subdomain and page path do: `normalizePagePath` and
+ * `redirectTargetProblem` run in the service, next to the chain collapse they inform, and the
+ * CHECK constraints are what make "something else wrote this row" unrepresentable.
+ *
+ * Note which rules are **not** here. "The destination may be a path or a full address" is in
+ * `redirectTargetProblem`, because the same rule is installed as a CHECK and the two have to be
+ * one statement. A schema that also expressed it would be a third copy, and the one that was wrong
+ * would be the one nothing ran.
+ */
+export const createRedirectSchema = z.object({
+  fromPath: z.string().trim().min(1).max(512),
+  toPath: z.string().trim().min(1).max(1024),
+  kind: z.enum(REDIRECT_KINDS).optional(),
+  note: z.string().trim().max(500).optional(),
+});
+export type CreateRedirectInput = z.infer<typeof createRedirectSchema>;
+
+export const updateRedirectSchema = z
+  .object({
+    fromPath: z.string().trim().min(1).max(512).optional(),
+    toPath: z.string().trim().min(1).max(1024).optional(),
+    kind: z.enum(REDIRECT_KINDS).optional(),
+    note: z.string().trim().max(500).optional(),
+  })
+  .refine((value) => Object.keys(value).length > 0, 'Change at least one thing.');
+export type UpdateRedirectInput = z.infer<typeof updateRedirectSchema>;

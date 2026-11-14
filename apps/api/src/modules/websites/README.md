@@ -1,7 +1,8 @@
 # websites
 
-Phase 7 step 1 — the website model, its pages, and the version a publish pins
-(`FR-WEB-1`, `FR-WEB-2`, `FR-WEB-5`).
+Phase 7, steps 1–5 — the website model, its pages, the version a publish pins, the block registry,
+the forms a page places, and what a page tells a crawler
+(`FR-WEB-1`, `FR-WEB-2`, `FR-WEB-3`, `FR-WEB-5`, `FR-WEB-6`).
 
 ## What this module is, in one sentence
 
@@ -17,12 +18,41 @@ _to_: the only record of what the public saw would be rows somebody has since ed
 
 | Arrives in | What                                                                            |
 | ---------- | ------------------------------------------------------------------------------- |
-| Step 2     | The renderer at `s/[siteSlug]/[[...path]]`, ISR, tag revalidation               |
-| Step 3     | The block registry and its validator — `blocks` is stored uninterpreted         |
-| Step 4     | `website_forms`, and `FR-WEB-6`'s automatic wiring                              |
-| Step 5     | Per-page SEO, `robots.txt`, `sitemap.xml`, structured data, redirects           |
 | Step 6     | `website_domains`, verification, TLS                                            |
+| Step 7     | Template content, the consent banner, and the phase's usability gate            |
 | Phase 8    | `websites.tracking_site_id` — a column with no reader is a column with a defect |
+
+Steps 2 to 5 have landed. Their notes are in `docs/implementation-roadmap.md`; what belongs here is
+the one thing a reader of _this module_ needs and would not guess.
+
+## Versioned is what somebody wrote; live is what the business is
+
+The public read (`GET /public/sites/:subdomain`) answers a snapshot **and four things beside it**,
+and which side of that line a fact falls on is a decision, not an accident:
+
+| Beside the snapshot | Why it is not in it                                                                                                        |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `site.baseUrl`      | One answer to "where does this site live", so a canonical and a sitemap entry cannot disagree. Step 6 changes it here only |
+| `forms`             | A rotated public key must stop working, and an edited form must stay current                                               |
+| `business`          | Trading hours live in `working_hours`; a second copy is one that can disagree with the one customers read                  |
+| `products`          | A price frozen into a published version goes stale in structured data, where that is a penalty rather than a typo          |
+| `redirects`         | A rollback of the _content_ must not delete redirects added since, and 404 links other people published                    |
+
+Everything in the snapshot is content: blocks, titles, `seo`, `seo_defaults`, the theme. It changes
+when somebody publishes and not before.
+
+## A redirect chain is collapsed, so a loop is unrepresentable
+
+`website_redirects` keeps one invariant: **no `to_path` is ever another row's `from_path` on the same
+site.** It is kept by rewriting, not by refusing — adding `/b` → `/c` when `/a` → `/b` exists rewrites
+the first to `/a` → `/c`, and pointing a new redirect at an address that has itself moved stores the
+final one. Renaming a page twice is an ordinary thing to do; refusing it would be unusable and
+allowing the chain would serve two hops to a crawler that counts them.
+
+The payoff is a renderer with one lookup and no loop guard. **A page always wins over a redirect**,
+declared in the renderer alone: creating a redirect whose source is a page is refused, and a page
+created at an existing redirect's source leaves it listed as `shadowed` with a sentence saying why it
+does nothing.
 
 `GET :id/served` exists so that step 1 can be verified at all: it answers what a visitor _would_
 be served once step 2 can serve it. It is behind `website:read` and is not a public route.
